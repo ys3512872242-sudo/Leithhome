@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>今</title>
+<title>Leith·Home</title>
 
 <!-- PWA：让浏览器识别这是个可安装到桌面的应用 -->
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#1C1A24">
+<meta name="theme-color" content="#141821">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="今">
+<meta name="apple-mobile-web-app-title" content="Leith·Home">
 <link rel="apple-touch-icon" href="icon-192.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,18 +19,21 @@
 
 <style>
   :root{
-    --bg:#1C1A24;
-    --bg-elevated:#242130;
-    --bg-input:#2A2735;
-    --paper:#F5EDE4;
-    --paper-dim:#C9BFB4;
-    --rose:#D9A5A0;
-    --rose-dim:#8f6a67;
-    --violet:#9C8CBB;
-    --violet-dim:#5f5578;
+    --bg:#141821;
+    --bg-elevated:#1C2230;
+    --bg-input:#212838;
+    --paper:#EDF1F7;
+    --paper-dim:#8D97AC;
+    --accent:#6FA3E0;
+    --accent-dim:#3D6899;
+    --violet:#7C9CC4;
+    --violet-dim:#4A6280;
     --amber:#E8B872;
-    --line:#3A3646;
+    --line:#2C3444;
     --danger:#C9706B;
+    /* 兼容旧变量名，避免遗漏引用 */
+    --rose: var(--accent);
+    --rose-dim: var(--accent-dim);
   }
 
   *{box-sizing:border-box;}
@@ -142,7 +145,7 @@
   }
   .bubble.user{
     background:var(--rose);
-    color:#2A1C1B;
+    color:#0E1B2C;
     border-bottom-right-radius:5px;
     font-family:'Noto Sans SC', sans-serif;
   }
@@ -225,7 +228,7 @@
   }
   .send-btn:active{ transform:scale(.92); }
   .send-btn:disabled{ opacity:.4; cursor:default; }
-  .send-btn svg{ width:19px;height:19px; color:#2A1C1B; }
+  .send-btn svg{ width:19px;height:19px; color:#0E1B2C; }
 
   /* ===== 设置抽屉 ===== */
   .drawer-overlay{
@@ -304,7 +307,7 @@
     white-space:nowrap;
   }
   .btn:hover{ border-color:var(--rose-dim); }
-  .btn-primary{ background:var(--rose); color:#2A1C1B; border:none; font-weight:600; }
+  .btn-primary{ background:var(--rose); color:#0E1B2C; border:none; font-weight:600; }
   .btn-primary:hover{ opacity:.9; }
   .btn-danger{ background:transparent; color:var(--danger); border:1px solid var(--danger); }
   .btn-danger:hover{ background:rgba(201,112,107,.1); }
@@ -414,7 +417,7 @@
   <!-- 顶栏 -->
   <div class="topbar">
     <div class="brand">
-      <span class="brand-mark">今</span>
+      <span class="brand-mark">Leith</span>
       <span class="brand-sub" id="statusLabel">未连接</span>
     </div>
     <div class="topbar-actions">
