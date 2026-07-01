@@ -1,0 +1,14 @@
+{
+  "name": "今",
+  "short_name": "今",
+  "description": "私人 AI 对话空间",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1C1A24",
+  "theme_color": "#1C1A24",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
