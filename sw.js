@@ -1,4 +1,4 @@
-const CACHE_NAME = "companion-shell-v3";
+const CACHE_NAME = "companion-shell-v4";
 const SHELL_FILES = ["./index.html", "./app.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
