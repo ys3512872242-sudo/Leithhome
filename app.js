@@ -9,9 +9,9 @@ const LS = {
   customModel: "companion_custom_model_v1",
   temp: "companion_temp_v1",
   systemPrompt: "companion_system_prompt_v1",
-  threads: "companion_threads_v1",       // 线程列表元信息
+  threads: "companion_threads_v1",
   activeThreadId: "companion_active_thread_v1",
-  threadMsgPrefix: "companion_thread_msgs_"  // + threadId
+  threadMsgPrefix: "companion_thread_msgs_"
 };
 
 const DEFAULT_PROVIDERS = [
@@ -72,6 +72,19 @@ function renderBubbleContent(text) {
     }
     return p;
   }).join("");
+}
+
+// ============================================================
+// 判断运行环境
+// ============================================================
+function isPWAStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches
+      || navigator.standalone
+      || document.referrer.includes("android-app://");
+}
+
+function isMobile() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
 
 // ============================================================
@@ -619,6 +632,9 @@ function getSelectedMessagesInOrder() {
   return messages.filter(m => selectedMessageIds.has(m._id));
 }
 
+// ============================================================
+// 导出文字 — 手机用系统分享，电脑用下载
+// ============================================================
 $("#exportTextBtn").onclick = () => {
   const selected = getSelectedMessagesInOrder();
   if (!selected.length) return showToast("先选几条消息吧");
@@ -628,25 +644,79 @@ $("#exportTextBtn").onclick = () => {
     return `${who}：${content}`;
   }).join("\n\n");
 
+  const filename = `Leith对话_${new Date().toISOString().slice(0,10)}.txt`;
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `Leith对话片段_${new Date().toISOString().slice(0,10)}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast("已导出为文字文件");
+
+  // 手机 PWA：用系统分享，用户可以选「存储到文件」
+  if (isMobile() && navigator.share && navigator.canShare) {
+    const file = new File([blob], filename, { type: "text/plain" });
+    if (navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).then(() => {
+        showToast("已分享，可选择存储到文件");
+      }).catch(() => {
+        // 分享失败，回退到弹窗复制
+        showExportTextModal(text);
+      });
+    } else {
+      // 不支持文件分享，弹窗复制
+      showExportTextModal(text);
+    }
+  } else {
+    // 电脑端：正常下载
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("已导出为文字文件");
+  }
+
   exitSelectMode();
 };
 
+// 文字导出的备用方案：弹窗复制
+function showExportTextModal(text) {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.75);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;";
+  overlay.innerHTML = `
+    <div style="background:#161B26;border:1px solid #232A3A;border-radius:16px;padding:22px;width:100%;max-width:420px;max-height:80vh;display:flex;flex-direction:column;gap:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:15px;color:#E7ECF5;">导出文字</span>
+        <button id="closeExportText" style="background:none;border:none;color:#7C879C;cursor:pointer;font-size:20px;padding:2px 6px;">✕</button>
+      </div>
+      <textarea readonly style="width:100%;flex:1;min-height:200px;max-height:50vh;background:#1B2130;border:1px solid #232A3A;color:#E7ECF5;border-radius:10px;padding:12px;font-size:14px;line-height:1.7;resize:none;outline:none;font-family:inherit;">${text.replace(/</g,"<").replace(/>/g,">")}</textarea>
+      <button id="copyExportTextBtn" style="flex:1;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg, #5B8FCC, #4A7BB5);color:#0A1622;font-size:13px;font-weight:600;cursor:pointer;">复制全部文字</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#closeExportText").onclick = () => overlay.remove();
+  overlay.querySelector("#copyExportTextBtn").onclick = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast("已复制到剪贴板");
+    }).catch(() => {
+      const ta = overlay.querySelector("textarea");
+      ta.select();
+      document.execCommand("copy");
+      showToast("已复制到剪贴板");
+    });
+  };
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+}
+
+// ============================================================
+// 导出截图 — 手机弹出预览可长按存相册，电脑正常下载
+// ============================================================
 $("#exportImageBtn").onclick = async () => {
   const selected = getSelectedMessagesInOrder();
   if (!selected.length) return showToast("先选几条消息吧");
   await exportSelectionAsImage(selected);
-  exitSelectMode();
 };
 
-// 用原生 canvas 手绘对话截图，避免引入第三方截图库
 async function exportSelectionAsImage(messages) {
   const padding = 24;
   const bubbleGap = 14;
@@ -676,7 +746,6 @@ async function exportSelectionAsImage(messages) {
     return lines;
   }
 
-  // 预计算每条消息的高度
   const items = messages.map(m => {
     const isSticker = m.type === "sticker";
     const label = m.role === "user" ? "我" : "Leith";
@@ -695,7 +764,6 @@ async function exportSelectionAsImage(messages) {
   canvas.style.height = totalHeight + "px";
   ctx.scale(dpr, dpr);
 
-  // 背景
   ctx.fillStyle = "#0D1017";
   ctx.fillRect(0, 0, width, totalHeight);
 
@@ -744,25 +812,64 @@ async function exportSelectionAsImage(messages) {
 
   canvas.toBlob((blob) => {
     const url = URL.createObjectURL(blob);
+    const filename = `Leith对话截图_${new Date().toISOString().slice(0,10)}.png`;
+
+    // 手机 PWA：弹出图片预览，长按即可保存到相册
+    if (isMobile()) {
+      showExportImagePreview(url);
+      exitSelectMode();
+      return;
+    }
+
+    // 电脑端：正常下载
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Leith对话截图_${new Date().toISOString().slice(0,10)}.png`;
+    a.download = filename;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast("截图已保存");
+    exitSelectMode();
   }, "image/png");
+}
+
+// 截图预览弹窗 — 手机上长按图片即可保存到相册
+function showExportImagePreview(imgUrl) {
+  const overlay = document.createElement("div");
+  overlay.id = "exportImgOverlay";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.9);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:16px;overflow-y:auto;";
+  overlay.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:420px;">
+      <span style="font-size:13px;color:#7C879C;">⬆️ 长按下方图片即可保存到相册</span>
+      <button id="closeExportImg" style="background:none;border:none;color:#7C879C;cursor:pointer;font-size:22px;padding:4px 8px;">✕</button>
+    </div>
+    <img src="${imgUrl}" style="max-width:100%;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);-webkit-touch-callout:default;" />
+    <p style="font-size:11px;color:#7C879C;text-align:center;margin:0;line-height:1.8;">💡 保存方式：长按上方图片 → "存储图像" / "保存图片"<br>保存后点击 ✕ 关闭</p>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector("#closeExportImg").onclick = () => {
+    URL.revokeObjectURL(imgUrl);
+    overlay.remove();
+  };
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      URL.revokeObjectURL(imgUrl);
+      overlay.remove();
+    }
+  });
 }
 
 // ============================================================
 // Token 用量估算 + 提醒（非强制）
 // ============================================================
-const TOKEN_WARN_THRESHOLD = 6000; // 粗略估算的字符数阈值，达到后提示
+const TOKEN_WARN_THRESHOLD = 6000;
 let tokenBannerDismissedForThread = {};
 
 function estimateTokens(threadId) {
   const messages = getThreadMessages(threadId);
   const totalChars = messages.reduce((sum, m) => sum + (m.content ? m.content.length : 0), 0);
-  // 粗略换算：中文场景下 1 token 大约对应 1.5-2 个字符，这里取一个中间值仅供参考
   return Math.round(totalChars / 1.7);
 }
 
@@ -864,7 +971,6 @@ async function sendChat() {
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
-    // 表情包消息不发给模型（模型收不到图片内容），仅发送文字消息历史
     const textMessages = messages.filter(m => m.type !== "sticker");
 
     let fullReply = "";
@@ -887,7 +993,6 @@ async function sendChat() {
     renderThreadList();
     renderTokenBanner();
 
-    // 首次有内容时，尝试用第一句话给对话线程自动命名
     maybeAutoNameThread(threadId, content);
   } catch (err) {
     clearTimeout(timeoutTimer);
