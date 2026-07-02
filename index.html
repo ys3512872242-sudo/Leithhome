@@ -37,7 +37,9 @@
   *{box-sizing:border-box;}
   html{
     height:100%;
-    /* iOS Safari 下用 fixed + 100% 比 100dvh 更稳，避免键盘弹出时布局错乱 */
+    overflow:hidden;
+    /* iOS standalone 模式下，html 上 overflow:hidden 不会阻止键盘弹出，
+       但 body 上 overflow:hidden 会 —— 这是 iOS WebKit 的已知行为 */
   }
   body{
     margin:0;
@@ -49,7 +51,7 @@
     inset:0;
     display:flex;
     flex-direction:column;
-    overflow:hidden;
+    overflow:visible;
     background:
       radial-gradient(ellipse 800px 500px at 20% -10%, var(--accent-glow), transparent 60%),
       radial-gradient(ellipse 600px 400px at 100% 100%, rgba(110,127,184,0.08), transparent 60%),
