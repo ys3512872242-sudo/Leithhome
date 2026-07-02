@@ -77,14 +77,13 @@ function renderBubbleContent(text) {
 // ============================================================
 // 判断运行环境
 // ============================================================
-function isPWAStandalone() {
-  return window.matchMedia("(display-mode: standalone)").matches
-      || navigator.standalone
-      || document.referrer.includes("android-app://");
-}
-
 function isMobile() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function isPWAStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches
+      || navigator.standalone === true;
 }
 
 // ============================================================
@@ -542,6 +541,7 @@ function sendSticker(sticker) {
 // ============================================================
 let selectMode = false;
 let selectedMessageIds = new Set();
+let currentController = null;  // 当前请求的 AbortController，用于截停
 
 function renderMessage(msg, opts = {}) {
   const emptyState = $("#emptyState");
@@ -568,12 +568,33 @@ function renderMessage(msg, opts = {}) {
 
   row.appendChild(bubble);
 
+  // 用户消息：加编辑按钮
+  if (msg.role === "user" && msg.type !== "sticker") {
+    const editBtn = document.createElement("button");
+    editBtn.className = "msg-action-btn";
+    editBtn.title = "编辑";
+    editBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
+    editBtn.onclick = () => startEditMessage(row, msg);
+    row.appendChild(editBtn);
+  }
+
+  // AI 消息：加重新生成按钮
+  if (msg.role === "assistant") {
+    const regenBtn = document.createElement("button");
+    regenBtn.className = "msg-action-btn";
+    regenBtn.title = "重新生成";
+    regenBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>`;
+    regenBtn.onclick = () => regenerateMessage(msg._id);
+    row.appendChild(regenBtn);
+  }
+
   if (selectMode) {
     applySelectableUI(row, msg._id);
   }
 
-  row.addEventListener("click", () => {
+  row.addEventListener("click", (e) => {
     if (!selectMode) return;
+    e.stopPropagation();
     toggleMessageSelect(row, msg._id);
   });
 
@@ -584,6 +605,8 @@ function renderMessage(msg, opts = {}) {
 
 function applySelectableUI(row, msgId) {
   row.classList.add("selectable");
+  const bubble = row.querySelector(".bubble");
+  if (bubble) bubble.style.pointerEvents = "none";
   if (!row.querySelector(".msg-checkbox")) {
     const cb = document.createElement("div");
     cb.className = "msg-checkbox" + (selectedMessageIds.has(msgId) ? " checked" : "");
@@ -618,7 +641,199 @@ function exitSelectMode() {
   selectedMessageIds.clear();
   $("#selectToolbar").classList.add("hidden");
   document.querySelectorAll(".msg-checkbox").forEach(cb => cb.remove());
-  document.querySelectorAll(".msg-row.selectable").forEach(row => row.classList.remove("selectable"));
+  document.querySelectorAll(".msg-row.selectable").forEach(row => {
+    row.classList.remove("selectable");
+    const bubble = row.querySelector(".bubble");
+    if (bubble) bubble.style.pointerEvents = "";
+  });
+}
+
+// ============================================================
+// 编辑消息 / 截停 / 重新生成
+// ============================================================
+
+// 编辑已发送的用户消息
+function startEditMessage(row, msg) {
+  if (currentController) return showToast("请先等当前回复结束");
+  const bubble = row.querySelector(".bubble");
+  const originalText = msg.content;
+  
+  bubble.innerHTML = "";
+  const textarea = document.createElement("textarea");
+  textarea.value = originalText;
+  textarea.rows = 1;
+  textarea.style.cssText = "width:100%;min-height:60px;background:var(--bg-input);border:1px solid var(--accent-dim);color:var(--paper);border-radius:12px;padding:10px 12px;font-size:15px;font-family:inherit;line-height:1.5;resize:none;outline:none;";
+  bubble.appendChild(textarea);
+  textarea.focus();
+  textarea.style.height = "auto";
+  textarea.style.height = textarea.scrollHeight + "px";
+  textarea.addEventListener("input", () => {
+    textarea.style.height = "auto";
+    textarea.style.height = textarea.scrollHeight + "px";
+  });
+
+  const btnRow = document.createElement("div");
+  btnRow.style.cssText = "display:flex;gap:6px;margin-top:8px;";
+  btnRow.innerHTML = `
+    <button class="btn btn-primary btn-sm" id="confirmEditBtn">保存并重新发送</button>
+    <button class="btn btn-ghost btn-sm" id="cancelEditBtn">取消</button>
+  `;
+  bubble.appendChild(btnRow);
+
+  row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "none");
+
+  btnRow.querySelector("#cancelEditBtn").onclick = () => {
+    bubble.innerText = originalText;
+    row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "");
+  };
+
+  btnRow.querySelector("#confirmEditBtn").onclick = () => {
+    const newText = textarea.value.trim();
+    if (!newText || newText === originalText) {
+      bubble.innerText = originalText;
+      row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "");
+      return;
+    }
+    const threadId = getActiveThreadId();
+    let messages = getThreadMessages(threadId);
+    const idx = messages.findIndex(m => m._id === msg._id);
+    if (idx === -1) return;
+    messages = messages.slice(0, idx);
+    saveThreadMessages(threadId, messages);
+    
+    userInput.value = newText;
+    userInput.focus();
+    loadActiveThreadIntoChat();
+    sendChat();
+  };
+}
+
+// 重新生成 AI 回复
+async function regenerateMessage(assistantMsgId) {
+  if (currentController) return showToast("请先等当前回复结束");
+  
+  const threadId = getActiveThreadId();
+  let messages = getThreadMessages(threadId);
+  const idx = messages.findIndex(m => m._id === assistantMsgId);
+  if (idx === -1) return;
+  
+  const userMsg = messages[idx - 1];
+  if (!userMsg || userMsg.role !== "user") return showToast("找不到对应的用户消息");
+  
+  messages = messages.slice(0, idx);
+  saveThreadMessages(threadId, messages);
+  
+  loadActiveThreadIntoChat();
+  await regenerateFromMessage(userMsg);
+}
+
+// 重新生成专用：不重复存用户消息
+async function regenerateFromMessage(userMsg) {
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || $("#modelSelect").value;
+  const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
+
+  if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
+  if (!provider) return showModal("提示", "请先在设置里添加一个服务商。");
+  if (!model) return showModal("提示", "请先选择或填写一个模型名称。");
+
+  const threadId = getActiveThreadId();
+  const sendBtn = $("#sendBtn");
+  sendBtn.disabled = false;
+
+  const box = $("#chatBox");
+  const row = document.createElement("div");
+  row.className = "msg-row assistant";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble assistant";
+  bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
+  row.appendChild(bubble);
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+
+  const controller = new AbortController();
+  currentController = controller;
+  let lastChunkTime = Date.now();
+  let hasReceivedContent = false;
+  const timeoutTimer = setInterval(() => {
+    if (Date.now() - lastChunkTime > 60000) {
+      controller.abort();
+      clearInterval(timeoutTimer);
+    }
+  }, 1000);
+
+  const originalSendHTML = sendBtn.innerHTML;
+  const originalSendBg = sendBtn.style.background;
+  const originalSendBorder = sendBtn.style.border;
+  const originalSendColor = sendBtn.style.color;
+  const originalSendHandler = sendBtn.onclick;
+  sendBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
+  sendBtn.style.background = "var(--bg-elevated)";
+  sendBtn.style.border = "1px solid var(--accent-dim)";
+  sendBtn.style.color = "var(--paper)";
+  sendBtn.onclick = () => controller.abort();
+
+  try {
+    const systemPrompt = await buildEffectiveSystemPrompt();
+    const messages = getThreadMessages(threadId).filter(m => m.type !== "sticker");
+
+    let fullReply = "";
+    if (provider.apiStyle === "anthropic") {
+      fullReply = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+        lastChunkTime = Date.now();
+        hasReceivedContent = true;
+        bubble.innerHTML = renderBubbleContent(acc);
+        box.scrollTop = box.scrollHeight;
+      }});
+    } else {
+      fullReply = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+        lastChunkTime = Date.now();
+        hasReceivedContent = true;
+        bubble.innerHTML = renderBubbleContent(acc);
+        box.scrollTop = box.scrollHeight;
+      }});
+    }
+    clearInterval(timeoutTimer);
+
+    const freshMessages = getThreadMessages(threadId);
+    freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
+    saveThreadMessages(threadId, freshMessages);
+    renderThreadList();
+    renderTokenBanner();
+  } catch (err) {
+    clearInterval(timeoutTimer);
+    if (err.name === "AbortError") {
+      if (hasReceivedContent) {
+        const partial = bubble.innerText;
+        if (partial.trim()) {
+          const freshMessages = getThreadMessages(threadId);
+          freshMessages.push({ role: "assistant", content: partial, _id: uid() });
+          saveThreadMessages(threadId, freshMessages);
+          renderThreadList();
+          showToast("已停止，已生成的内容已保存");
+        } else {
+          row.remove();
+          showToast("已停止");
+        }
+      } else {
+        row.remove();
+        showToast("已停止");
+      }
+    } else {
+      row.remove();
+      showModal("请求失败", err.message || "网络错误");
+    }
+  } finally {
+    currentController = null;
+    sendBtn.disabled = false;
+    sendBtn.innerHTML = originalSendHTML;
+    sendBtn.style.background = originalSendBg;
+    sendBtn.style.border = originalSendBorder;
+    sendBtn.style.color = originalSendColor;
+    sendBtn.onclick = originalSendHandler;
+  }
 }
 
 $("#toggleSelectBtn").onclick = () => {
@@ -632,9 +847,6 @@ function getSelectedMessagesInOrder() {
   return messages.filter(m => selectedMessageIds.has(m._id));
 }
 
-// ============================================================
-// 导出文字 — 手机用系统分享，电脑用下载
-// ============================================================
 $("#exportTextBtn").onclick = () => {
   const selected = getSelectedMessagesInOrder();
   if (!selected.length) return showToast("先选几条消息吧");
@@ -654,11 +866,9 @@ $("#exportTextBtn").onclick = () => {
       navigator.share({ files: [file] }).then(() => {
         showToast("已分享，可选择存储到文件");
       }).catch(() => {
-        // 分享失败，回退到弹窗复制
         showExportTextModal(text);
       });
     } else {
-      // 不支持文件分享，弹窗复制
       showExportTextModal(text);
     }
   } else {
@@ -673,7 +883,6 @@ $("#exportTextBtn").onclick = () => {
     URL.revokeObjectURL(url);
     showToast("已导出为文字文件");
   }
-
   exitSelectMode();
 };
 
@@ -708,15 +917,13 @@ function showExportTextModal(text) {
   });
 }
 
-// ============================================================
-// 导出截图 — 手机弹出预览可长按存相册，电脑正常下载
-// ============================================================
 $("#exportImageBtn").onclick = async () => {
   const selected = getSelectedMessagesInOrder();
   if (!selected.length) return showToast("先选几条消息吧");
   await exportSelectionAsImage(selected);
 };
 
+// 用原生 canvas 手绘对话截图，避免引入第三方截图库
 async function exportSelectionAsImage(messages) {
   const padding = 24;
   const bubbleGap = 14;
@@ -746,6 +953,7 @@ async function exportSelectionAsImage(messages) {
     return lines;
   }
 
+  // 预计算每条消息的高度
   const items = messages.map(m => {
     const isSticker = m.type === "sticker";
     const label = m.role === "user" ? "我" : "Leith";
@@ -764,6 +972,7 @@ async function exportSelectionAsImage(messages) {
   canvas.style.height = totalHeight + "px";
   ctx.scale(dpr, dpr);
 
+  // 背景
   ctx.fillStyle = "#0D1017";
   ctx.fillRect(0, 0, width, totalHeight);
 
@@ -837,18 +1046,16 @@ async function exportSelectionAsImage(messages) {
 // 截图预览弹窗 — 手机上长按图片即可保存到相册
 function showExportImagePreview(imgUrl) {
   const overlay = document.createElement("div");
-  overlay.id = "exportImgOverlay";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.9);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:16px;overflow-y:auto;";
   overlay.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:420px;">
-      <span style="font-size:13px;color:#7C879C;">⬆️ 长按下方图片即可保存到相册</span>
+      <span style="font-size:13px;color:#7C879C;">长按下方图片即可保存到相册</span>
       <button id="closeExportImg" style="background:none;border:none;color:#7C879C;cursor:pointer;font-size:22px;padding:4px 8px;">✕</button>
     </div>
     <img src="${imgUrl}" style="max-width:100%;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.5);-webkit-touch-callout:default;" />
-    <p style="font-size:11px;color:#7C879C;text-align:center;margin:0;line-height:1.8;">💡 保存方式：长按上方图片 → "存储图像" / "保存图片"<br>保存后点击 ✕ 关闭</p>
+    <p style="font-size:11px;color:#7C879C;text-align:center;margin:0;line-height:1.8;">保存方式：长按上方图片 → "存储图像" / "保存图片"<br>保存后点击 ✕ 关闭</p>
   `;
   document.body.appendChild(overlay);
-
   overlay.querySelector("#closeExportImg").onclick = () => {
     URL.revokeObjectURL(imgUrl);
     overlay.remove();
@@ -864,12 +1071,13 @@ function showExportImagePreview(imgUrl) {
 // ============================================================
 // Token 用量估算 + 提醒（非强制）
 // ============================================================
-const TOKEN_WARN_THRESHOLD = 6000;
+const TOKEN_WARN_THRESHOLD = 6000; // 粗略估算的字符数阈值，达到后提示
 let tokenBannerDismissedForThread = {};
 
 function estimateTokens(threadId) {
   const messages = getThreadMessages(threadId);
   const totalChars = messages.reduce((sum, m) => sum + (m.content ? m.content.length : 0), 0);
+  // 粗略换算：中文场景下 1 token 大约对应 1.5-2 个字符，这里取一个中间值仅供参考
   return Math.round(totalChars / 1.7);
 }
 
@@ -967,25 +1175,50 @@ async function sendChat() {
   box.scrollTop = box.scrollHeight;
 
   const controller = new AbortController();
-  const timeoutTimer = setTimeout(() => controller.abort(), 30000);
+  currentController = controller;
+  let lastChunkTime = Date.now();
+  let hasReceivedContent = false;
+  const timeoutTimer = setInterval(() => {
+    if (Date.now() - lastChunkTime > 60000) {
+      controller.abort();
+      clearInterval(timeoutTimer);
+    }
+  }, 1000);
+
+  // 发送按钮变成停止按钮
+  const originalSendHTML = sendBtn.innerHTML;
+  const originalSendBg = sendBtn.style.background;
+  const originalSendBorder = sendBtn.style.border;
+  const originalSendColor = sendBtn.style.color;
+  const originalSendHandler = sendBtn.onclick;
+  sendBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
+  sendBtn.style.background = "var(--bg-elevated)";
+  sendBtn.style.border = "1px solid var(--accent-dim)";
+  sendBtn.style.color = "var(--paper)";
+  sendBtn.onclick = () => controller.abort();
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
+    // 表情包消息不发给模型（模型收不到图片内容），仅发送文字消息历史
     const textMessages = messages.filter(m => m.type !== "sticker");
 
     let fullReply = "";
     if (provider.apiStyle === "anthropic") {
       fullReply = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
+        lastChunkTime = Date.now();
+        hasReceivedContent = true;
         bubble.innerHTML = renderBubbleContent(acc);
         box.scrollTop = box.scrollHeight;
       }});
     } else {
       fullReply = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
+        lastChunkTime = Date.now();
+        hasReceivedContent = true;
         bubble.innerHTML = renderBubbleContent(acc);
         box.scrollTop = box.scrollHeight;
       }});
     }
-    clearTimeout(timeoutTimer);
+    clearInterval(timeoutTimer);
 
     const freshMessages = getThreadMessages(threadId);
     freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
@@ -993,17 +1226,39 @@ async function sendChat() {
     renderThreadList();
     renderTokenBanner();
 
+    // 首次有内容时，尝试用第一句话给对话线程自动命名
     maybeAutoNameThread(threadId, content);
   } catch (err) {
-    clearTimeout(timeoutTimer);
-    row.remove();
+    clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
-      showModal("请求超时", "30 秒内没有收到响应，检查网络或稍后重试。");
+      if (hasReceivedContent) {
+        const partial = bubble.innerText;
+        if (partial.trim()) {
+          const freshMessages = getThreadMessages(threadId);
+          freshMessages.push({ role: "assistant", content: partial, _id: uid() });
+          saveThreadMessages(threadId, freshMessages);
+          renderThreadList();
+          showToast("已停止，已生成的内容已保存");
+        } else {
+          row.remove();
+          showToast("已停止");
+        }
+      } else {
+        row.remove();
+        showModal("请求超时", "60 秒内没有收到响应，可能是网络或服务商问题。");
+      }
     } else {
+      row.remove();
       showModal("请求失败", err.message || "网络错误，请检查服务商地址、密钥或跨域设置。");
     }
   } finally {
+    currentController = null;
     sendBtn.disabled = false;
+    sendBtn.innerHTML = originalSendHTML;
+    sendBtn.style.background = originalSendBg;
+    sendBtn.style.border = originalSendBorder;
+    sendBtn.style.color = originalSendColor;
+    sendBtn.onclick = originalSendHandler;
   }
 }
 

@@ -566,6 +566,27 @@
   }
 
   .hidden{ display:none !important; }
+
+  /* ===== 消息操作按钮（编辑/重新生成）===== */
+  .msg-row{ position:relative; }
+  .msg-action-btn{
+    position:absolute;
+    bottom:-4px;
+    width:24px;height:24px;
+    border-radius:6px;
+    border:1px solid var(--line);
+    background:var(--bg-elevated);
+    color:var(--paper-dim);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+    opacity:0;
+    transition:opacity .15s ease;
+    z-index:5;
+  }
+  .msg-row.user .msg-action-btn{ right:0; }
+  .msg-row.assistant .msg-action-btn{ left:0; }
+  .msg-row:hover .msg-action-btn{ opacity:1; }
+  .msg-action-btn:hover{ color:var(--paper); border-color:var(--accent-dim); }
 </style>
 </head>
 <body>
