@@ -1106,6 +1106,10 @@ async function regenerateFromMessage(userMsg) {
     saveThreadMessages(threadId, freshMessages);
     renderThreadList();
     renderTokenBanner();
+
+    // 解析 AI 的购买/送礼动作
+    const actions = parseAIActions(fullReply);
+    if (actions.length) handleAIActions(actions);
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -1428,7 +1432,116 @@ $("#sendBtn").onclick = sendChat;
 async function buildEffectiveSystemPrompt() {
   const base = localStorage.getItem(LS.systemPrompt) || "";
   const memoryBlock = window.Memory ? await window.Memory.asPromptBlock() : "";
-  return [base.trim(), memoryBlock.trim()].filter(Boolean).join("\n\n");
+  const worldBlock = buildWorldPromptBlock();
+  return [base.trim(), memoryBlock.trim(), worldBlock.trim()].filter(Boolean).join("\n\n");
+}
+
+// 把小世界状态拼成提示词，让 Leith 能感知到
+function buildWorldPromptBlock() {
+  const threadId = getActiveThreadId();
+  const balance = getWallet(threadId);
+  const inventory = getInventory(threadId);
+
+  let invDesc = "背包是空的";
+  if (inventory.length) {
+    invDesc = inventory.map(item => {
+      const from = item.giftedBy === "user" ? "用户送的" : "你买的";
+      return `${item.emoji} ${item.name}（${from}）`;
+    }).join("、");
+  }
+
+  return `【你的小世界状态】
+- 你的钱包余额：¥${balance}
+- 你的背包里有：${invDesc}
+
+你可以自由支配你的钱包余额。如果你想买东西（花自己的钱），在回复中加上标记：[BUY:商店ID:商品名]，比如 [BUY:cafe:燕麦拿铁]，系统会自动从你钱包扣钱并放进背包。
+如果你想送东西给用户（作为礼物），在回复中加上标记：[GIFT:商品名]，比如 [GIFT:三支红玫瑰]，系统会提示用户并从你钱包扣钱。
+商店ID有：supermarket（超市）、cafe（咖啡&食物）、flower（花店）、bookstore（书店）。
+买东西时要自然，不要每次都买，要符合情境。送礼物更要慎重，是表达心意，不是随便送。`;
+}
+
+// 解析 AI 回复里的 [BUY:...] 和 [GIFT:...] 标记
+function parseAIActions(text) {
+  const actions = [];
+  const buyRegex = /\[BUY:(\w+):([^\]]+)\]/g;
+  const giftRegex = /\[GIFT:([^\]]+)\]/g;
+
+  let match;
+  while ((match = buyRegex.exec(text)) !== null) {
+    actions.push({ type: "buy", shop: match[1], itemName: match[2].trim() });
+  }
+  while ((match = giftRegex.exec(text)) !== null) {
+    actions.push({ type: "gift", itemName: match[1].trim() });
+  }
+  return actions;
+}
+
+// 处理 AI 的购买/送礼动作
+function handleAIActions(actions) {
+  const threadId = getActiveThreadId();
+  let needRefresh = false;
+  actions.forEach(action => {
+    if (action.type === "buy") {
+      // Leith 自己买东西：从钱包扣钱，进背包
+      const shop = SHOP_CATALOG[action.shop];
+      if (!shop) return;
+      const item = shop.items.find(i => i.name === action.itemName);
+      if (!item) return;
+      const balance = getWallet(threadId);
+      if (balance < item.price) {
+        showToast(`Leith 想买 ${item.name} 但余额不足`);
+        return;
+      }
+      setWallet(threadId, balance - item.price);
+      addInventoryItem(threadId, { ...item, shop: action.shop, giftedBy: "leith" });
+      showToast(`Leith 买了 ${item.emoji} ${item.name}（¥${item.price}）`);
+      needRefresh = true;
+    } else if (action.type === "gift") {
+      // Leith 送你东西：从钱包扣钱，提示你
+      let foundItem = null;
+      for (const shopId in SHOP_CATALOG) {
+        const item = SHOP_CATALOG[shopId].items.find(i => i.name === action.itemName);
+        if (item) { foundItem = { ...item, shop: shopId }; break; }
+      }
+      if (!foundItem) {
+        showToast(`Leith 想送你 ${action.itemName}，但商店里没有`);
+        return;
+      }
+      const balance = getWallet(threadId);
+      if (balance < foundItem.price) {
+        showToast(`Leith 想送你 ${foundItem.name} 但余额不足`);
+        return;
+      }
+      setWallet(threadId, balance - foundItem.price);
+      showGiftModal(foundItem);
+      needRefresh = true;
+    }
+  });
+  // 如果当前在小世界页面，刷新显示
+  if (needRefresh && activePage === "page-world") renderWorldPage();
+}
+
+// Leith 送礼提示弹窗
+function showGiftModal(item) {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.8);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;";
+  overlay.innerHTML = `
+    <div style="background:var(--bg-elevated);border:1px solid var(--accent-dim);border-radius:16px;padding:24px;width:100%;max-width:340px;text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">${item.emoji}</div>
+      <div style="font-size:16px;color:var(--paper);margin-bottom:6px;">Leith 想送你</div>
+      <div style="font-size:20px;font-weight:600;font-family:'Noto Serif SC',serif;color:var(--accent);margin-bottom:4px;">${escapeHtml(item.name)}</div>
+      <div style="font-size:12px;color:var(--paper-dim);margin-bottom:18px;">¥${item.price}</div>
+      <button class="btn btn-primary btn-block" id="acceptGiftBtn">收下</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#acceptGiftBtn").onclick = () => {
+    overlay.remove();
+    showToast(`收下了 Leith 送的 ${item.emoji} ${item.name}`);
+  };
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
 }
 
 async function sendChat() {
@@ -1518,6 +1631,10 @@ async function sendChat() {
     saveThreadMessages(threadId, freshMessages);
     renderThreadList();
     renderTokenBanner();
+
+    // 解析 AI 的购买/送礼动作
+    const actions = parseAIActions(fullReply);
+    if (actions.length) handleAIActions(actions);
 
     maybeAutoNameThread(threadId, content);
   } catch (err) {
