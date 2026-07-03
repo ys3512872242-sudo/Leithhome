@@ -188,13 +188,16 @@ function renderWorldPage() {
   if (!inventory.length) {
     grid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🎒</div><p>还没有买过东西呢</p></div>`;
   } else {
-    grid.innerHTML = inventory.map(item => `
-      <div class="inventory-item">
-        <div class="item-emoji">${item.emoji || "📦"}</div>
-        <div>${escapeHtml(item.name)}</div>
-        <div class="item-name">¥${item.price}</div>
-      </div>
-    `).join("");
+    grid.innerHTML = inventory.map(item => {
+      const tag = item.giftedBy === "user" ? "你送的" : "他买的";
+      return `
+        <div class="inventory-item">
+          <div class="item-emoji">${item.emoji || "📦"}</div>
+          <div>${escapeHtml(item.name)}</div>
+          <div class="item-name">${tag} · ¥${item.price}</div>
+        </div>
+      `;
+    }).join("");
   }
 }
 
@@ -233,46 +236,55 @@ function initToggleAllowanceBtn() {
   });
 }
 
-// 商店点击 → 弹窗显示商品
+// 商店商品目录（具体商品）
 const SHOP_CATALOG = {
   supermarket: {
     name: "超市",
     icon: "🏪",
     items: [
-      { name: "巧克力", emoji: "🍫", price: 15 },
-      { name: "薯片", emoji: "🍟", price: 12 },
-      { name: "可乐", emoji: "🥤", price: 8 },
-      { name: "小礼物", emoji: "🎁", price: 30 },
-      { name: "水果", emoji: "🍎", price: 20 },
+      { name: "可乐", emoji: "🥤", price: 5 },
+      { name: "黄瓜味薯片", emoji: "🍟", price: 8 },
+      { name: "明治雪吻巧克力", emoji: "🍫", price: 12 },
+      { name: "草莓牛奶", emoji: "🥛", price: 10 },
+      { name: "便利店饭团", emoji: "🍙", price: 7 },
+      { name: "创可贴", emoji: "🩹", price: 6 },
+      { name: "润唇膏", emoji: "💄", price: 25 },
     ]
   },
   cafe: {
     name: "咖啡&食物",
     icon: "🍰",
     items: [
-      { name: "美式咖啡", emoji: "☕", price: 25 },
-      { name: "拿铁", emoji: "☕", price: 32 },
-      { name: "蛋糕", emoji: "🍰", price: 38 },
-      { name: "三明治", emoji: "🥪", price: 28 },
+      { name: "冰美式", emoji: "☕", price: 22 },
+      { name: "燕麦拿铁", emoji: "☕", price: 28 },
+      { name: "抹茶拿铁", emoji: "🍵", price: 30 },
+      { name: "草莓奶油蛋糕", emoji: "🍰", price: 35 },
+      { name: "火腿可颂", emoji: "🥐", price: 18 },
+      { name: "提拉米苏", emoji: "🍮", price: 32 },
     ]
   },
   flower: {
     name: "花店",
     icon: "🌸",
     items: [
-      { name: "玫瑰", emoji: "🌹", price: 30 },
-      { name: "向日葵", emoji: "🌻", price: 25 },
-      { name: "多肉盆栽", emoji: "🪴", price: 45 },
+      { name: "三支红玫瑰", emoji: "🌹", price: 30 },
+      { name: "一束向日葵", emoji: "🌻", price: 45 },
+      { name: "白色雏菊", emoji: "🌼", price: 25 },
+      { name: "薰衣草干花", emoji: "💜", price: 20 },
+      { name: "熊童子多肉", emoji: "🪴", price: 15 },
+      { name: "满天星花束", emoji: "✨", price: 35 },
     ]
   },
   bookstore: {
     name: "书店",
     icon: "📚",
     items: [
-      { name: "小说", emoji: "📖", price: 40 },
-      { name: "诗集", emoji: "📜", price: 35 },
-      { name: "明信片", emoji: "💌", price: 10 },
-      { name: "钢笔", emoji: "🖋️", price: 60 },
+      { name: "《小王子》", emoji: "📖", price: 28 },
+      { name: "《人间失格》", emoji: "📕", price: 32 },
+      { name: "《飞鸟集》", emoji: "📗", price: 25 },
+      { name: "明信片套装", emoji: "💌", price: 15 },
+      { name: "Moleskine手账", emoji: "📓", price: 50 },
+      { name: "黄铜书签", emoji: "🔖", price: 18 },
     ]
   }
 };
@@ -283,87 +295,75 @@ function initShopCards() {
       const shopId = card.dataset.shop;
       const shop = SHOP_CATALOG[shopId];
       if (!shop) return;
-      openShopModal(shop, shopId);
+      openShopDetailPage(shop, shopId);
     });
   });
 }
 
-function openShopModal(shop, shopId) {
+// 打开商店详情页（不是弹窗，是页面内切换）
+function openShopDetailPage(shop, shopId) {
   const threadId = getActiveThreadId();
-  const balance = getWallet(threadId);
 
-  const overlay = document.createElement("div");
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.7);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;";
+  // 填充标题
+  $("#shopDetailIcon").innerText = shop.icon;
+  $("#shopDetailTitle").innerText = shop.name;
 
-  const itemsHtml = shop.items.map(item => {
-    const affordable = balance >= item.price;
-    return `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line-soft);">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:22px;">${item.emoji}</span>
-          <div>
-            <div style="font-size:14px;color:var(--paper);">${escapeHtml(item.name)}</div>
-            <div style="font-size:12px;color:var(--paper-dim);">¥${item.price}</div>
-          </div>
+  // 填充商品列表
+  const list = $("#shopItemsList");
+  list.innerHTML = "";
+  shop.items.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "shop-item-row";
+    row.innerHTML = `
+      <div class="shop-item-info">
+        <span class="shop-item-emoji">${item.emoji}</span>
+        <div>
+          <div class="shop-item-name">${escapeHtml(item.name)}</div>
+          <div class="shop-item-price">¥${item.price}</div>
         </div>
-        <button
-          class="btn btn-sm ${affordable ? "btn-primary" : "btn-ghost"}"
-          style="${affordable ? "" : "opacity:.4;cursor:default;"}"
-          data-action="buy"
-          data-shop="${shopId}"
-          data-item-name="${escapeHtml(item.name)}"
-          data-item-emoji="${item.emoji}"
-          data-item-price="${item.price}"
-          ${affordable ? "" : "disabled"}
-        >${affordable ? "购买" : "余额不足"}</button>
       </div>
+      <button class="shop-item-buy-btn" data-shop="${shopId}" data-item-name="${escapeHtml(item.name)}" data-item-emoji="${item.emoji}" data-item-price="${item.price}">送给他</button>
     `;
-  }).join("");
+    list.appendChild(row);
+  });
 
-  overlay.innerHTML = `
-    <div style="background:var(--bg-elevated);border:1px solid var(--line);border-radius:16px;padding:22px;width:100%;max-width:400px;max-height:80vh;overflow-y:auto;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <div style="font-size:17px;font-weight:600;font-family:'Noto Serif SC',serif;">${shop.icon} ${shop.name}</div>
-        <button id="closeShopModal" style="background:none;border:none;color:var(--paper-dim);cursor:pointer;font-size:20px;padding:2px 6px;">✕</button>
-      </div>
-      <div style="font-size:12px;color:var(--paper-dim);margin-bottom:14px;">Leith 的余额：¥${balance}</div>
-      <div>${itemsHtml}</div>
-      <div style="margin-top:16px;font-size:11px;color:var(--paper-dim);line-height:1.6;">
-        提示：点击[购买]会从 Leith 的钱包扣款，物品会出现在背包里。Leith 也可以在对话中主动提出要买东西。
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(overlay);
-
-  overlay.querySelector("#closeShopModal").onclick = () => overlay.remove();
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-
-  // 购买按钮
-  overlay.querySelectorAll("[data-action=buy]").forEach(btn => {
+  // 绑定购买按钮（你买 = 不花钱，直接进 Leith 背包）
+  list.querySelectorAll(".shop-item-buy-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const item = {
         shop: btn.dataset.shop,
         name: btn.dataset.itemName,
         emoji: btn.dataset.itemEmoji,
         price: parseInt(btn.dataset.itemPrice, 10),
+        giftedBy: "user",  // 你送的
       };
-      buyItem(threadId, item);
-      overlay.remove();
-      renderWorldPage();
+      giftToLeith(threadId, item);
+      // 按钮变成"已送"状态
+      btn.innerText = "已送 ✓";
+      btn.style.background = "var(--bg-input)";
+      btn.style.color = "var(--paper-dim)";
+      btn.disabled = true;
     });
+  });
+
+  // 显示商店详情页，隐藏商店列表
+  document.querySelector(".world-page").style.display = "none";
+  $("#shopDetailPage").classList.add("active");
+}
+
+// 返回商店列表
+function initShopBackBtn() {
+  $("#shopBackBtn").addEventListener("click", () => {
+    $("#shopDetailPage").classList.remove("active");
+    document.querySelector(".world-page").style.display = "";
+    renderWorldPage();  // 刷新背包
   });
 }
 
-function buyItem(threadId, item) {
-  const balance = getWallet(threadId);
-  if (balance < item.price) {
-    showToast("余额不足");
-    return;
-  }
-  setWallet(threadId, balance - item.price);
+// 你买东西送给 Leith（你不花钱，东西进他背包）
+function giftToLeith(threadId, item) {
   addInventoryItem(threadId, item);
-  showToast(`${item.emoji} ${item.name} 购买成功！¥${item.price}`);
+  showToast(`${item.emoji} ${item.name} 已送给 Leith`);
 }
 
 // ============================================================
@@ -1675,6 +1675,7 @@ initBottomBar();
 initGiveMoneyBtn();
 initToggleAllowanceBtn();
 initShopCards();
+initShopBackBtn();
 initConfig();
 renderMemoryList();
 renderStickerManageGrid();
