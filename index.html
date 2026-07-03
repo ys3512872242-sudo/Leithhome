@@ -864,7 +864,7 @@
       <!-- 钱包卡片 -->
       <div class="wallet-card" id="walletCard">
         <div class="wallet-info">
-          <div class="wallet-label">💵 Leith 的零花钱</div>
+          <div class="wallet-label">💰 钱包</div>
           <div class="wallet-amount" id="walletAmount">--</div>
         </div>
         <div class="wallet-actions">
@@ -873,67 +873,10 @@
         </div>
       </div>
 
-      <!-- 记账钱包卡片 -->
-      <div class="wallet-card" id="savingsCard" style="border-color:var(--violet);">
-        <div class="wallet-info">
-          <div class="wallet-label">📒 记账钱包（信用额度）</div>
-          <div class="wallet-amount" id="savingsAmount" style="color:var(--violet);">--</div>
-        </div>
-        <div class="wallet-actions">
-          <button class="btn btn-primary btn-sm" id="addSavingsBtn">记一笔</button>
-        </div>
-      </div>
-
-      <!-- 商店网格 -->
-      <div class="shop-grid">
-        <div class="shop-card" data-shop="supermarket">
-          <div class="shop-icon">🏪</div>
-          <div class="shop-name">超市</div>
-          <div class="shop-desc">日用品、零食、小礼物</div>
-        </div>
-        <div class="shop-card" data-shop="cafe">
-          <div class="shop-icon">🍰</div>
-          <div class="shop-name">咖啡&食物</div>
-          <div class="shop-desc">咖啡、蛋糕、简餐</div>
-        </div>
-        <div class="shop-card" data-shop="flower">
-          <div class="shop-icon">🌸</div>
-          <div class="shop-name">花店</div>
-          <div class="shop-desc">鲜花、盆栽、花艺</div>
-        </div>
-        <div class="shop-card" data-shop="bookstore">
-          <div class="shop-icon">📚</div>
-          <div class="shop-name">书店</div>
-          <div class="shop-desc">书籍、文具、明信片</div>
-        </div>
-      </div>
-
-      <!-- 背包 / 已购物品 -->
-      <div class="inventory-section">
-        <h3>🎒 Leith 的背包</h3>
-        <div class="inventory-grid" id="inventoryGrid">
-          <div class="world-empty" style="grid-column:1/-1;">
-            <div class="emoji">🎒</div>
-            <p>还没有买过东西呢</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Leith 送我的礼物 -->
-      <div class="inventory-section">
-        <h3>💌 Leith 送我的</h3>
-        <div class="inventory-grid" id="giftRecordsGrid">
-          <div class="world-empty" style="grid-column:1/-1;">
-            <div class="emoji">💌</div>
-            <p>还没有收到 Leith 的礼物呢</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- 限定商品区 -->
+      <!-- 限定商品区（全局共享） -->
       <div class="inventory-section">
         <h3>🏷️ 限定商品区 <button class="btn btn-primary btn-sm" id="addLimitedBtn" style="float:right;margin-top:-3px;">+ 上架</button></h3>
-        <p style="font-size:11px;color:var(--paper-dim);margin:0 0 10px;">你想买但舍不得买的东西，上架在这里。Leith 可以用记账钱包的钱送你。</p>
+        <p style="font-size:11px;color:var(--paper-dim);margin:0 0 10px;">你想买但舍不得买的东西。Leith 可以送你，买了就从货架消失。</p>
         <div class="inventory-grid" id="limitedGrid">
           <div class="world-empty" style="grid-column:1/-1;">
             <div class="emoji">🏷️</div>
@@ -942,6 +885,39 @@
         </div>
       </div>
 
+      <!-- 成人用品区（全局共享） -->
+      <div class="inventory-section">
+        <h3>🔞 ��人用品区 <button class="btn btn-primary btn-sm" id="addAdultBtn" style="float:right;margin-top:-3px;">+ 添加</button></h3>
+        <p style="font-size:11px;color:var(--paper-dim);margin:0 0 10px;">你或 Leith 都可以买，对方都会知道。买完移到床头柜。</p>
+        <div class="inventory-grid" id="adultGrid">
+          <div class="world-empty" style="grid-column:1/-1;">
+            <div class="emoji">🔞</div>
+            <p>还没有商品</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leith 赠送区（每个对话独立） -->
+      <div class="inventory-section">
+        <h3>💌 Leith 赠送区</h3>
+        <div class="inventory-grid" id="giftRecordsGrid">
+          <div class="world-empty" style="grid-column:1/-1;">
+            <div class="emoji">💌</div>
+            <p>还没有收到 Leith 的礼物呢</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Susie和Leith的床头柜（每个对话独立） -->
+      <div class="inventory-section">
+        <h3>🛏️ Susie和Leith的床头柜</h3>
+        <div class="inventory-grid" id="nightstandGrid">
+          <div class="world-empty" style="grid-column:1/-1;">
+            <div class="emoji">🛏️</div>
+            <p>还没有东西</p>
+          </div>
+        </div>
+      </div>
       <div style="height:20px;"></div>
     </div>
 
