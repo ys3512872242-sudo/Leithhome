@@ -32,14 +32,13 @@
     --line:#232A3A;
     --line-soft:#1A202D;
     --danger:#C07872;
+    --bottom-bar-h: calc(56px + env(safe-area-inset-bottom));
   }
 
   *{box-sizing:border-box;}
   html{
     height:100%;
     overflow:hidden;
-    /* iOS standalone 模式下，html 上 overflow:hidden 不会阻止键盘弹出，
-       但 body 上 overflow:hidden 会 —— 这是 iOS WebKit 的已知行为 */
   }
   body{
     margin:0;
@@ -51,14 +50,58 @@
     inset:0;
     display:flex;
     flex-direction:column;
-    overflow:visible;
+    overflow:hidden;
     background:
       radial-gradient(ellipse 800px 500px at 20% -10%, var(--accent-glow), transparent 60%),
       radial-gradient(ellipse 600px 400px at 100% 100%, rgba(110,127,184,0.08), transparent 60%),
       var(--bg);
+    padding-bottom: var(--bottom-bar-h);
+    transition: padding-bottom .2s ease;
   }
 
-  /* ===== 顶栏 ===== */
+  /* ===== 页面容器 ===== */
+  .page{
+    display:none;
+    flex-direction:column;
+    height:100%;
+    width:100%;
+    position:absolute;
+    inset:0;
+  }
+  .page.active{ display:flex; }
+
+  /* ===== 底部导航栏 ===== */
+  .bottom-bar{
+    position:fixed;
+    bottom:0; left:0; right:0;
+    height:var(--bottom-bar-h);
+    background:linear-gradient(180deg, rgba(13,16,23,0.92) 0%, var(--bg-deep) 100%);
+    backdrop-filter:blur(14px);
+    border-top:1px solid var(--line-soft);
+    display:flex;
+    z-index:100;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .bottom-tab{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
+    cursor:pointer;
+    color:var(--paper-dim);
+    font-size:10px;
+    letter-spacing:.3px;
+    transition:color .15s ease;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+  }
+  .bottom-tab svg{ width:22px;height:22px; transition:color .15s ease; }
+  .bottom-tab.active{ color:var(--accent); }
+  .bottom-tab:active{ opacity:.7; }
+
+  /* ===== 顶栏（对话页） ===== */
   .topbar{
     display:flex;
     align-items:center;
@@ -169,7 +212,7 @@
   .empty-state .mark{ font-family:'Noto Serif SC', serif; font-size:26px; color:var(--violet); margin-bottom:10px; opacity:.8; }
   .empty-state p{ font-size:13px; line-height:1.8; max-width:280px; margin:0 auto; }
 
-  .msg-row{ display:flex; max-width:100%; }
+  .msg-row{ display:flex; max-width:100%; position:relative; }
   .msg-row.user{ justify-content:flex-end; }
   .msg-row.assistant{ justify-content:flex-start; }
 
@@ -257,6 +300,29 @@
   .send-btn:active{ transform:scale(.92); }
   .send-btn:disabled{ opacity:.4; cursor:default; }
   .send-btn svg{ width:18px;height:18px; color:#0A1622; }
+
+  /* ===== 消息操作按钮 ===== */
+  .msg-action-btn{
+    position:absolute;
+    bottom:-4px;
+    width:24px;height:24px;
+    border-radius:6px;
+    border:1px solid var(--line);
+    background:var(--bg-elevated);
+    color:var(--paper-dim);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+    opacity:0;
+    transition:opacity .15s ease;
+    z-index:5;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .msg-row.user .msg-action-btn{ right:0; }
+  .msg-row.assistant .msg-action-btn{ left:0; }
+  .msg-row:hover .msg-action-btn,
+  .msg-row.tapped .msg-action-btn{ opacity:1; }
+  .msg-action-btn:hover,
+  .msg-action-btn:active{ color:var(--paper); border-color:var(--accent-dim); }
 
   /* ===== 表情包选择面板 ===== */
   .sticker-panel{
@@ -487,7 +553,7 @@
 
   .toast{
     position:fixed;
-    bottom:calc(env(safe-area-inset-bottom) + 90px);
+    bottom:calc(var(--bottom-bar-h) + 16px);
     left:50%;
     transform:translateX(-50%) translateY(10px);
     background:var(--bg-elevated);
@@ -557,106 +623,230 @@
   }
   .token-banner button:hover{ color:var(--paper); border-color:var(--accent-dim); }
 
-  /* ===== 截图导出画布容器（离屏渲染用）===== */
-  .export-canvas-wrap{
-    position:fixed; left:-9999px; top:0;
-    width:380px;
-    background:var(--bg-deep);
-    padding:24px 20px;
+  /* ===== 小世界页面（空壳，后续完善）===== */
+  .world-page{
+    flex:1;
+    overflow-y:auto;
+    padding:20px 16px calc(env(safe-area-inset-bottom) + 20px);
+    display:flex;
+    flex-direction:column;
+    gap:16px;
   }
+  .world-header{
+    text-align:center;
+    padding:calc(env(safe-area-inset-top) + 10px) 0 6px;
+  }
+  .world-header h2{
+    margin:0;
+    font-family:'Noto Serif SC', serif;
+    font-size:22px;
+    font-weight:700;
+    color:var(--paper);
+  }
+  .world-header p{
+    margin:6px 0 0;
+    font-size:12px;
+    color:var(--paper-dim);
+  }
+
+  .wallet-card{
+    background:linear-gradient(135deg, var(--bg-elevated) 0%, rgba(91,143,204,0.08) 100%);
+    border:1px solid var(--accent-dim);
+    border-radius:16px;
+    padding:16px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  }
+  .wallet-info{ }
+  .wallet-label{ font-size:11px; color:var(--paper-dim); margin-bottom:4px; }
+  .wallet-amount{ font-size:26px; font-weight:700; color:var(--accent); font-family:'Noto Serif SC', serif; }
+  .wallet-actions{ display:flex; gap:6px; }
+
+  .shop-grid{
+    display:grid;
+    grid-template-columns:repeat(2, 1fr);
+    gap:12px;
+  }
+  .shop-card{
+    background:var(--bg-elevated);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:16px 14px;
+    text-align:center;
+    cursor:pointer;
+    transition:border-color .15s ease;
+  }
+  .shop-card:hover{ border-color:var(--accent-dim); }
+  .shop-card .shop-icon{ font-size:32px; margin-bottom:8px; }
+  .shop-card .shop-name{ font-size:14px; font-weight:500; color:var(--paper); }
+  .shop-card .shop-desc{ font-size:11px; color:var(--paper-dim); margin-top:4px; line-height:1.5; }
+
+  .inventory-section{ }
+  .inventory-section h3{
+    font-size:13px; color:var(--paper-dim);
+    margin:0 0 10px; font-weight:500;
+  }
+  .inventory-grid{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    gap:8px;
+  }
+  .inventory-item{
+    background:var(--bg-input);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:10px 8px;
+    text-align:center;
+    font-size:12px;
+    color:var(--paper);
+  }
+  .inventory-item .item-emoji{ font-size:24px; margin-bottom:4px; }
+  .inventory-item .item-name{ font-size:11px; color:var(--paper-dim); }
+
+  .world-empty{
+    margin:auto;
+    text-align:center;
+    color:var(--paper-dim);
+    padding:40px 20px;
+  }
+  .world-empty .emoji{ font-size:40px; margin-bottom:12px; }
+  .world-empty p{ font-size:13px; line-height:1.8; }
 
   .hidden{ display:none !important; }
-
-  /* ===== 消息操作按钮（编辑/重新生成）===== */
-  .msg-row{ position:relative; }
-  .msg-action-btn{
-    position:absolute;
-    bottom:-4px;
-    width:24px;height:24px;
-    border-radius:6px;
-    border:1px solid var(--line);
-    background:var(--bg-elevated);
-    color:var(--paper-dim);
-    display:flex;align-items:center;justify-content:center;
-    cursor:pointer;
-    opacity:0;
-    transition:opacity .15s ease;
-    z-index:5;
-    -webkit-tap-highlight-color:transparent;
-  }
-  .msg-row.user .msg-action-btn{ right:0; }
-  .msg-row.assistant .msg-action-btn{ left:0; }
-  .msg-row:hover .msg-action-btn,
-  .msg-row.tapped .msg-action-btn{ opacity:1; }
-  .msg-action-btn:hover,
-  .msg-action-btn:active{ color:var(--paper); border-color:var(--accent-dim); }
 </style>
 </head>
 <body>
 
-  <!-- 顶栏 -->
-  <div class="topbar">
-    <div class="topbar-left">
-      <button class="icon-btn" id="openThreadBtn" title="对话列表">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-      </button>
-      <div class="brand">
-        <span class="brand-mark" id="brandMark">Leith</span>
-        <span class="brand-sub" id="statusLabel">未连接</span>
+  <!-- ===== 页面1：对话页 ===== -->
+  <div class="page active" id="page-chat">
+
+    <!-- 顶栏 -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="icon-btn" id="openThreadBtn" title="对话列表">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+        <div class="brand">
+          <span class="brand-mark" id="brandMark">Leith</span>
+          <span class="brand-sub" id="statusLabel">未连接</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="toggleSelectBtn" title="选取消息">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+        </button>
+        <button class="icon-btn" id="openSettingsBtn" title="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </button>
       </div>
     </div>
-    <div class="topbar-actions">
-      <button class="icon-btn" id="toggleSelectBtn" title="选取消息">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+
+    <!-- 选取模式操作条 -->
+    <div class="select-toolbar hidden" id="selectToolbar">
+      <span id="selectCount">已选 0 条</span>
+      <div class="select-actions">
+        <button class="btn btn-ghost btn-sm" id="exportTextBtn">导出文字</button>
+        <button class="btn btn-ghost btn-sm" id="exportImageBtn">生成截图</button>
+        <button class="btn btn-primary btn-sm" id="cancelSelectBtn">取消</button>
+      </div>
+    </div>
+
+    <!-- 聊天区 -->
+    <div id="tokenBannerSlot"></div>
+    <div class="chat-scroll" id="chatBox">
+      <div class="empty-state" id="emptyState">
+        <div class="mark">"　"</div>
+        <p>还没有对话记录。<br>先在右上角设置里，把服务商和密钥填好，就可以开始说话了。</p>
+      </div>
+    </div>
+
+    <!-- 表情包选择面板 -->
+    <div class="sticker-panel" id="stickerPanel">
+      <div class="sticker-panel-head">
+        <h4>表情包</h4>
+        <button class="icon-btn" id="closeStickerPanelBtn" style="width:28px;height:28px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="sticker-grid" id="stickerGrid"></div>
+    </div>
+
+    <!-- 输入区 -->
+    <div class="input-bar">
+      <button class="sticker-btn" id="openStickerPanelBtn" title="表情包">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
       </button>
-      <button class="icon-btn" id="openSettingsBtn" title="设置">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      <textarea id="userInput" rows="1" placeholder="想说点什么..."></textarea>
+      <button class="send-btn" id="sendBtn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
       </button>
     </div>
-  </div>
 
-  <!-- 选取模式操作条 -->
-  <div class="select-toolbar hidden" id="selectToolbar">
-    <span id="selectCount">已选 0 条</span>
-    <div class="select-actions">
-      <button class="btn btn-ghost btn-sm" id="exportTextBtn">导出文字</button>
-      <button class="btn btn-ghost btn-sm" id="exportImageBtn">生成截图</button>
-      <button class="btn btn-primary btn-sm" id="cancelSelectBtn">取消</button>
+  </div><!-- /page-chat -->
+
+  <!-- ===== 页面2：小世界 ===== -->
+  <div class="page" id="page-world">
+
+    <div class="world-page">
+      <div class="world-header">
+        <h2>🏘️ 小世界</h2>
+        <p>Leith 在这里生活、消费、和你互动</p>
+      </div>
+
+      <!-- 钱包卡片 -->
+      <div class="wallet-card" id="walletCard">
+        <div class="wallet-info">
+          <div class="wallet-label">Leith 的零花钱</div>
+          <div class="wallet-amount" id="walletAmount">--</div>
+        </div>
+        <div class="wallet-actions">
+          <button class="btn btn-primary btn-sm" id="giveMoneyBtn">给零花钱</button>
+          <button class="btn btn-ghost btn-sm" id="toggleAllowanceBtn">每日定额</button>
+        </div>
+      </div>
+
+      <!-- 商店网格 -->
+      <div class="shop-grid">
+        <div class="shop-card" data-shop="supermarket">
+          <div class="shop-icon">🏪</div>
+          <div class="shop-name">超市</div>
+          <div class="shop-desc">日用品、零食、小礼物</div>
+        </div>
+        <div class="shop-card" data-shop="cafe">
+          <div class="shop-icon">🍰</div>
+          <div class="shop-name">咖啡&食物</div>
+          <div class="shop-desc">咖啡、蛋糕、简餐</div>
+        </div>
+        <div class="shop-card" data-shop="flower">
+          <div class="shop-icon">🌸</div>
+          <div class="shop-name">花店</div>
+          <div class="shop-desc">鲜花、盆栽、花艺</div>
+        </div>
+        <div class="shop-card" data-shop="bookstore">
+          <div class="shop-icon">📚</div>
+          <div class="shop-name">书店</div>
+          <div class="shop-desc">书籍、文具、明信片</div>
+        </div>
+      </div>
+
+      <!-- 背包 / 已购物品 -->
+      <div class="inventory-section">
+        <h3>🎒 Leith 的背包</h3>
+        <div class="inventory-grid" id="inventoryGrid">
+          <div class="world-empty" style="grid-column:1/-1;">
+            <div class="emoji">🎒</div>
+            <p>还没有买过东西呢</p>
+          </div>
+        </div>
+      </div>
+
+      <div style="height:20px;"></div>
     </div>
-  </div>
 
-  <!-- 聊天区 -->
-  <div id="tokenBannerSlot"></div>
-  <div class="chat-scroll" id="chatBox">
-    <div class="empty-state" id="emptyState">
-      <div class="mark">"　"</div>
-      <p>还没有对话记录。<br>先在右上角设置里，把服务商和密钥填好，就可以开始说话了。</p>
-    </div>
-  </div>
+  </div><!-- /page-world -->
 
-  <!-- 表情包选择面板 -->
-  <div class="sticker-panel" id="stickerPanel">
-    <div class="sticker-panel-head">
-      <h4>表情包</h4>
-      <button class="icon-btn" id="closeStickerPanelBtn" style="width:28px;height:28px;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-    <div class="sticker-grid" id="stickerGrid"></div>
-  </div>
-
-  <!-- 输入区 -->
-  <div class="input-bar">
-    <button class="sticker-btn" id="openStickerPanelBtn" title="表情包">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
-    </button>
-    <textarea id="userInput" rows="1" placeholder="想说点什么..."></textarea>
-    <button class="send-btn" id="sendBtn">
-      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-    </button>
-  </div>
-
-  <!-- 对话线程侧栏 -->
+  <!-- ===== 对话线程侧栏 ===== -->
   <div class="thread-overlay" id="threadOverlay"></div>
   <div class="thread-panel" id="threadPanel">
     <div class="thread-head">
@@ -671,7 +861,7 @@
     </div>
   </div>
 
-  <!-- 设置抽屉 -->
+  <!-- ===== 设置抽屉 ===== -->
   <div class="drawer-overlay" id="drawerOverlay"></div>
   <div class="drawer" id="settingsDrawer">
     <div class="drawer-head">
@@ -747,6 +937,18 @@
       <button class="btn btn-danger btn-block" id="clearAllBtn">清空全部本地数据</button>
       <p class="helper-text" style="text-align:center;margin-top:8px;">对话记录、密钥、服务商配置、记忆、表情包都存储在这台设备的浏览器里。换设备或清浏览器数据会丢失。</p>
 
+    </div>
+  </div>
+
+  <!-- ===== 底部导航栏 ===== -->
+  <div class="bottom-bar" id="bottomBar">
+    <div class="bottom-tab active" data-page="page-chat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      <span>对话</span>
+    </div>
+    <div class="bottom-tab" data-page="page-world">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span>小世界</span>
     </div>
   </div>
 

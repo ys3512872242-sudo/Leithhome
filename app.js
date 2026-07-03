@@ -1,6 +1,8 @@
 // ============================================================
-// 存储 key
+// app.js — Leith·Home 主逻辑
+// v7：加入底部导航 + 小世界（钱包/商店/背包）框架
 // ============================================================
+
 const LS = {
   providers: "companion_providers_v1",
   activeProviderId: "companion_active_provider_v1",
@@ -11,7 +13,12 @@ const LS = {
   systemPrompt: "companion_system_prompt_v1",
   threads: "companion_threads_v1",
   activeThreadId: "companion_active_thread_v1",
-  threadMsgPrefix: "companion_thread_msgs_"
+  threadMsgPrefix: "companion_thread_msgs_",
+  // 小世界
+  worldAllowance: "companion_world_allowance_v1",   // 每日定额开关+金额
+  worldWallets: "companion_world_wallets_v1",       // { [threadId]: number }
+  worldInventories: "companion_world_inventories_v1", // { [threadId]: [{id,shop, name, emoji, price, boughtAt}] }
+  worldAllowanceLog: "companion_world_allowance_log_v1", // { [dateStr]: [threadId, ...] } 防止重复发
 };
 
 const DEFAULT_PROVIDERS = [
@@ -65,13 +72,298 @@ function renderBubbleContent(text) {
   const escaped = escapeHtml(text);
   const parts = escaped.split(/("[^"]*")/g);
   return parts.map(p => {
-    if (p.startsWith(""") && p.endsWith(""")) {
+    if (p.startsWith("\"") && p.endsWith("\"")) {
       return `<span class="dialogue-text">${p}</span>`;
     } else if (p.trim().length > 0) {
       return `<span class="action-text">${p}</span>`;
     }
     return p;
   }).join("");
+}
+
+// ============================================================
+// 页面切换（底部导航）
+// ============================================================
+let activePage = "page-chat";
+
+function switchPage(pageId) {
+  activePage = pageId;
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  const target = document.getElementById(pageId);
+  if (target) target.classList.add("active");
+
+  document.querySelectorAll(".bottom-tab").forEach(tab => {
+    tab.classList.toggle("active", tab.dataset.page === pageId);
+  });
+
+  if (pageId === "page-world") renderWorldPage();
+}
+
+function initBottomBar() {
+  document.querySelectorAll(".bottom-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      switchPage(tab.dataset.page);
+    });
+  });
+}
+
+// ============================================================
+// 小世界：数据层
+// ============================================================
+
+// 获取某个对话的 Leith 钱包余额
+function getWallet(threadId) {
+  const wallets = loadJSON(LS.worldWallets, {});
+  return wallets[threadId] || 0;
+}
+
+function setWallet(threadId, amount) {
+  const wallets = loadJSON(LS.worldWallets, {});
+  wallets[threadId] = amount;
+  saveJSON(LS.worldWallets, wallets);
+}
+
+function addWallet(threadId, delta) {
+  const now = getWallet(threadId);
+  setWallet(threadId, Math.max(0, now + delta));
+}
+
+// 获取某个对话的 Leith 背包
+function getInventory(threadId) {
+  const invs = loadJSON(LS.worldInventories, {});
+  return invs[threadId] || [];
+}
+
+function addInventoryItem(threadId, item) {
+  const invs = loadJSON(LS.worldInventories, {});
+  if (!invs[threadId]) invs[threadId] = [];
+  invs[threadId].push({ ...item, id: uid(), boughtAt: Date.now() });
+  saveJSON(LS.worldInventories, invs);
+}
+
+// 每日定额逻辑
+function getAllowanceConfig() {
+  return loadJSON(LS.worldAllowance, { enabled: false, amount: 50 });
+}
+
+function setAllowanceConfig(cfg) {
+  saveJSON(LS.worldAllowance, cfg);
+}
+
+// 检查并发放今日定额（每个对话每天只发一次）
+function maybeGiveDailyAllowance() {
+  const cfg = getAllowanceConfig();
+  if (!cfg.enabled) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const log = loadJSON(LS.worldAllowanceLog, {});
+  if (!log[today]) log[today] = [];
+
+  const threads = getThreads();
+  threads.forEach(t => {
+    if (!log[today].includes(t.id)) {
+      addWallet(t.id, cfg.amount);
+      log[today].push(t.id);
+    }
+  });
+  saveJSON(LS.worldAllowanceLog, log);
+}
+
+// ============================================================
+// 小世界：UI 渲染
+// ============================================================
+function renderWorldPage() {
+  maybeGiveDailyAllowance();
+
+  const threadId = getActiveThreadId();
+  const balance = getWallet(threadId);
+  const inventory = getInventory(threadId);
+  const allowanceCfg = getAllowanceConfig();
+
+  // 钱包
+  $("#walletAmount").innerText = `¥${balance}`;
+  $("#toggleAllowanceBtn").innerText = allowanceCfg.enabled ? `每日 ¥${allowanceCfg.amount}` : "每日定额";
+
+  // 背包
+  const grid = $("#inventoryGrid");
+  if (!inventory.length) {
+    grid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🎒</div><p>还没有买过东西呢</p></div>`;
+  } else {
+    grid.innerHTML = inventory.map(item => `
+      <div class="inventory-item">
+        <div class="item-emoji">${item.emoji || "📦"}</div>
+        <div>${escapeHtml(item.name)}</div>
+        <div class="item-name">¥${item.price}</div>
+      </div>
+    `).join("");
+  }
+}
+
+// 给零花钱按钮
+function initGiveMoneyBtn() {
+  $("#giveMoneyBtn").addEventListener("click", () => {
+    const amountStr = prompt("给 Leith 多少零花钱？（数字）", "50");
+    if (amountStr === null) return;
+    const amount = parseInt(amountStr, 10);
+    if (isNaN(amount) || amount <= 0) return showToast("请输入有效金额");
+    const threadId = getActiveThreadId();
+    addWallet(threadId, amount);
+    renderWorldPage();
+    showToast(`已给 Leith ¥${amount}`);
+  });
+}
+
+// 每日定额开关
+function initToggleAllowanceBtn() {
+  $("#toggleAllowanceBtn").addEventListener("click", () => {
+    const cfg = getAllowanceConfig();
+    if (!cfg.enabled) {
+      const amountStr = prompt("每天自动发多少零花钱？（数字）", String(cfg.amount || 50));
+      if (amountStr === null) return;
+      const amount = parseInt(amountStr, 10);
+      if (isNaN(amount) || amount <= 0) return showToast("请输入有效金额");
+      cfg.enabled = true;
+      cfg.amount = amount;
+      setAllowanceConfig(cfg);
+    } else {
+      cfg.enabled = false;
+      setAllowanceConfig(cfg);
+    }
+    renderWorldPage();
+    showToast(cfg.enabled ? `已开启每日定额 ¥${cfg.amount}` : "已关闭每日定额");
+  });
+}
+
+// 商店点击 → 弹窗显示商品
+const SHOP_CATALOG = {
+  supermarket: {
+    name: "超市",
+    icon: "🏪",
+    items: [
+      { name: "巧克力", emoji: "🍫", price: 15 },
+      { name: "薯片", emoji: "🍟", price: 12 },
+      { name: "可乐", emoji: "🥤", price: 8 },
+      { name: "小礼物", emoji: "🎁", price: 30 },
+      { name: "水果", emoji: "🍎", price: 20 },
+    ]
+  },
+  cafe: {
+    name: "咖啡&食物",
+    icon: "🍰",
+    items: [
+      { name: "美式咖啡", emoji: "☕", price: 25 },
+      { name: "拿铁", emoji: "☕", price: 32 },
+      { name: "蛋糕", emoji: "🍰", price: 38 },
+      { name: "三明治", emoji: "🥪", price: 28 },
+    ]
+  },
+  flower: {
+    name: "花店",
+    icon: "🌸",
+    items: [
+      { name: "玫瑰", emoji: "🌹", price: 30 },
+      { name: "向日葵", emoji: "🌻", price: 25 },
+      { name: "多肉盆栽", emoji: "🪴", price: 45 },
+    ]
+  },
+  bookstore: {
+    name: "书店",
+    icon: "📚",
+    items: [
+      { name: "小说", emoji: "📖", price: 40 },
+      { name: "诗集", emoji: "📜", price: 35 },
+      { name: "明信片", emoji: "💌", price: 10 },
+      { name: "钢笔", emoji: "🖋️", price: 60 },
+    ]
+  }
+};
+
+function initShopCards() {
+  document.querySelectorAll(".shop-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const shopId = card.dataset.shop;
+      const shop = SHOP_CATALOG[shopId];
+      if (!shop) return;
+      openShopModal(shop, shopId);
+    });
+  });
+}
+
+function openShopModal(shop, shopId) {
+  const threadId = getActiveThreadId();
+  const balance = getWallet(threadId);
+
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.7);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;";
+
+  const itemsHtml = shop.items.map(item => {
+    const affordable = balance >= item.price;
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line-soft);">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:22px;">${item.emoji}</span>
+          <div>
+            <div style="font-size:14px;color:var(--paper);">${escapeHtml(item.name)}</div>
+            <div style="font-size:12px;color:var(--paper-dim);">¥${item.price}</div>
+          </div>
+        </div>
+        <button
+          class="btn btn-sm ${affordable ? "btn-primary" : "btn-ghost"}"
+          style="${affordable ? "" : "opacity:.4;cursor:default;"}"
+          data-action="buy"
+          data-shop="${shopId}"
+          data-item-name="${escapeHtml(item.name)}"
+          data-item-emoji="${item.emoji}"
+          data-item-price="${item.price}"
+          ${affordable ? "" : "disabled"}
+        >${affordable ? "购买" : "余额不足"}</button>
+      </div>
+    `;
+  }).join("");
+
+  overlay.innerHTML = `
+    <div style="background:var(--bg-elevated);border:1px solid var(--line);border-radius:16px;padding:22px;width:100%;max-width:400px;max-height:80vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div style="font-size:17px;font-weight:600;font-family:'Noto Serif SC',serif;">${shop.icon} ${shop.name}</div>
+        <button id="closeShopModal" style="background:none;border:none;color:var(--paper-dim);cursor:pointer;font-size:20px;padding:2px 6px;">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--paper-dim);margin-bottom:14px;">Leith 的余额：¥${balance}</div>
+      <div>${itemsHtml}</div>
+      <div style="margin-top:16px;font-size:11px;color:var(--paper-dim);line-height:1.6;">
+        提示：点击[购买]会从 Leith 的钱包扣款，物品会出现在背包里。Leith 也可以在对话中主动提出要买东西。
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  overlay.querySelector("#closeShopModal").onclick = () => overlay.remove();
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  // 购买按钮
+  overlay.querySelectorAll("[data-action=buy]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const item = {
+        shop: btn.dataset.shop,
+        name: btn.dataset.itemName,
+        emoji: btn.dataset.itemEmoji,
+        price: parseInt(btn.dataset.itemPrice, 10),
+      };
+      buyItem(threadId, item);
+      overlay.remove();
+      renderWorldPage();
+    });
+  });
+}
+
+function buyItem(threadId, item) {
+  const balance = getWallet(threadId);
+  if (balance < item.price) {
+    showToast("余额不足");
+    return;
+  }
+  setWallet(threadId, balance - item.price);
+  addInventoryItem(threadId, item);
+  showToast(`${item.emoji} ${item.name} 购买成功！¥${item.price}`);
 }
 
 // ============================================================
@@ -141,6 +433,14 @@ function deleteThread(id) {
   threads = threads.filter(t => t.id !== id);
   saveThreads(threads);
   localStorage.removeItem(LS.threadMsgPrefix + id);
+  // 同时清掉钱包和背包
+  const wallets = loadJSON(LS.worldWallets, {});
+  delete wallets[id];
+  saveJSON(LS.worldWallets, wallets);
+  const invs = loadJSON(LS.worldInventories, {});
+  delete invs[id];
+  saveJSON(LS.worldInventories, invs);
+
   if (getActiveThreadId() === id) {
     setActiveThreadId(threads[0].id);
     loadActiveThreadIntoChat();
@@ -153,6 +453,8 @@ function switchThread(id) {
   renderThreadList();
   loadActiveThreadIntoChat();
   closeThreadPanel();
+  // 如果当前在小世界页面，刷新钱包显示
+  if (activePage === "page-world") renderWorldPage();
 }
 
 function renderThreadList() {
@@ -182,7 +484,7 @@ function renderThreadList() {
     });
     item.querySelector(".thread-del").addEventListener("click", (e) => {
       e.stopPropagation();
-      if (confirm(`删除对话「${t.name}」？聊天记录也会一并删除。`)) {
+      if (confirm(`删除对话[${t.name}]？聊天记录也会一并删除。`)) {
         deleteThread(t.id);
       }
     });
@@ -273,7 +575,7 @@ function renderProviderList() {
         showModal("无法删除", "至少需要保留一个服务商。");
         return;
       }
-      if (confirm(`确认删除服务商「${p.name}」？`)) {
+      if (confirm(`确认删除服务商[${p.name}]？`)) {
         providers = providers.filter(x => x.id !== p.id);
         saveJSON(LS.providers, providers);
         if (activeProviderId === p.id) {
@@ -297,7 +599,7 @@ function openProviderEditor(existing) {
   if (baseUrl === null) return;
   const modelsStr = prompt("默认模型列表，用英文逗号分隔：", existing ? existing.models.join(",") : "");
   if (modelsStr === null) return;
-  const apiStyle = confirm("这个服务商是 Anthropic 官方接口风格吗？\n「确定」= Anthropic 官方 /messages 结构\n「取消」= OpenAI 兼容 /chat/completions 结构") ? "anthropic" : "openai";
+  const apiStyle = confirm("这个服务商是 Anthropic 官方接口风格吗？\n[确定]= Anthropic 官方 /messages 结构\n[取消]= OpenAI 兼容 /chat/completions 结构") ? "anthropic" : "openai";
 
   const models = modelsStr.split(",").map(s => s.trim()).filter(Boolean);
 
@@ -535,12 +837,13 @@ function sendSticker(sticker) {
   renderThreadList();
   renderTokenBanner();
 }
+
 // ============================================================
 // 消息渲染
 // ============================================================
 let selectMode = false;
 let selectedMessageIds = new Set();
-let currentController = null;  // 当前请求的 AbortController，用于截停
+let currentController = null;
 
 function renderMessage(msg, opts = {}) {
   const emptyState = $("#emptyState");
@@ -554,7 +857,7 @@ function renderMessage(msg, opts = {}) {
   const bubble = document.createElement("div");
 
   if (msg.type === "sticker") {
-    bubble.className = `bubble sticker`;
+    bubble.className = "bubble sticker";
     bubble.innerHTML = `<img src="${msg.dataUrl}" alt="${escapeHtml(msg.content || "")}">`;
   } else {
     bubble.className = `bubble ${msg.role === "user" ? "user" : "assistant"}`;
@@ -593,7 +896,6 @@ function renderMessage(msg, opts = {}) {
 
   row.addEventListener("click", (e) => {
     if (!selectMode) {
-      // 非选取模式：点击消息行显示/隐藏操作按钮（手机适配）
       const wasTapped = row.classList.contains("tapped");
       document.querySelectorAll(".msg-row.tapped").forEach(r => r.classList.remove("tapped"));
       if (!wasTapped) row.classList.add("tapped");
@@ -657,12 +959,11 @@ function exitSelectMode() {
 // 编辑消息 / 截停 / 重新生成
 // ============================================================
 
-// 编辑已发送的用户消息
 function startEditMessage(row, msg) {
   if (currentController) return showToast("请先等当前回复结束");
   const bubble = row.querySelector(".bubble");
   const originalText = msg.content;
-  
+
   bubble.innerHTML = "";
   const textarea = document.createElement("textarea");
   textarea.value = originalText;
@@ -705,7 +1006,7 @@ function startEditMessage(row, msg) {
     if (idx === -1) return;
     messages = messages.slice(0, idx);
     saveThreadMessages(threadId, messages);
-    
+
     userInput.value = newText;
     userInput.focus();
     loadActiveThreadIntoChat();
@@ -713,26 +1014,24 @@ function startEditMessage(row, msg) {
   };
 }
 
-// 重新生成 AI 回复
 async function regenerateMessage(assistantMsgId) {
   if (currentController) return showToast("请先等当前回复结束");
-  
+
   const threadId = getActiveThreadId();
   let messages = getThreadMessages(threadId);
   const idx = messages.findIndex(m => m._id === assistantMsgId);
   if (idx === -1) return;
-  
+
   const userMsg = messages[idx - 1];
   if (!userMsg || userMsg.role !== "user") return showToast("找不到对应的用户消息");
-  
+
   messages = messages.slice(0, idx);
   saveThreadMessages(threadId, messages);
-  
+
   loadActiveThreadIntoChat();
   await regenerateFromMessage(userMsg);
 }
 
-// 重新生成专用：不重复存用户消息
 async function regenerateFromMessage(userMsg) {
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
@@ -864,7 +1163,6 @@ $("#exportTextBtn").onclick = () => {
   const filename = `Leith对话_${new Date().toISOString().slice(0,10)}.txt`;
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
 
-  // 手机 PWA：用系统分享，用户可以选「存储到文件」
   if (isMobile() && navigator.share && navigator.canShare) {
     const file = new File([blob], filename, { type: "text/plain" });
     if (navigator.canShare({ files: [file] })) {
@@ -877,7 +1175,6 @@ $("#exportTextBtn").onclick = () => {
       showExportTextModal(text);
     }
   } else {
-    // 电脑端：正常下载
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -891,7 +1188,6 @@ $("#exportTextBtn").onclick = () => {
   exitSelectMode();
 };
 
-// 文字导出的备用方案：弹窗复制
 function showExportTextModal(text) {
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.75);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;";
@@ -928,7 +1224,6 @@ $("#exportImageBtn").onclick = async () => {
   await exportSelectionAsImage(selected);
 };
 
-// 用原生 canvas 手绘对话截图，避免引入第三方截图库
 async function exportSelectionAsImage(messages) {
   const padding = 24;
   const bubbleGap = 14;
@@ -958,7 +1253,6 @@ async function exportSelectionAsImage(messages) {
     return lines;
   }
 
-  // 预计算每条消息的高度
   const items = messages.map(m => {
     const isSticker = m.type === "sticker";
     const label = m.role === "user" ? "我" : "Leith";
@@ -977,7 +1271,6 @@ async function exportSelectionAsImage(messages) {
   canvas.style.height = totalHeight + "px";
   ctx.scale(dpr, dpr);
 
-  // 背景
   ctx.fillStyle = "#0D1017";
   ctx.fillRect(0, 0, width, totalHeight);
 
@@ -1028,14 +1321,12 @@ async function exportSelectionAsImage(messages) {
     const url = URL.createObjectURL(blob);
     const filename = `Leith对话截图_${new Date().toISOString().slice(0,10)}.png`;
 
-    // 手机 PWA：弹出图片预览，长按即可保存到相册
     if (isMobile()) {
       showExportImagePreview(url);
       exitSelectMode();
       return;
     }
 
-    // 电脑端：正常下载
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
@@ -1048,7 +1339,6 @@ async function exportSelectionAsImage(messages) {
   }, "image/png");
 }
 
-// 截图预览弹窗 — 手机上长按图片即可保存到相册
 function showExportImagePreview(imgUrl) {
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.9);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:16px;overflow-y:auto;";
@@ -1074,7 +1364,7 @@ function showExportImagePreview(imgUrl) {
 }
 
 // ============================================================
-// Token 用量估算 + 提醒（非强制）
+// Token 用量估算
 // ============================================================
 const TOKEN_WARN_THRESHOLD = 6000;
 let tokenBannerDismissedForThread = {};
@@ -1116,7 +1406,7 @@ function renderTokenBanner() {
 }
 
 // ============================================================
-// 自动扩展输入框高度 + 回车发送
+// 自动扩展输入框 + 回车发送
 // ============================================================
 const userInput = $("#userInput");
 userInput.addEventListener("input", () => {
@@ -1273,7 +1563,7 @@ function maybeAutoNameThread(threadId, firstUserContent) {
   renderThreadList();
 }
 
-// ---- OpenAI 兼容结构 ----
+// ---- OpenAI 兼容 ----
 async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta }) {
   const payloadMessages = [];
   if (systemPrompt.trim()) payloadMessages.push({ role: "system", content: systemPrompt });
@@ -1317,7 +1607,7 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
   return fullReply;
 }
 
-// ---- Anthropic 官方结构 ----
+// ---- Anthropic 官方 ----
 async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta }) {
   const payloadMessages = messages.map(m => ({ role: m.role, content: m.content }));
 
@@ -1381,6 +1671,10 @@ if ("serviceWorker" in navigator) {
 // ============================================================
 // 初始化
 // ============================================================
+initBottomBar();
+initGiveMoneyBtn();
+initToggleAllowanceBtn();
+initShopCards();
 initConfig();
 renderMemoryList();
 renderStickerManageGrid();
