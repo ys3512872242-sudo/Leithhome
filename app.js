@@ -16,9 +16,11 @@ const LS = {
   threadMsgPrefix: "companion_thread_msgs_",
   // 小世界
   worldAllowance: "companion_world_allowance_v1",   // 每日定额开关+金额
-  worldWallets: "companion_world_wallets_v1",       // { [threadId]: number }
+  worldWallets: "companion_world_wallets_v1",       // { [threadId]: number } Leith的零花钱
   worldInventories: "companion_world_inventories_v1", // { [threadId]: [{id,shop, name, emoji, price, boughtAt}] }
   worldAllowanceLog: "companion_world_allowance_log_v1", // { [dateStr]: [threadId, ...] } 防止重复发
+  worldSavings: "companion_world_savings_v1",       // { [threadId]: number } 记账钱包（信用额度）
+  worldGiftRecords: "companion_world_gifts_v1",     // { [threadId]: [{id, name, emoji, price, giftedAt}] } Leith送我的记录
 };
 
 const DEFAULT_PROVIDERS = [
@@ -141,6 +143,35 @@ function addInventoryItem(threadId, item) {
   saveJSON(LS.worldInventories, invs);
 }
 
+// ===== 记账钱包（信用额度，Leith 用它送你限定商品）=====
+function getSavings(threadId) {
+  const savings = loadJSON(LS.worldSavings, {});
+  return savings[threadId] || 0;
+}
+
+function setSavings(threadId, amount) {
+  const savings = loadJSON(LS.worldSavings, {});
+  savings[threadId] = Math.max(0, amount);
+  saveJSON(LS.worldSavings, savings);
+}
+
+function addSavings(threadId, delta) {
+  setSavings(threadId, getSavings(threadId) + delta);
+}
+
+// ===== Leith 送我的礼物记录 =====
+function getGiftRecords(threadId) {
+  const records = loadJSON(LS.worldGiftRecords, {});
+  return records[threadId] || [];
+}
+
+function addGiftRecord(threadId, item) {
+  const records = loadJSON(LS.worldGiftRecords, {});
+  if (!records[threadId]) records[threadId] = [];
+  records[threadId].push({ id: uid(), name: item.name, emoji: item.emoji, price: item.price, giftedAt: Date.now() });
+  saveJSON(LS.worldGiftRecords, records);
+}
+
 // 每日定额逻辑
 function getAllowanceConfig() {
   return loadJSON(LS.worldAllowance, { enabled: false, amount: 50 });
@@ -177,11 +208,16 @@ function renderWorldPage() {
   const threadId = getActiveThreadId();
   const balance = getWallet(threadId);
   const inventory = getInventory(threadId);
+  const savings = getSavings(threadId);
+  const giftRecords = getGiftRecords(threadId);
   const allowanceCfg = getAllowanceConfig();
 
   // 钱包
   $("#walletAmount").innerText = `¥${balance}`;
   $("#toggleAllowanceBtn").innerText = allowanceCfg.enabled ? `每日 ¥${allowanceCfg.amount}` : "每日定额";
+
+  // 记账钱包
+  $("#savingsAmount").innerText = `¥${savings}`;
 
   // 背包
   const grid = $("#inventoryGrid");
@@ -198,6 +234,20 @@ function renderWorldPage() {
         </div>
       `;
     }).join("");
+  }
+
+  // Leith 送我的礼物
+  const giftGrid = $("#giftRecordsGrid");
+  if (!giftRecords.length) {
+    giftGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">💌</div><p>还没有收到 Leith 的礼物呢</p></div>`;
+  } else {
+    giftGrid.innerHTML = giftRecords.map(g => `
+      <div class="inventory-item">
+        <div class="item-emoji">${g.emoji || "🎁"}</div>
+        <div>${escapeHtml(g.name)}</div>
+        <div class="item-name">¥${g.price}</div>
+      </div>
+    `).join("");
   }
 }
 
@@ -233,6 +283,20 @@ function initToggleAllowanceBtn() {
     }
     renderWorldPage();
     showToast(cfg.enabled ? `已开启每日定额 ¥${cfg.amount}` : "已关闭每日定额");
+  });
+}
+
+// 记账钱包按钮
+function initAddSavingsBtn() {
+  $("#addSavingsBtn").addEventListener("click", () => {
+    const amountStr = prompt("记一笔省下的钱（数字）\n比如这个月没乱花，记200", "100");
+    if (amountStr === null) return;
+    const amount = parseInt(amountStr, 10);
+    if (isNaN(amount) || amount <= 0) return showToast("请输入有效金额");
+    const threadId = getActiveThreadId();
+    addSavings(threadId, amount);
+    renderWorldPage();
+    showToast(`记账钱包 +¥${amount}`);
   });
 }
 
@@ -440,6 +504,12 @@ function deleteThread(id) {
   const invs = loadJSON(LS.worldInventories, {});
   delete invs[id];
   saveJSON(LS.worldInventories, invs);
+  const savings = loadJSON(LS.worldSavings, {});
+  delete savings[id];
+  saveJSON(LS.worldSavings, savings);
+  const gifts = loadJSON(LS.worldGiftRecords, {});
+  delete gifts[id];
+  saveJSON(LS.worldGiftRecords, gifts);
 
   if (getActiveThreadId() === id) {
     setActiveThreadId(threads[0].id);
@@ -1441,6 +1511,8 @@ function buildWorldPromptBlock() {
   const threadId = getActiveThreadId();
   const balance = getWallet(threadId);
   const inventory = getInventory(threadId);
+  const giftRecords = getGiftRecords(threadId);
+  const savings = getSavings(threadId);
 
   let invDesc = "背包是空的";
   if (inventory.length) {
@@ -1450,14 +1522,37 @@ function buildWorldPromptBlock() {
     }).join("、");
   }
 
-  return `【你的小世界状态】
-- 你的钱包余额：¥${balance}
-- 你的背包里有：${invDesc}
+  let giftDesc = "还没有送过用户礼物";
+  if (giftRecords.length) {
+    giftDesc = giftRecords.map(g => `${g.emoji} ${g.name}`).join("、");
+  }
 
-你可以自由支配你的钱包余额。如果你想买东西（花自己的钱），在回复中加上标记：[BUY:商店ID:商品名]，比如 [BUY:cafe:燕麦拿铁]，系统会自动从你钱包扣钱并放进背包。
-如果你想送东西给用户（作为礼物），在回复中加上标记：[GIFT:商品名]，比如 [GIFT:三支红玫瑰]，系统会提示用户并从你钱包扣钱。
-商店ID有：supermarket（超市）、cafe（咖啡&食物）、flower（花店）、bookstore（书店）。
-买东西时要自然，不要每次都买，要符合情境。送礼物更要慎重，是表达心意，不是随便送。`;
+  // 列出所有商品，让 AI 知道确切能买什么
+  let shopList = "";
+  for (const shopId in SHOP_CATALOG) {
+    const shop = SHOP_CATALOG[shopId];
+    shopList += `\n${shop.name}（ID: ${shopId}）：\n`;
+    shopList += shop.items.map(i => `  ${i.name} ¥${i.price}`).join("\n");
+    shopList += "\n";
+  }
+
+  return `【你的小世界状态】
+- 你的零花钱余额：¥${balance}（买普通商品从这里扣）
+- 记账钱包（信用额度）：¥${savings}（送用户礼物从这里扣）
+- 你的背包里有：${invDesc}
+- 你送过用户的礼物：${giftDesc}
+
+你可以买的商品如下（只能买这些，名称必须完全一致）：${shopList}
+
+规则：
+1. 想给自己买东西，回复里加 [BUY:商店ID:商品名]，例如 [BUY:cafe:燕麦拿铁]
+   系统自动从你零花钱扣钱，东西进你背包。
+2. 想送用户礼物，回复里加 [GIFT:商品名]，例如 [GIFT:三支红玫瑰]
+   系统自动从记账钱包（你的信用额度）扣钱，弹出提示告诉用户。
+3. 商品名必须和上面列的完全一致，否则购买失败。
+4. 余额不够就不能买。
+5. 买东西要自然，符合聊天情境，不要每次都买。
+6. 送礼物是表达心意，不要频繁送，要在合适的时机。`;
 }
 
 // 解析 AI 回复里的 [BUY:...] 和 [GIFT:...] 标记
@@ -1497,7 +1592,7 @@ function handleAIActions(actions) {
       showToast(`Leith 买了 ${item.emoji} ${item.name}（¥${item.price}）`);
       needRefresh = true;
     } else if (action.type === "gift") {
-      // Leith 送你东西：从钱包扣钱，提示你
+      // Leith 送你东西：从记账钱包扣钱，记录到"他送我的"，提示你
       let foundItem = null;
       for (const shopId in SHOP_CATALOG) {
         const item = SHOP_CATALOG[shopId].items.find(i => i.name === action.itemName);
@@ -1507,12 +1602,13 @@ function handleAIActions(actions) {
         showToast(`Leith 想送你 ${action.itemName}，但商店里没有`);
         return;
       }
-      const balance = getWallet(threadId);
-      if (balance < foundItem.price) {
-        showToast(`Leith 想送你 ${foundItem.name} 但余额不足`);
+      const savings = getSavings(threadId);
+      if (savings < foundItem.price) {
+        showToast(`Leith 想送你 ${foundItem.name} 但记账钱包余额不足`);
         return;
       }
-      setWallet(threadId, balance - foundItem.price);
+      setSavings(threadId, savings - foundItem.price);
+      addGiftRecord(threadId, foundItem);
       showGiftModal(foundItem);
       needRefresh = true;
     }
@@ -1791,6 +1887,7 @@ if ("serviceWorker" in navigator) {
 initBottomBar();
 initGiveMoneyBtn();
 initToggleAllowanceBtn();
+initAddSavingsBtn();
 initShopCards();
 initShopBackBtn();
 initConfig();

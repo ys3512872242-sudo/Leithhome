@@ -864,12 +864,23 @@
       <!-- 钱包卡片 -->
       <div class="wallet-card" id="walletCard">
         <div class="wallet-info">
-          <div class="wallet-label">Leith 的零花钱</div>
+          <div class="wallet-label">💵 Leith 的零花钱</div>
           <div class="wallet-amount" id="walletAmount">--</div>
         </div>
         <div class="wallet-actions">
           <button class="btn btn-primary btn-sm" id="giveMoneyBtn">给零花钱</button>
           <button class="btn btn-ghost btn-sm" id="toggleAllowanceBtn">每日定额</button>
+        </div>
+      </div>
+
+      <!-- 记账钱包卡片 -->
+      <div class="wallet-card" id="savingsCard" style="border-color:var(--violet);">
+        <div class="wallet-info">
+          <div class="wallet-label">📒 记账钱包（信用额度）</div>
+          <div class="wallet-amount" id="savingsAmount" style="color:var(--violet);">--</div>
+        </div>
+        <div class="wallet-actions">
+          <button class="btn btn-primary btn-sm" id="addSavingsBtn">记一笔</button>
         </div>
       </div>
 
@@ -904,6 +915,17 @@
           <div class="world-empty" style="grid-column:1/-1;">
             <div class="emoji">🎒</div>
             <p>还没有买过东西呢</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leith 送我的礼物 -->
+      <div class="inventory-section">
+        <h3>💌 Leith 送我的</h3>
+        <div class="inventory-grid" id="giftRecordsGrid">
+          <div class="world-empty" style="grid-column:1/-1;">
+            <div class="emoji">💌</div>
+            <p>还没有收到 Leith 的礼物呢</p>
           </div>
         </div>
       </div>
