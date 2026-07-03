@@ -71,7 +71,9 @@ function escapeHtml(str) {
 }
 
 function renderBubbleContent(text) {
-  const escaped = escapeHtml(text);
+  // 先去掉 [BUY:...] 和 [GIFT:...] 标记（用户不需要看到这些）
+  const cleaned = text.replace(/\[(?:BUY|GIFT):[^\]]+\]/g, "").trim();
+  const escaped = escapeHtml(cleaned);
   const parts = escaped.split(/("[^"]*")/g);
   return parts.map(p => {
     if (p.startsWith("\"") && p.endsWith("\"")) {
@@ -1542,17 +1544,18 @@ function buildWorldPromptBlock() {
 - 你的背包里有：${invDesc}
 - 你送过用户的礼物：${giftDesc}
 
-你可以买的商品如下（只能买这些，名称必须完全一致）：${shopList}
+【可购买商品清单】（只能买这些，禁止编造不存在的商品）：${shopList}
 
-规则：
-1. 想给自己买东西，回复里加 [BUY:商店ID:商品名]，例如 [BUY:cafe:燕麦拿铁]
-   系统自动从你零花钱扣钱，东西进你背包。
-2. 想送用户礼物，回复里加 [GIFT:商品名]，例如 [GIFT:三支红玫瑰]
-   系统自动从记账钱包（你的信用额度）扣钱，弹出提示告诉用户。
-3. 商品名必须和上面列的完全一致，否则购买失败。
+【重要规则】
+1. 给自己买东西：回复末尾加 [BUY:商店ID:商品名]，例如 [BUY:cafe:燕麦拿铁]
+2. 送用户礼物：回复末尾加 [GIFT:商品名]，例如 [GIFT:三支红玫瑰]
+3. 商品名必须和清单里的一字不差！清单里没有的东西绝对不能买、不能送。
+   错误示范：[GIFT:手链]（清单里没有手链）
+   正确示范：[GIFT:三支红玫瑰]（清单里有这个）
 4. 余额不够就不能买。
 5. 买东西要自然，符合聊天情境，不要每次都买。
-6. 送礼物是表达心意，不要频繁送，要在合适的时机。`;
+6. 送礼物是表达心意，不要频繁送，要在合适的时机。
+7. 标记写在回复最末尾，不要影响正常对话。`;
 }
 
 // 解析 AI 回复里的 [BUY:...] 和 [GIFT:...] 标记
@@ -1571,35 +1574,57 @@ function parseAIActions(text) {
   return actions;
 }
 
+// 在所有商店里模糊查找商品（精确匹配优先，再模糊包含匹配）
+function findItemInShops(itemName) {
+  // 先精确匹配
+  for (const shopId in SHOP_CATALOG) {
+    const item = SHOP_CATALOG[shopId].items.find(i => i.name === itemName);
+    if (item) return { ...item, shop: shopId };
+  }
+  // 再模糊匹配：商品名包含 AI 说的词，或反过来
+  for (const shopId in SHOP_CATALOG) {
+    const item = SHOP_CATALOG[shopId].items.find(i =>
+      i.name.includes(itemName) || itemName.includes(i.name)
+    );
+    if (item) return { ...item, shop: shopId };
+  }
+  return null;
+}
+
 // 处理 AI 的购买/送礼动作
 function handleAIActions(actions) {
   const threadId = getActiveThreadId();
   let needRefresh = false;
   actions.forEach(action => {
     if (action.type === "buy") {
-      // Leith 自己买东西：从钱包扣钱，进背包
-      const shop = SHOP_CATALOG[action.shop];
-      if (!shop) return;
-      const item = shop.items.find(i => i.name === action.itemName);
-      if (!item) return;
-      const balance = getWallet(threadId);
-      if (balance < item.price) {
-        showToast(`Leith 想买 ${item.name} 但余额不足`);
-        return;
-      }
-      setWallet(threadId, balance - item.price);
-      addInventoryItem(threadId, { ...item, shop: action.shop, giftedBy: "leith" });
-      showToast(`Leith 买了 ${item.emoji} ${item.name}（¥${item.price}）`);
-      needRefresh = true;
-    } else if (action.type === "gift") {
-      // Leith 送你东西：从记账钱包扣钱，记录到"他送我的"，提示你
+      // Leith 自己买东西：先在指定商店找，找不到再全局模糊找
       let foundItem = null;
-      for (const shopId in SHOP_CATALOG) {
-        const item = SHOP_CATALOG[shopId].items.find(i => i.name === action.itemName);
-        if (item) { foundItem = { ...item, shop: shopId }; break; }
+      const shop = SHOP_CATALOG[action.shop];
+      if (shop) {
+        const item = shop.items.find(i => i.name === action.itemName);
+        if (item) foundItem = { ...item, shop: action.shop };
       }
       if (!foundItem) {
-        showToast(`Leith 想送你 ${action.itemName}，但商店里没有`);
+        foundItem = findItemInShops(action.itemName);
+      }
+      if (!foundItem) {
+        showToast(`Leith 想买"${action.itemName}"但商店里没有`);
+        return;
+      }
+      const balance = getWallet(threadId);
+      if (balance < foundItem.price) {
+        showToast(`Leith 想买 ${foundItem.name} 但零花钱不足`);
+        return;
+      }
+      setWallet(threadId, balance - foundItem.price);
+      addInventoryItem(threadId, { ...foundItem, giftedBy: "leith" });
+      showToast(`Leith 买了 ${foundItem.emoji} ${foundItem.name}（¥${foundItem.price}）`);
+      needRefresh = true;
+    } else if (action.type === "gift") {
+      // Leith 送你东西：模糊查找商品
+      const foundItem = findItemInShops(action.itemName);
+      if (!foundItem) {
+        showToast(`Leith 想送你"${action.itemName}"但商店里没有`);
         return;
       }
       const savings = getSavings(threadId);
@@ -1613,7 +1638,6 @@ function handleAIActions(actions) {
       needRefresh = true;
     }
   });
-  // 如果当前在小世界页面，刷新显示
   if (needRefresh && activePage === "page-world") renderWorldPage();
 }
 
