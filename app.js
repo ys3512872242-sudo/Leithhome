@@ -19,9 +19,11 @@ const LS = {
   worldWallets: "companion_world_wallets_v1",       // { [threadId]: number } Leith的零花钱
   worldInventories: "companion_world_inventories_v1", // { [threadId]: [{id,shop, name, emoji, price, boughtAt}] }
   worldAllowanceLog: "companion_world_allowance_log_v1", // { [dateStr]: [threadId, ...] } 防止重复发
+  worldSavings: "companion_world_savings_v1",       // { [threadId]: number } 限定商品基金
   worldGiftRecords: "companion_world_gifts_v1",     // { [threadId]: [{id, name, emoji, price, giftedAt}] } Leith赠送区
   worldLimitedItems: "companion_world_limited_v1",  // [{id, name, emoji, price}] 全局限定商品区
   worldAdultItems: "companion_world_adult_v1",      // [{id, name, emoji, price}] 全局成人用品区
+  worldAdultBought: "companion_world_adult_bought_v1", // { [threadId]: Set of itemIds } 每个窗口已买的成人用品
   worldNightstand: "companion_world_nightstand_v1", // { [threadId]: [{id, name, emoji, price, boughtAt}] } 床头柜
 };
 
@@ -147,6 +149,32 @@ function addInventoryItem(threadId, item) {
   saveJSON(LS.worldInventories, invs);
 }
 
+// ===== 限定商品基金（每对话独立）=====
+function getSavings(threadId) {
+  const savings = loadJSON(LS.worldSavings, {});
+  return savings[threadId] || 0;
+}
+function setSavings(threadId, amount) {
+  const savings = loadJSON(LS.worldSavings, {});
+  savings[threadId] = Math.max(0, amount);
+  saveJSON(LS.worldSavings, savings);
+}
+function addSavings(threadId, delta) {
+  setSavings(threadId, getSavings(threadId) + delta);
+}
+
+// ===== 每个窗口已买的成人用品ID =====
+function getAdultBought(threadId) {
+  const bought = loadJSON(LS.worldAdultBought, {});
+  return bought[threadId] || [];
+}
+function addAdultBought(threadId, itemId) {
+  const bought = loadJSON(LS.worldAdultBought, {});
+  if (!bought[threadId]) bought[threadId] = [];
+  if (!bought[threadId].includes(itemId)) bought[threadId].push(itemId);
+  saveJSON(LS.worldAdultBought, bought);
+}
+
 // ===== Leith 赠送区（每个对话独立）=====
 function getGiftRecords(threadId) {
   const records = loadJSON(LS.worldGiftRecords, {});
@@ -266,15 +294,20 @@ function renderWorldPage() {
 
   const threadId = getActiveThreadId();
   const balance = getWallet(threadId);
+  const savings = getSavings(threadId);
   const giftRecords = getGiftRecords(threadId);
   const limitedItems = getLimitedItems();
   const adultItems = getAdultItems();
+  const adultBought = getAdultBought(threadId);
   const nightstand = getNightstand(threadId);
   const allowanceCfg = getAllowanceConfig();
 
-  // 钱包
+  // 钱包（Leith零花钱）
   $("#walletAmount").innerText = `¥${balance}`;
   $("#toggleAllowanceBtn").innerText = allowanceCfg.enabled ? `每日 ¥${allowanceCfg.amount}` : "每日定额";
+
+  // 限定商品基金
+  $("#savingsAmount").innerText = `¥${savings}`;
 
   // 限定商品区（全局）
   const limitedGrid = $("#limitedGrid");
@@ -298,19 +331,21 @@ function renderWorldPage() {
     });
   }
 
-  // 成人用品区（全局）
+  // 成人用品区（全局，但每窗口独立购买状态）
   const adultGrid = $("#adultGrid");
+  const availableAdult = adultItems.filter(i => !adultBought.includes(i.id));
   if (!adultItems.length) {
     adultGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🔞</div><p>还没有商品</p></div>`;
+  } else if (!availableAdult.length) {
+    adultGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🔞</div><p>都买完了，去床头柜看</p></div>`;
   } else {
-    adultGrid.innerHTML = adultItems.map(item => `
+    adultGrid.innerHTML = availableAdult.map(item => `
       <div class="inventory-item">
         <div class="item-emoji">${item.emoji || "🔞"}</div>
         <div>${escapeHtml(item.name)}</div>
-        <div class="item-name">¥${item.price}</div>
+        <div class="item-name">你买免费 · Leith¥${item.price}</div>
         <div style="display:flex;gap:4px;margin-top:4px;">
           <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-adult-buy="${item.id}">购买</button>
-          <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-adult-del="${item.id}">删</button>
         </div>
       </div>
     `).join("");
@@ -318,20 +353,13 @@ function renderWorldPage() {
       btn.addEventListener("click", () => {
         const item = adultItems.find(i => i.id === btn.dataset.adultBuy);
         if (!item) return;
-        const balance = getWallet(threadId);
-        if (balance < item.price) return showToast("余额不足");
-        setWallet(threadId, balance - item.price);
+        // 你买成人用品：免费，直接进床头柜
         addNightstandItem(threadId, item);
-        showToast(`已购买 ${item.emoji} ${item.name}`);
-        // Leith 会知道（下次对话通过 system prompt）
+        addAdultBought(threadId, item.id);
+        showToast(`已购买 ${item.emoji} ${item.name}（免费）`);
+        // 发送提示给 Leith
+        notifyLeithAdultPurchase(item.name);
         renderWorldPage();
-      });
-    });
-    adultGrid.querySelectorAll("[data-adult-del]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        removeAdultItem(btn.dataset.adultDel);
-        renderWorldPage();
-        showToast("已删除");
       });
     });
   }
@@ -359,11 +387,31 @@ function renderWorldPage() {
       <div class="inventory-item">
         <div class="item-emoji">${item.emoji || "📦"}</div>
         <div>${escapeHtml(item.name)}</div>
-        <div class="item-name">¥${item.price}</div>
+        <div class="item-name">${item.boughtBy === "leith" ? "Leith买的" : "你买的"}</div>
       </div>
     `).join("");
   }
 }
+
+// 你买成人用品后，发送提示给 Leith（模拟 Leith 主动发消息）
+function notifyLeithAdultPurchase(itemName) {
+  const threadId = getActiveThreadId();
+  const messages = getThreadMessages(threadId);
+  // 插入一条系统消息，下次对话时 Leith 会看到
+  messages.push({
+    role: "user",
+    content: `[系统通知] Susie 刚刚购买了成人用品：${itemName}`,
+    _id: uid(),
+    _system: true
+  });
+  saveThreadMessages(threadId, messages);
+  // 直接触发 Leith 回复
+  setTimeout(() => {
+    userInput.value = "";
+    sendChat();
+  }, 500);
+}
+
 
 // 给零花钱按钮
 function initGiveMoneyBtn() {
@@ -397,6 +445,20 @@ function initToggleAllowanceBtn() {
     }
     renderWorldPage();
     showToast(cfg.enabled ? `已开启每日定额 ¥${cfg.amount}` : "已关闭每日定额");
+  });
+}
+
+// 限定商品基金按钮
+function initAddSavingsBtn() {
+  $("#addSavingsBtn").addEventListener("click", () => {
+    const amountStr = prompt("存多少到限定商品基金？（数字）\n这笔钱专门给 Leith 送你限定商品用", "100");
+    if (amountStr === null) return;
+    const amount = parseInt(amountStr, 10);
+    if (isNaN(amount) || amount <= 0) return showToast("请输入有效金额");
+    const threadId = getActiveThreadId();
+    addSavings(threadId, amount);
+    renderWorldPage();
+    showToast(`限定商品基金 +¥${amount}`);
   });
 }
 
@@ -643,6 +705,12 @@ function deleteThread(id) {
   const ns = loadJSON(LS.worldNightstand, {});
   delete ns[id];
   saveJSON(LS.worldNightstand, ns);
+  const sav = loadJSON(LS.worldSavings, {});
+  delete sav[id];
+  saveJSON(LS.worldSavings, sav);
+  const ab = loadJSON(LS.worldAdultBought, {});
+  delete ab[id];
+  saveJSON(LS.worldAdultBought, ab);
 
   if (getActiveThreadId() === id) {
     setActiveThreadId(threads[0].id);
@@ -1643,9 +1711,11 @@ async function buildEffectiveSystemPrompt() {
 function buildWorldPromptBlock() {
   const threadId = getActiveThreadId();
   const balance = getWallet(threadId);
+  const savings = getSavings(threadId);
   const giftRecords = getGiftRecords(threadId);
   const limitedItems = getLimitedItems();
   const adultItems = getAdultItems();
+  const adultBought = getAdultBought(threadId);
   const nightstand = getNightstand(threadId);
 
   let giftDesc = "还没有送过用户礼物";
@@ -1658,9 +1728,11 @@ function buildWorldPromptBlock() {
     limitedList = "\n" + limitedItems.map(i => `  ${i.name} ¥${i.price}`).join("\n");
   }
 
-  let adultList = "\n（空）";
-  if (adultItems.length) {
-    adultList = "\n" + adultItems.map(i => `  ${i.name} ¥${i.price}`).join("\n");
+  // 成人用品只显示这个窗口还没买的
+  const availableAdult = adultItems.filter(i => !adultBought.includes(i.id));
+  let adultList = "\n（都买完了）";
+  if (availableAdult.length) {
+    adultList = "\n" + availableAdult.map(i => `  ${i.name} ¥${i.price}`).join("\n");
   }
 
   let nsDesc = "空的";
@@ -1669,19 +1741,20 @@ function buildWorldPromptBlock() {
   }
 
   return `【你的小世界状态】
-- 钱包余额：¥${balance}
+- 你的零花钱：¥${balance}（你买成人用品从这里扣）
+- 限定商品基金：¥${savings}（你送用户限定商品从这里扣）
 - 你送过用户的礼物：${giftDesc}
 - 床头柜里有：${nsDesc}
 
-【限定商品区】（用户想买但舍不得买的东西，你可以送用户）：${limitedList}
+【限定商品区】（用户想买但舍不得买的东西，你可以送用户，送了就消失）：${limitedList}
 
-【成人用品区】（你或用户都可以买，对方都会知道）：${adultList}
+【成人用品区】（还没买的，你可以买，买了进床头柜，用户买的话免费）：${adultList}
 
 【重要规则】
 1. 送用户限定商品：回复末尾加 [LGIFT:商品名]，例如 [LGIFT:Switch游戏机]
-   → 从钱包扣钱，商品从货架消失，进用户的"Leith赠送区"。要慎重！
+   → 从限定商品基金扣钱，商品从货架消失，进用户的"Leith赠送区"。要慎重！
 2. 买成人用品：回复末尾加 [ABUY:商品名]，例如 [ABUY:丝带]
-   → 从钱包扣钱，商品进"床头柜"，用户会知道。
+   → 从你的零花钱扣钱，商品进"床头柜"。每个窗口只能买一次。
 3. 商品名要和清单一致（可以不完全相同，但要包含关键词）。
 4. 余额不够就不能买/不能送。
 5. 送礼物要慎重，在合适的时机。
@@ -1755,18 +1828,18 @@ function handleAIActions(actions) {
       showToast(`Leith 买了 ${foundItem.emoji} ${foundItem.name}（¥${foundItem.price}）`);
       needRefresh = true;
     } else if (action.type === "lgift") {
-      // Leith 送你限定商品：从钱包扣，买完从货架消失，进赠送区
+      // Leith 送你限定商品：从限定商品基金扣，买完从货架消失，进赠送区
       const limitedItem = findLimitedItem(action.itemName);
       if (!limitedItem) {
         showToast(`Leith 想送你"${action.itemName}"但限定商品区没有`);
         return;
       }
-      const balance = getWallet(threadId);
-      if (balance < limitedItem.price) {
-        showToast(`Leith 想送你 ${limitedItem.name} 但钱包余额不足`);
+      const savings = getSavings(threadId);
+      if (savings < limitedItem.price) {
+        showToast(`Leith 想送你 ${limitedItem.name} 但限定商品基金不足`);
         return;
       }
-      setWallet(threadId, balance - limitedItem.price);
+      setSavings(threadId, savings - limitedItem.price);
       removeLimitedItem(limitedItem.id);
       addGiftRecord(threadId, limitedItem);
       showGiftModal(limitedItem);
@@ -2063,6 +2136,7 @@ if ("serviceWorker" in navigator) {
 initBottomBar();
 initGiveMoneyBtn();
 initToggleAllowanceBtn();
+initAddSavingsBtn();
 initAddLimitedBtn();
 initAddAdultBtn();
 initShopCards();

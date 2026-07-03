@@ -861,15 +861,26 @@
         <p>Leith 在这里生活、消费、和你互动</p>
       </div>
 
-      <!-- 钱包卡片 -->
+      <!-- Leith零花钱 -->
       <div class="wallet-card" id="walletCard">
         <div class="wallet-info">
-          <div class="wallet-label">💰 钱包</div>
+          <div class="wallet-label">💵 Leith 的零花钱</div>
           <div class="wallet-amount" id="walletAmount">--</div>
         </div>
         <div class="wallet-actions">
           <button class="btn btn-primary btn-sm" id="giveMoneyBtn">给零花钱</button>
           <button class="btn btn-ghost btn-sm" id="toggleAllowanceBtn">每日定额</button>
+        </div>
+      </div>
+
+      <!-- 限定商品基金 -->
+      <div class="wallet-card" id="savingsCard" style="border-color:var(--violet);">
+        <div class="wallet-info">
+          <div class="wallet-label">📒 限定商品基金</div>
+          <div class="wallet-amount" id="savingsAmount" style="color:var(--violet);">--</div>
+        </div>
+        <div class="wallet-actions">
+          <button class="btn btn-primary btn-sm" id="addSavingsBtn">存一笔</button>
         </div>
       </div>
 
@@ -887,7 +898,7 @@
 
       <!-- 成人用品区（全局共享） -->
       <div class="inventory-section">
-        <h3>🔞 ��人用品区 <button class="btn btn-primary btn-sm" id="addAdultBtn" style="float:right;margin-top:-3px;">+ 添加</button></h3>
+        <h3 style="color:#D970A0;">🔞 ��人用品区 <button class="btn btn-primary btn-sm" id="addAdultBtn" style="float:right;margin-top:-3px;">+ 添加</button></h3>
         <p style="font-size:11px;color:var(--paper-dim);margin:0 0 10px;">你或 Leith 都可以买，对方都会知道。买完移到床头柜。</p>
         <div class="inventory-grid" id="adultGrid">
           <div class="world-empty" style="grid-column:1/-1;">
