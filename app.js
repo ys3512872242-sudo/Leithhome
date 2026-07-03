@@ -21,6 +21,7 @@ const LS = {
   worldAllowanceLog: "companion_world_allowance_log_v1", // { [dateStr]: [threadId, ...] } 防止重复发
   worldSavings: "companion_world_savings_v1",       // { [threadId]: number } 记账钱包（信用额度）
   worldGiftRecords: "companion_world_gifts_v1",     // { [threadId]: [{id, name, emoji, price, giftedAt}] } Leith送我的记录
+  worldLimitedItems: "companion_world_limited_v1",  // { [threadId]: [{id, name, emoji, price, addedAt}] } 限定商品区
 };
 
 const DEFAULT_PROVIDERS = [
@@ -71,8 +72,8 @@ function escapeHtml(str) {
 }
 
 function renderBubbleContent(text) {
-  // 先去掉 [BUY:...] 和 [GIFT:...] 标记（用户不需要看到这些）
-  const cleaned = text.replace(/\[(?:BUY|GIFT):[^\]]+\]/g, "").trim();
+  // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
+  const cleaned = text.replace(/\[(?:BUY|GIFT|LGIFT):[^\]]+\]/g, "").trim();
   const escaped = escapeHtml(cleaned);
   const parts = escaped.split(/("[^"]*")/g);
   return parts.map(p => {
@@ -174,6 +175,38 @@ function addGiftRecord(threadId, item) {
   saveJSON(LS.worldGiftRecords, records);
 }
 
+// ===== 限定商品区（用户手动上架，Leith 可送）=====
+function getLimitedItems(threadId) {
+  const items = loadJSON(LS.worldLimitedItems, {});
+  return items[threadId] || [];
+}
+
+function addLimitedItem(threadId, item) {
+  const items = loadJSON(LS.worldLimitedItems, {});
+  if (!items[threadId]) items[threadId] = [];
+  items[threadId].push({ id: uid(), name: item.name, emoji: item.emoji || "🎁", price: item.price, addedAt: Date.now() });
+  saveJSON(LS.worldLimitedItems, items);
+}
+
+function removeLimitedItem(threadId, itemId) {
+  const items = loadJSON(LS.worldLimitedItems, {});
+  if (!items[threadId]) return;
+  items[threadId] = items[threadId].filter(i => i.id !== itemId);
+  saveJSON(LS.worldLimitedItems, items);
+}
+
+function findLimitedItem(itemName) {
+  const threadId = getActiveThreadId();
+  const items = getLimitedItems(threadId);
+  // 精确匹配优先
+  let found = items.find(i => i.name === itemName);
+  if (!found) {
+    // 模糊匹配
+    found = items.find(i => i.name.includes(itemName) || itemName.includes(i.name));
+  }
+  return found;
+}
+
 // 每日定额逻辑
 function getAllowanceConfig() {
   return loadJSON(LS.worldAllowance, { enabled: false, amount: 50 });
@@ -212,6 +245,7 @@ function renderWorldPage() {
   const inventory = getInventory(threadId);
   const savings = getSavings(threadId);
   const giftRecords = getGiftRecords(threadId);
+  const limitedItems = getLimitedItems(threadId);
   const allowanceCfg = getAllowanceConfig();
 
   // 钱包
@@ -250,6 +284,29 @@ function renderWorldPage() {
         <div class="item-name">¥${g.price}</div>
       </div>
     `).join("");
+  }
+
+  // 限定商品区
+  const limitedGrid = $("#limitedGrid");
+  if (!limitedItems.length) {
+    limitedGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🏷️</div><p>还没有上架限定商品</p></div>`;
+  } else {
+    limitedGrid.innerHTML = limitedItems.map(item => `
+      <div class="inventory-item">
+        <div class="item-emoji">${item.emoji || "🎁"}</div>
+        <div>${escapeHtml(item.name)}</div>
+        <div class="item-name">¥${item.price}</div>
+        <button class="btn btn-danger btn-sm" style="margin-top:4px;font-size:10px;padding:3px 8px;" data-limited-del="${item.id}">下架</button>
+      </div>
+    `).join("");
+    // 绑定下架按钮
+    limitedGrid.querySelectorAll("[data-limited-del]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        removeLimitedItem(threadId, btn.dataset.limitedDel);
+        renderWorldPage();
+        showToast("已下架");
+      });
+    });
   }
 }
 
@@ -299,6 +356,22 @@ function initAddSavingsBtn() {
     addSavings(threadId, amount);
     renderWorldPage();
     showToast(`记账钱包 +¥${amount}`);
+  });
+}
+
+// 限定商品上架按钮
+function initAddLimitedBtn() {
+  $("#addLimitedBtn").addEventListener("click", () => {
+    const name = prompt("商品名称（你想买但舍不得买的东西）", "");
+    if (name === null || !name.trim()) return;
+    const priceStr = prompt("价格（数字）", "");
+    if (priceStr === null) return;
+    const price = parseInt(priceStr, 10);
+    if (isNaN(price) || price <= 0) return showToast("请输入有效价格");
+    const threadId = getActiveThreadId();
+    addLimitedItem(threadId, { name: name.trim(), price });
+    renderWorldPage();
+    showToast(`已上架：${name}（¥${price}）`);
   });
 }
 
@@ -512,6 +585,9 @@ function deleteThread(id) {
   const gifts = loadJSON(LS.worldGiftRecords, {});
   delete gifts[id];
   saveJSON(LS.worldGiftRecords, gifts);
+  const limited = loadJSON(LS.worldLimitedItems, {});
+  delete limited[id];
+  saveJSON(LS.worldLimitedItems, limited);
 
   if (getActiveThreadId() === id) {
     setActiveThreadId(threads[0].id);
@@ -1515,6 +1591,7 @@ function buildWorldPromptBlock() {
   const inventory = getInventory(threadId);
   const giftRecords = getGiftRecords(threadId);
   const savings = getSavings(threadId);
+  const limitedItems = getLimitedItems(threadId);
 
   let invDesc = "背包是空的";
   if (inventory.length) {
@@ -1529,7 +1606,7 @@ function buildWorldPromptBlock() {
     giftDesc = giftRecords.map(g => `${g.emoji} ${g.name}`).join("、");
   }
 
-  // 列出所有商品，让 AI 知道确切能买什么
+  // 普通商品清单
   let shopList = "";
   for (const shopId in SHOP_CATALOG) {
     const shop = SHOP_CATALOG[shopId];
@@ -1538,31 +1615,46 @@ function buildWorldPromptBlock() {
     shopList += "\n";
   }
 
+  // 限定商品清单
+  let limitedList = "";
+  if (limitedItems.length) {
+    limitedList = "\n限定商品区（用户想买但舍不得的东西）：\n";
+    limitedList += limitedItems.map(i => `  ${i.name} ¥${i.price}`).join("\n");
+    limitedList += "\n";
+  } else {
+    limitedList = "\n限定商品区：目前为空\n";
+  }
+
   return `【你的小世界状态】
-- 你的零花钱余额：¥${balance}（买普通商品从这里扣）
-- 记账钱包（信用额度）：¥${savings}（送用户礼物从这里扣）
+- 你的零花钱余额：¥${balance}（买普通商品、送普通礼物从这里扣）
+- 记账钱包（信用额度）：¥${savings}（只用于送限定商品）
 - 你的背包里有：${invDesc}
 - 你送过用户的礼物：${giftDesc}
 
-【可购买商品清单】（只能买这些，禁止编造不存在的商品）：${shopList}
+【普通商品清单】（只能买这些，禁止编造不存在的商品）：${shopList}
+【限定商品清单】${limitedList}
 
 【重要规则】
-1. 给自己买东西：回复末尾加 [BUY:商店ID:商品名]，例如 [BUY:cafe:燕麦拿铁]
-2. 送用户礼物：回复末尾加 [GIFT:商品名]，例如 [GIFT:三支红玫瑰]
-3. 商品名必须和清单里的一字不差！清单里没有的东西绝对不能买、不能送。
-   错误示范：[GIFT:手链]（清单里没有手链）
-   正确示范：[GIFT:三支红玫瑰]（清单里有这个）
-4. 余额不够就不能买。
-5. 买东西要自然，符合聊天情境，不要每次都买。
-6. 送礼物是表达心意，不要频繁送，要在合适的时机。
-7. 标记写在回复最末尾，不要影响正常对话。`;
+1. 给自己买普通商品：回复末尾加 [BUY:商店ID:商品名]，例如 [BUY:cafe:燕麦拿铁]
+   → 从零花钱扣钱，东西进你背包。
+2. 送用户普通商品（花、咖啡等）：回复末尾加 [GIFT:商品名]，例如 [GIFT:三支红玫瑰]
+   → 从零花钱扣钱，弹出提示告诉用户。
+3. 送用户限定商品（用户上架的想买但舍不得买的东西）：回复末尾加 [LGIFT:商品名]，例如 [LGIFT:Switch游戏机]
+   → 从记账钱包扣钱，弹出提示告诉用户，商品从货架消失。
+   → 这个要特别慎重！只有在用户很想要、且你真心想送的时候才送。
+4. 商品名必须和清单里的一致（可以不完全相同，但要包含关键词）。
+5. 余额不够就不能买/不能送。
+6. 买东西要自然，符合聊天情境，不要每次都买。
+7. 送礼物是表达心意，不要频繁送，要在合适的时机。
+8. 标记写在回复最末尾，不要影响正常对话。`;
 }
 
-// 解析 AI 回复里的 [BUY:...] 和 [GIFT:...] 标记
+// 解析 AI 回复里的 [BUY:...] [GIFT:...] [LGIFT:...] 标记
 function parseAIActions(text) {
   const actions = [];
   const buyRegex = /\[BUY:(\w+):([^\]]+)\]/g;
   const giftRegex = /\[GIFT:([^\]]+)\]/g;
+  const lgiftRegex = /\[LGIFT:([^\]]+)\]/g;
 
   let match;
   while ((match = buyRegex.exec(text)) !== null) {
@@ -1570,6 +1662,9 @@ function parseAIActions(text) {
   }
   while ((match = giftRegex.exec(text)) !== null) {
     actions.push({ type: "gift", itemName: match[1].trim() });
+  }
+  while ((match = lgiftRegex.exec(text)) !== null) {
+    actions.push({ type: "lgift", itemName: match[1].trim() });
   }
   return actions;
 }
@@ -1621,20 +1716,37 @@ function handleAIActions(actions) {
       showToast(`Leith 买了 ${foundItem.emoji} ${foundItem.name}（¥${foundItem.price}）`);
       needRefresh = true;
     } else if (action.type === "gift") {
-      // Leith 送你东西：模糊查找商品
+      // Leith 送你普通商品：从零花钱扣
       const foundItem = findItemInShops(action.itemName);
       if (!foundItem) {
         showToast(`Leith 想送你"${action.itemName}"但商店里没有`);
         return;
       }
-      const savings = getSavings(threadId);
-      if (savings < foundItem.price) {
-        showToast(`Leith 想送你 ${foundItem.name} 但记账钱包余额不足`);
+      const balance = getWallet(threadId);
+      if (balance < foundItem.price) {
+        showToast(`Leith 想送你 ${foundItem.name} 但零花钱不足`);
         return;
       }
-      setSavings(threadId, savings - foundItem.price);
+      setWallet(threadId, balance - foundItem.price);
       addGiftRecord(threadId, foundItem);
       showGiftModal(foundItem);
+      needRefresh = true;
+    } else if (action.type === "lgift") {
+      // Leith 送你限定商品：从记账钱包扣，买完从货架消失
+      const limitedItem = findLimitedItem(action.itemName);
+      if (!limitedItem) {
+        showToast(`Leith 想送你"${action.itemName}"但限定商品区没有`);
+        return;
+      }
+      const savings = getSavings(threadId);
+      if (savings < limitedItem.price) {
+        showToast(`Leith 想送你 ${limitedItem.name} 但记账钱包余额不足`);
+        return;
+      }
+      setSavings(threadId, savings - limitedItem.price);
+      removeLimitedItem(threadId, limitedItem.id);
+      addGiftRecord(threadId, limitedItem);
+      showGiftModal(limitedItem);
       needRefresh = true;
     }
   });
@@ -1912,6 +2024,7 @@ initBottomBar();
 initGiveMoneyBtn();
 initToggleAllowanceBtn();
 initAddSavingsBtn();
+initAddLimitedBtn();
 initShopCards();
 initShopBackBtn();
 initConfig();
