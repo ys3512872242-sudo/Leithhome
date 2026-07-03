@@ -63,9 +63,9 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   const escaped = escapeHtml(text);
-  const parts = escaped.split(/(“[^”]*”)/g);
+  const parts = escaped.split(/("[^"]*")/g);
   return parts.map(p => {
-    if (p.startsWith("“") && p.endsWith("”")) {
+    if (p.startsWith(""") && p.endsWith(""")) {
       return `<span class="dialogue-text">${p}</span>`;
     } else if (p.trim().length > 0) {
       return `<span class="action-text">${p}</span>`;
@@ -535,7 +535,6 @@ function sendSticker(sticker) {
   renderThreadList();
   renderTokenBanner();
 }
-
 // ============================================================
 // 消息渲染
 // ============================================================
@@ -593,7 +592,13 @@ function renderMessage(msg, opts = {}) {
   }
 
   row.addEventListener("click", (e) => {
-    if (!selectMode) return;
+    if (!selectMode) {
+      // 非选取模式：点击消息行显示/隐藏操作按钮（手机适配）
+      const wasTapped = row.classList.contains("tapped");
+      document.querySelectorAll(".msg-row.tapped").forEach(r => r.classList.remove("tapped"));
+      if (!wasTapped) row.classList.add("tapped");
+      return;
+    }
     e.stopPropagation();
     toggleMessageSelect(row, msg._id);
   });
@@ -1071,13 +1076,12 @@ function showExportImagePreview(imgUrl) {
 // ============================================================
 // Token 用量估算 + 提醒（非强制）
 // ============================================================
-const TOKEN_WARN_THRESHOLD = 6000; // 粗略估算的字符数阈值，达到后提示
+const TOKEN_WARN_THRESHOLD = 6000;
 let tokenBannerDismissedForThread = {};
 
 function estimateTokens(threadId) {
   const messages = getThreadMessages(threadId);
   const totalChars = messages.reduce((sum, m) => sum + (m.content ? m.content.length : 0), 0);
-  // 粗略换算：中文场景下 1 token 大约对应 1.5-2 个字符，这里取一个中间值仅供参考
   return Math.round(totalChars / 1.7);
 }
 
@@ -1199,7 +1203,6 @@ async function sendChat() {
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
-    // 表情包消息不发给模型（模型收不到图片内容），仅发送文字消息历史
     const textMessages = messages.filter(m => m.type !== "sticker");
 
     let fullReply = "";
@@ -1226,7 +1229,6 @@ async function sendChat() {
     renderThreadList();
     renderTokenBanner();
 
-    // 首次有内容时，尝试用第一句话给对话线程自动命名
     maybeAutoNameThread(threadId, content);
   } catch (err) {
     clearInterval(timeoutTimer);

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Leith·Home</title>
 
 <link rel="manifest" href="manifest.webmanifest">
@@ -582,11 +582,14 @@
     opacity:0;
     transition:opacity .15s ease;
     z-index:5;
+    -webkit-tap-highlight-color:transparent;
   }
   .msg-row.user .msg-action-btn{ right:0; }
   .msg-row.assistant .msg-action-btn{ left:0; }
-  .msg-row:hover .msg-action-btn{ opacity:1; }
-  .msg-action-btn:hover{ color:var(--paper); border-color:var(--accent-dim); }
+  .msg-row:hover .msg-action-btn,
+  .msg-row.tapped .msg-action-btn{ opacity:1; }
+  .msg-action-btn:hover,
+  .msg-action-btn:active{ color:var(--paper); border-color:var(--accent-dim); }
 </style>
 </head>
 <body>
