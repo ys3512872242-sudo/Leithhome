@@ -346,6 +346,7 @@ function renderWorldPage() {
         <div class="item-name">你买免费 · Leith¥${item.price}</div>
         <div style="display:flex;gap:4px;margin-top:4px;">
           <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-adult-buy="${item.id}">购买</button>
+          <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-adult-del="${item.id}">下架</button>
         </div>
       </div>
     `).join("");
@@ -354,12 +355,21 @@ function renderWorldPage() {
         const item = adultItems.find(i => i.id === btn.dataset.adultBuy);
         if (!item) return;
         // 你买成人用品：免费，直接进床头柜
-        addNightstandItem(threadId, item);
+        addNightstandItem(threadId, { ...item, boughtBy: "user" });
         addAdultBought(threadId, item.id);
         showToast(`已购买 ${item.emoji} ${item.name}（免费）`);
-        // 发送提示给 Leith
+        // 发送旁白给 Leith
         notifyLeithAdultPurchase(item.name);
         renderWorldPage();
+      });
+    });
+    adultGrid.querySelectorAll("[data-adult-del]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (confirm("确定下架这个商品？")) {
+          removeAdultItem(btn.dataset.adultDel);
+          renderWorldPage();
+          showToast("已下架");
+        }
       });
     });
   }
@@ -393,23 +403,115 @@ function renderWorldPage() {
   }
 }
 
-// 你买成人用品后，发送提示给 Leith（模拟 Leith 主动发消息）
+// 你买成人用品后，在对话框生成旁白并自动发给 Leith
 function notifyLeithAdultPurchase(itemName) {
   const threadId = getActiveThreadId();
   const messages = getThreadMessages(threadId);
-  // 插入一条系统消息，下次对话时 Leith 会看到
-  messages.push({
-    role: "user",
-    content: `[系统通知] Susie 刚刚购买了成人用品：${itemName}`,
-    _id: uid(),
-    _system: true
-  });
+
+  // 生成旁白消息（用 user 角色，内容是旁白格式）
+  const narration = `（Susie 买了一件${itemName}，放到了床头柜上。）`;
+  const msg = { role: "user", content: narration, _id: uid() };
+  messages.push(msg);
+  renderMessage(msg);
   saveThreadMessages(threadId, messages);
-  // 直接触发 Leith 回复
-  setTimeout(() => {
-    userInput.value = "";
-    sendChat();
-  }, 500);
+  renderThreadList();
+
+  // 自动触发 Leith 回复
+  const box = $("#chatBox");
+  const row = document.createElement("div");
+  row.className = "msg-row assistant";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble assistant";
+  bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
+  row.appendChild(bubble);
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+
+  // 调用 sendChat 的核心逻辑（不读 userInput，直接用旁白作为最后消息）
+  setTimeout(() => autoRespondToNarration(threadId, bubble, row), 600);
+}
+
+// 自动回复旁白（复用 sendChat 的 API 逻辑）
+async function autoRespondToNarration(threadId, bubble, row) {
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || $("#modelSelect").value;
+  const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
+
+  if (!apiKey || !provider || !model) {
+    row.remove();
+    return;
+  }
+
+  const sendBtn = $("#sendBtn");
+  const controller = new AbortController();
+  currentController = controller;
+  let lastChunkTime = Date.now();
+  let hasReceivedContent = false;
+  const timeoutTimer = setInterval(() => {
+    if (Date.now() - lastChunkTime > 60000) { controller.abort(); clearInterval(timeoutTimer); }
+  }, 1000);
+
+  const originalSendHTML = sendBtn.innerHTML;
+  const originalSendBg = sendBtn.style.background;
+  const originalSendBorder = sendBtn.style.border;
+  const originalSendColor = sendBtn.style.color;
+  const originalSendHandler = sendBtn.onclick;
+  sendBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
+  sendBtn.style.background = "var(--bg-elevated)";
+  sendBtn.style.border = "1px solid var(--accent-dim)";
+  sendBtn.style.color = "var(--paper)";
+  sendBtn.onclick = () => controller.abort();
+
+  try {
+    const systemPrompt = await buildEffectiveSystemPrompt();
+    const messages = getThreadMessages(threadId).filter(m => m.type !== "sticker");
+    let fullReply = "";
+    if (provider.apiStyle === "anthropic") {
+      fullReply = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+        lastChunkTime = Date.now(); hasReceivedContent = true;
+        bubble.innerHTML = renderBubbleContent(acc);
+        $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
+      }});
+    } else {
+      fullReply = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+        lastChunkTime = Date.now(); hasReceivedContent = true;
+        bubble.innerHTML = renderBubbleContent(acc);
+        $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
+      }});
+    }
+    clearInterval(timeoutTimer);
+    const freshMessages = getThreadMessages(threadId);
+    freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
+    saveThreadMessages(threadId, freshMessages);
+    renderThreadList();
+    const actions = parseAIActions(fullReply);
+    if (actions.length) handleAIActions(actions);
+  } catch (err) {
+    clearInterval(timeoutTimer);
+    if (err.name === "AbortError") {
+      if (hasReceivedContent) {
+        const partial = bubble.innerText;
+        if (partial.trim()) {
+          const freshMessages = getThreadMessages(threadId);
+          freshMessages.push({ role: "assistant", content: partial, _id: uid() });
+          saveThreadMessages(threadId, freshMessages);
+          showToast("已停止，已保存");
+        } else { row.remove(); }
+      } else { row.remove(); }
+    } else {
+      row.remove();
+      showModal("请求失败", err.message || "网络错误");
+    }
+  } finally {
+    currentController = null;
+    sendBtn.innerHTML = originalSendHTML;
+    sendBtn.style.background = originalSendBg;
+    sendBtn.style.border = originalSendBorder;
+    sendBtn.style.color = originalSendColor;
+    sendBtn.onclick = originalSendHandler;
+  }
 }
 
 
