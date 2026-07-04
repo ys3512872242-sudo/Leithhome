@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>搜索测试</title>
+<style>
+  body{ font-family:sans-serif; padding:20px; max-width:600px; margin:0 auto; line-height:1.6; }
+  button{ padding:12px 20px; margin:8px 4px 8px 0; font-size:15px; cursor:pointer; border-radius:8px; border:1px solid #33547A; background:#161B26; color:#E7ECF5; }
+  button:active{ transform:scale(.97); }
+  pre{ background:#0D1017; color:#7C879C; padding:14px; border-radius:10px; white-space:pre-wrap; word-break:break-all; font-size:13px; max-height:60vh; overflow:auto; }
+  .ok{ color:#5BCC8F; }
+  .fail{ color:#C07872; }
+  input{ padding:10px; font-size:15px; border-radius:8px; border:1px solid #33547A; background:#1B2130; color:#E7ECF5; width:100%; box-sizing:border-box; margin:8px 0; }
+</style>
+</head>
+<body>
+<h2>搜索功能诊断</h2>
+<p>依次点下面的按钮，看哪个能通。把结果截图发给我。</p>
+
+<input id="q" value="深圳天气">
+
+<button onclick="test1()">测试1：Instant Answer API（主路）</button>
+<button onclick="test2()">测试2：HTML版 + allorigins</button>
+<button onclick="test3()">测试3：HTML版 + codetabs</button>
+<button onclick="test4()">测试4：HTML版 + corsproxy</button>
+
+<pre id="log">点按钮开始测试...</pre>
+
+<script>
+const log = document.getElementById('log');
+function out(msg, ok) {
+  const cls = ok === true ? 'ok' : (ok === false ? 'fail' : '');
+  log.innerHTML += `<span class="${cls}">${msg}</span>\n`;
+  log.scrollTop = log.scrollHeight;
+}
+
+async function test1() {
+  log.innerHTML = '=== 测试1: Instant Answer API ===\n';
+  const q = document.getElementById('q').value;
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+  out('请求: ' + url);
+  try {
+    const r = await fetch(url);
+    out('HTTP状态: ' + r.status, r.ok);
+    if (r.ok) {
+      const data = await r.json();
+      out('AbstractText: ' + (data.AbstractText || '(空)'));
+      out('RelatedTopics数量: ' + (data.RelatedTopics?.length || 0));
+      out('返回数据大小: ' + JSON.stringify(data).length + ' 字节', true);
+    } else {
+      const t = await r.text().catch(()=>'');
+      out('错误响应: ' + t.slice(0,200), false);
+    }
+  } catch (e) {
+    out('异常: ' + e.message, false);
+  }
+}
+
+async function test2() {
+  log.innerHTML = '=== 测试2: HTML版 + allorigins ===\n';
+  const q = document.getElementById('q').value;
+  const target = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+  const url = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(target);
+  out('请求: ' + url);
+  try {
+    const r = await fetch(url);
+    out('HTTP状态: ' + r.status, r.ok);
+    if (r.ok) {
+      const html = await r.text();
+      out('返回大小: ' + html.length + ' 字符');
+      out('包含结果?: ' + (html.includes('result__a') ? '是' : '否'), html.includes('result__a'));
+    } else {
+      out('失败', false);
+    }
+  } catch (e) {
+    out('异常: ' + e.message, false);
+  }
+}
+
+async function test3() {
+  log.innerHTML = '=== 测试3: HTML版 + codetabs ===\n';
+  const q = document.getElementById('q').value;
+  const target = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+  const url = 'https://api.codetabs.com/v1/proxy/?quest=' + target;
+  out('请求: ' + url);
+  try {
+    const r = await fetch(url);
+    out('HTTP状态: ' + r.status, r.ok);
+    if (r.ok) {
+      const html = await r.text();
+      out('返回大小: ' + html.length + ' 字符');
+      out('包含结果?: ' + (html.includes('result__a') ? '是' : '否'), html.includes('result__a'));
+    } else {
+      out('失败', false);
+    }
+  } catch (e) {
+    out('异常: ' + e.message, false);
+  }
+}
+
+async function test4() {
+  log.innerHTML = '=== 测试4: HTML版 + corsproxy ===\n';
+  const q = document.getElementById('q').value;
+  const target = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+  const url = 'https://corsproxy.io/?url=' + encodeURIComponent(target);
+  out('请求: ' + url);
+  try {
+    const r = await fetch(url);
+    out('HTTP状态: ' + r.status, r.ok);
+    if (r.ok) {
+      const html = await r.text();
+      out('返回大小: ' + html.length + ' 字符');
+      out('包含结果?: ' + (html.includes('result__a') ? '是' : '否'), html.includes('result__a'));
+    } else {
+      out('失败', false);
+    }
+  } catch (e) {
+    out('异常: ' + e.message, false);
+  }
+}
+</script>
+</body>
+</html>
