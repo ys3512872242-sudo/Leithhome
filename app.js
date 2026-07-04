@@ -131,9 +131,22 @@ function setWallet(threadId, amount) {
   saveJSON(LS.worldWallets, wallets);
 }
 
-function addWallet(threadId, delta) {
-  const now = getWallet(threadId);
-  setWallet(threadId, Math.max(0, now + delta));
+// 给零花钱并自动在对话里插入通知，让 Leith 知道
+function addWallet(threadId, delta, note) {
+  const before = getWallet(threadId);
+  const after = Math.max(0, before + delta);
+  setWallet(threadId, after);
+  // 在对话里插入系统通知，Leith 下次发送时能看到
+  const msg = note || `💰 Susie给了Leith ¥${delta}零花钱。零钱包变动：¥${before} → ¥${after}`;
+  insertSystemNote(threadId, msg);
+}
+
+// 在对话里插入一条系统提示（用户看不到，但会出现在下一轮 system prompt 注入的消息里）
+function insertSystemNote(threadId, text) {
+  const msgs = getThreadMessages(threadId);
+  msgs.push({ role: "user", content: `[系统通知] ${text}`, _id: uid(), _isSystemNote: true });
+  saveThreadMessages(threadId, msgs);
+  renderThreadList();
 }
 
 // 获取某个对话的 Leith 背包
@@ -525,7 +538,7 @@ function initGiveMoneyBtn() {
     const threadId = getActiveThreadId();
     addWallet(threadId, amount);
     renderWorldPage();
-    showToast(`已给 Leith ¥${amount}`);
+    showToast(`已给 Leith ¥${amount}，零钱包现有 ¥${getWallet(threadId)}`);
   });
 }
 
@@ -1233,6 +1246,8 @@ let selectedMessageIds = new Set();
 let currentController = null;
 
 function renderMessage(msg, opts = {}) {
+  // 系统通知不渲染到界面上
+  if (msg._isSystemNote) return null;
   const emptyState = $("#emptyState");
   if (emptyState) emptyState.remove();
   const box = $("#chatBox");
@@ -1987,7 +2002,18 @@ async function buildEffectiveSystemPrompt() {
   const memoryBlock = window.Memory ? await window.Memory.asPromptBlock() : "";
   const worldBlock = buildWorldPromptBlock();
   const webBlock = buildWebPromptBlock();
-  return [base.trim(), memoryBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
+  // 把最近的系统通知也加入上下文，让 Leith 知道余额变动
+  const noteBlock = buildSystemNotesBlock();
+  return [base.trim(), memoryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
+}
+
+// 提取最近 5 条系统通知，拼成一段文字
+function buildSystemNotesBlock() {
+  const threadId = getActiveThreadId();
+  const msgs = getThreadMessages(threadId);
+  const notes = msgs.filter(m => m._isSystemNote).slice(-5);
+  if (!notes.length) return "";
+  return "【系统通知】以下是最近发生的余额/交易变动：\n" + notes.map(m => `- ${m.content.replace("[系统通知] ", "")}`).join("\n");
 }
 
 // 把小世界状态拼成提示词，让 Leith 能感知到
@@ -2108,6 +2134,7 @@ function handleAIActions(actions) {
       }
       setWallet(threadId, balance - foundItem.price);
       addInventoryItem(threadId, { ...foundItem, giftedBy: "leith" });
+      insertSystemNote(threadId, `Leith在商店买了 ${foundItem.emoji} ${foundItem.name}，花费¥${foundItem.price}。零钱包：¥${balance} → ¥${balance - foundItem.price}`);
       showToast(`Leith 买了 ${foundItem.emoji} ${foundItem.name}（¥${foundItem.price}）`);
       needRefresh = true;
     } else if (action.type === "lgift") {
@@ -2142,6 +2169,7 @@ function handleAIActions(actions) {
       setWallet(threadId, balance - adultItem.price);
       removeAdultItem(adultItem.id);
       addNightstandItem(threadId, adultItem);
+      insertSystemNote(threadId, `Leith买了成人用品 ${adultItem.emoji} ${adultItem.name}，花费¥${adultItem.price}。零钱包：¥${balance} → ¥${balance - adultItem.price}`);
       showToast(`Leith 买了 ${adultItem.emoji} ${adultItem.name}（¥${adultItem.price}）`);
       needRefresh = true;
     }
