@@ -131,13 +131,12 @@ function setWallet(threadId, amount) {
   saveJSON(LS.worldWallets, wallets);
 }
 
-// 给零花钱并自动在对话里插入旁白消息（当前窗口直接显示，Leith 下次发送时也能看到）
+// 给零花钱并自动在当前对话里插入旁白消息
 function addWallet(threadId, delta) {
   const before = getWallet(threadId);
   const after = Math.max(0, before + delta);
   setWallet(threadId, after);
-  // 在当前窗口渲染旁白
-  broadcastToAllThreads(`💸 Susie给了Leith ¥${delta}零花钱。零钱包：¥${before} → ¥${after}`);
+  insertNarration(threadId, `💸 Susie给了Leith ¥${delta}零花钱。零钱包：¥${before} → ¥${after}`);
 }
 
 // 在某个窗口的聊天里插入旁白（你也能看到，Leith 也能看到）
@@ -151,12 +150,6 @@ function insertNarration(threadId, text) {
     renderMessage(msg);
   }
   renderThreadList();
-}
-
-// 给所有对话窗口都插入同一条旁白（用于跨窗口的余额变动通知）
-function broadcastToAllThreads(text) {
-  const threads = getThreads();
-  threads.forEach(t => insertNarration(t.id, text));
 }
 
 // 获取某个对话的 Leith 背包
