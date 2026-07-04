@@ -1878,7 +1878,7 @@ const WEB_SEARCH_TOOL = {
   type: "function",
   function: {
     name: "web_search",
-    description: "搜索网页获取最新信息。当你需要查实时信息、不确定的事实、或用户问了你不知道的事时调用。每次只搜一个关键词。",
+    description: "搜索网页获取最新信息。当你需要查实时信息、不确定的事实、或用户问了你不知道的事时调用。每次只搜一个关键词。如果返回'搜索暂时不可用'，就基于已有知识回答，不要反复重试。",
     parameters: {
       type: "object",
       properties: {
@@ -1889,24 +1889,67 @@ const WEB_SEARCH_TOOL = {
   }
 };
 
-// DuckDuckGo 搜索（用 HTML 接口，免 key）
-// 注意：浏览器直连 duckduckgo 会有 CORS，需走代理。代理地址可在 localStorage 配置。
+// DuckDuckGo 搜索
+// 优先用 Instant Answer API（原生支持 CORS，浏览器直连免代理）
+// 不够用时降级到 HTML 版 + 代理
 const SEARCH_PROXY_LS = "companion_search_proxy_v1";
-const DEFAULT_SEARCH_PROXY = "https://corsproxy.io/?url=";
+const FALLBACK_PROXIES = [
+  { url: "https://api.allorigins.win/raw?url=", encode: true },
+  { url: "https://corsproxy.io/?url=", encode: true },
+  { url: "https://api.codetabs.com/v1/proxy/?quest=", encode: false }
+];
 
 function getSearchProxy() {
-  return localStorage.getItem(SEARCH_PROXY_LS) || DEFAULT_SEARCH_PROXY;
+  return localStorage.getItem(SEARCH_PROXY_LS) || "";
 }
 
 async function duckDuckGoSearch(query) {
+  // 第一路：Instant Answer API，原生 CORS，免代理，最稳
+  try {
+    const r = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+    if (r.ok) {
+      const data = await r.json();
+      const parts = [];
+      if (data.AbstractText) parts.push(data.AbstractText);
+      if (data.AbstractURL) parts.push(`来源：${data.AbstractURL}`);
+      if (data.RelatedTopics && data.RelatedTopics.length) {
+        const tops = data.RelatedTopics
+          .filter(t => t.Text)
+          .slice(0, 4)
+          .map(t => `- ${t.Text}`);
+        if (tops.length) parts.push("相关：\n" + tops.join("\n"));
+      }
+      if (parts.length) return parts.join("\n\n");
+    }
+  } catch (e) { /* 降级 */ }
+
+  // 第二路：HTML 版 + 代理降级
   const targetUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const proxy = getSearchProxy();
-  // corsproxy.io 需要把目标 url 编码后拼在后面
-  const fetchUrl = proxy + encodeURIComponent(targetUrl);
-  const resp = await fetch(fetchUrl);
-  if (!resp.ok) throw new Error(`搜索请求失败 HTTP ${resp.status}`);
-  const html = await resp.text();
-  // 解析结果
+  const customProxy = getSearchProxy();
+  const proxies = customProxy
+    ? [{ url: customProxy, encode: true }]
+    : FALLBACK_PROXIES;
+
+  let lastErr = null;
+  for (const proxy of proxies) {
+    const fetchUrl = proxy.encode ? proxy.url + encodeURIComponent(targetUrl) : proxy.url + targetUrl;
+    try {
+      const resp = await fetch(fetchUrl, { headers: { "Accept": "text/html" } });
+      if (!resp.ok) { lastErr = new Error(`HTTP ${resp.status}`); continue; }
+      const html = await resp.text();
+      if (!html || html.length < 200) { lastErr = new Error("返回内容过短"); continue; }
+      const parsed = parseDuckDuckGoHtml(html);
+      if (parsed) return parsed;
+      lastErr = new Error("解析不到结果");
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  // 两路都失败，给 AI 一个明确反馈，让它别卡住
+  return `搜索暂时不可用（${lastErr?.message || "网络问题"}）。请基于你已有的知识回答，或建议用户稍后再试、或换个搜索代理。`;
+}
+
+function parseDuckDuckGoHtml(html) {
   const results = [];
   const linkRe = /<a rel="nofollow" class="result__a" href="([^"]+)">(.*?)<\/a>/g;
   const snippetRe = /<a class="result__snippet"[^>]*>(.*?)<\/a>/g;
@@ -1917,7 +1960,7 @@ async function duckDuckGoSearch(query) {
     const snippet = (snippets[i]?.[1] || "").replace(/<[^>]+>/g, "").trim();
     if (title) results.push(`${i + 1}. ${title}\n${snippet}`);
   }
-  return results.length ? results.join("\n\n") : "没有找到相关结果。";
+  return results.length ? results.join("\n\n") : null;
 }
 
 // Anthropic 工具格式转换
