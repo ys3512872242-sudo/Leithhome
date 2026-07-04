@@ -131,22 +131,32 @@ function setWallet(threadId, amount) {
   saveJSON(LS.worldWallets, wallets);
 }
 
-// 给零花钱并自动在对话里插入通知，让 Leith 知道
-function addWallet(threadId, delta, note) {
+// 给零花钱并自动在对话里插入旁白消息（当前窗口直接显示，Leith 下次发送时也能看到）
+function addWallet(threadId, delta) {
   const before = getWallet(threadId);
   const after = Math.max(0, before + delta);
   setWallet(threadId, after);
-  // 在对话里插入系统通知，Leith 下次发送时能看到
-  const msg = note || `💰 Susie给了Leith ¥${delta}零花钱。零钱包变动：¥${before} → ¥${after}`;
-  insertSystemNote(threadId, msg);
+  // 在当前窗口渲染旁白
+  broadcastToAllThreads(`💸 Susie给了Leith ¥${delta}零花钱。零钱包：¥${before} → ¥${after}`);
 }
 
-// 在对话里插入一条系统提示（用户看不到，但会出现在下一轮 system prompt 注入的消息里）
-function insertSystemNote(threadId, text) {
+// 在某个窗口的聊天里插入旁白（你也能看到，Leith 也能看到）
+function insertNarration(threadId, text) {
   const msgs = getThreadMessages(threadId);
-  msgs.push({ role: "user", content: `[系统通知] ${text}`, _id: uid(), _isSystemNote: true });
+  const msg = { role: "user", content: text, _id: uid(), _isNarration: true };
+  msgs.push(msg);
   saveThreadMessages(threadId, msgs);
+  // 如果当前就是这个窗口，渲染出来
+  if (getActiveThreadId() === threadId) {
+    renderMessage(msg);
+  }
   renderThreadList();
+}
+
+// 给所有对话窗口都插入同一条旁白（用于跨窗口的余额变动通知）
+function broadcastToAllThreads(text) {
+  const threads = getThreads();
+  threads.forEach(t => insertNarration(t.id, text));
 }
 
 // 获取某个对话的 Leith 背包
@@ -1246,12 +1256,24 @@ let selectedMessageIds = new Set();
 let currentController = null;
 
 function renderMessage(msg, opts = {}) {
-  // 系统通知不渲染到界面上
-  if (msg._isSystemNote) return null;
   const emptyState = $("#emptyState");
   if (emptyState) emptyState.remove();
   const box = $("#chatBox");
   const row = document.createElement("div");
+
+  // 旁白消息：居中半透明，不参与选取，没有编辑/重新生成按钮
+  if (msg._isNarration) {
+    row.className = "msg-row narration";
+    row.dataset.msgId = msg._id;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble narration";
+    bubble.innerText = msg.content;
+    row.appendChild(bubble);
+    box.appendChild(row);
+    if (!opts.noScroll) box.scrollTop = box.scrollHeight;
+    return bubble;
+  }
+
   row.className = `msg-row ${msg.role === "user" ? "user" : "assistant"}`;
   if (!msg._id) msg._id = uid();
   row.dataset.msgId = msg._id;
@@ -1348,6 +1370,8 @@ function enterSelectMode() {
   $("#selectToolbar").classList.remove("hidden");
   $("#selectCount").innerText = "已选 0 条";
   document.querySelectorAll(".msg-row").forEach(row => {
+    // 旁白消息不参与选取
+    if (row.classList.contains("narration")) return;
     applySelectableUI(row, row.dataset.msgId);
   });
 }
@@ -2007,13 +2031,13 @@ async function buildEffectiveSystemPrompt() {
   return [base.trim(), memoryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
 }
 
-// 提取最近 5 条系统通知，拼成一段文字
+// 提取最近 5 条旁白，拼成一段提醒
 function buildSystemNotesBlock() {
   const threadId = getActiveThreadId();
   const msgs = getThreadMessages(threadId);
-  const notes = msgs.filter(m => m._isSystemNote).slice(-5);
+  const notes = msgs.filter(m => m._isNarration).slice(-5);
   if (!notes.length) return "";
-  return "【系统通知】以下是最近发生的余额/交易变动：\n" + notes.map(m => `- ${m.content.replace("[系统通知] ", "")}`).join("\n");
+  return "【近期事件】\n" + notes.map(m => `- ${m.content}`).join("\n");
 }
 
 // 把小世界状态拼成提示词，让 Leith 能感知到
@@ -2134,7 +2158,7 @@ function handleAIActions(actions) {
       }
       setWallet(threadId, balance - foundItem.price);
       addInventoryItem(threadId, { ...foundItem, giftedBy: "leith" });
-      insertSystemNote(threadId, `Leith在商店买了 ${foundItem.emoji} ${foundItem.name}，花费¥${foundItem.price}。零钱包：¥${balance} → ¥${balance - foundItem.price}`);
+      insertNarration(threadId, `🛒 Leith在商店买了 ${foundItem.emoji} ${foundItem.name}，花费¥${foundItem.price}。零钱包：¥${balance} → ¥${balance - foundItem.price}`);
       showToast(`Leith 买了 ${foundItem.emoji} ${foundItem.name}（¥${foundItem.price}）`);
       needRefresh = true;
     } else if (action.type === "lgift") {
@@ -2169,7 +2193,7 @@ function handleAIActions(actions) {
       setWallet(threadId, balance - adultItem.price);
       removeAdultItem(adultItem.id);
       addNightstandItem(threadId, adultItem);
-      insertSystemNote(threadId, `Leith买了成人用品 ${adultItem.emoji} ${adultItem.name}，花费¥${adultItem.price}。零钱包：¥${balance} → ¥${balance - adultItem.price}`);
+      insertNarration(threadId, `🔞 Leith买了成人用品 ${adultItem.emoji} ${adultItem.name}，花费¥${adultItem.price}。零钱包：¥${balance} → ¥${balance - adultItem.price}`);
       showToast(`Leith 买了 ${adultItem.emoji} ${adultItem.name}（¥${adultItem.price}）`);
       needRefresh = true;
     }

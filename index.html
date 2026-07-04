@@ -243,6 +243,21 @@
   .bubble.assistant .action-text{ color:var(--paper-dim); font-family:'Noto Sans SC', sans-serif; font-style:italic; }
   .bubble.assistant .dialogue-text{ color:var(--paper); }
 
+  /* 旁白消息：居中、半透明、斜体 */
+  .msg-row.narration{ justify-content:center; margin:4px 0; }
+  .bubble.narration{
+    max-width:92%;
+    padding:8px 14px;
+    font-size:13px;
+    color:var(--paper-dim);
+    background:transparent;
+    border:none;
+    font-family:'Noto Sans SC', sans-serif;
+    font-style:italic;
+    text-align:center;
+    opacity:.7;
+  }
+
   .bubble.sticker{ padding:6px; background:none; border:none; }
   .bubble.sticker img{ width:120px; height:120px; object-fit:contain; border-radius:12px; display:block; }
 
