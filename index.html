@@ -295,6 +295,8 @@
   }
   .sticker-btn:hover{ color:var(--paper); border-color:var(--accent-dim); }
   .sticker-btn svg{ width:19px;height:19px; }
+  .sticker-btn.active{ color:var(--accent); border-color:var(--accent-dim); background:var(--accent-glow); }
+  .sticker-btn.active svg{ stroke:var(--accent); }
 
   .send-btn{ background:linear-gradient(135deg, var(--accent) 0%, #4A7BB5 100%); border:none; }
   .send-btn:active{ transform:scale(.92); }
@@ -844,6 +846,9 @@
       <button class="sticker-btn" id="openStickerPanelBtn" title="表情包">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
       </button>
+      <button class="sticker-btn" id="webToggleBtn" title="联网开关（开了之后 Leith 可以自己决定要不要搜索网页，并感知当前时间）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
+      </button>
       <textarea id="userInput" rows="1" placeholder="想说点什么..."></textarea>
       <button class="send-btn" id="sendBtn">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
@@ -1029,7 +1034,11 @@
 
       <div class="section-title">拓展位</div>
       <div class="placeholder-slot">语音输入 / 语音通话（待添加）</div>
-      <div class="placeholder-slot">联网搜索（待添加）</div>
+      <div class="field-group">
+        <label class="field-label">联网搜索代理</label>
+        <input type="text" id="searchProxyInput" placeholder="https://corsproxy.io/?url=">
+        <p class="helper-text">联网开关打开时，Leith 搜索网页走的 CORS 代理。默认 corsproxy.io，如果搜索失败可以换成 https://api.allorigins.win/raw?url= 等。</p>
+      </div>
       <div class="placeholder-slot">云端同步 / 跨设备（待添加，可接 Supabase）</div>
 
       <div class="divider"></div>

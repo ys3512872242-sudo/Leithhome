@@ -1050,6 +1050,10 @@ function initConfig() {
   populateModelSelect();
   updateStatusLabel();
 
+  // 加载搜索代理配置
+  const savedProxy = localStorage.getItem(SEARCH_PROXY_LS);
+  if (savedProxy && $("#searchProxyInput")) $("#searchProxyInput").value = savedProxy;
+
   ensureAtLeastOneThread();
   renderThreadList();
   loadActiveThreadIntoChat();
@@ -1075,6 +1079,16 @@ $("#clearKeyBtn").onclick = () => {
   updateStatusLabel();
   showToast("密钥已清空，对话记录保留");
 };
+
+// 搜索代理配置：失焦时保存
+if ($("#searchProxyInput")) {
+  $("#searchProxyInput").addEventListener("blur", () => {
+    const v = $("#searchProxyInput").value.trim();
+    if (v) localStorage.setItem(SEARCH_PROXY_LS, v);
+    else localStorage.removeItem(SEARCH_PROXY_LS);
+    showToast("搜索代理已保存");
+  });
+}
 
 $("#clearAllBtn").onclick = () => {
   if (confirm("这会清空对话记录、密钥、服务商配置、记忆、表情包等全部本地数据，且无法恢复。确认继续？")) {
@@ -1457,23 +1471,63 @@ async function regenerateFromMessage(userMsg) {
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
-    const messages = getThreadMessages(threadId).filter(m => m.type !== "sticker");
+    let messages = getThreadMessages(threadId).filter(m => m.type !== "sticker");
+    const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
     let fullReply = "";
-    if (provider.apiStyle === "anthropic") {
-      fullReply = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
-        lastChunkTime = Date.now();
-        hasReceivedContent = true;
-        bubble.innerHTML = renderBubbleContent(acc);
+    let searchNotice = null;
+    const MAX_TOOL_ROUNDS = 3;
+
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      let result;
+      if (provider.apiStyle === "anthropic") {
+        result = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+          lastChunkTime = Date.now();
+          hasReceivedContent = true;
+          if (searchNotice) { searchNotice.remove(); searchNotice = null; }
+          bubble.innerHTML = renderBubbleContent(acc);
+          box.scrollTop = box.scrollHeight;
+        }, tools });
+      } else {
+        result = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+          lastChunkTime = Date.now();
+          hasReceivedContent = true;
+          if (searchNotice) { searchNotice.remove(); searchNotice = null; }
+          bubble.innerHTML = renderBubbleContent(acc);
+          box.scrollTop = box.scrollHeight;
+        }, tools });
+      }
+
+      fullReply = result.text;
+      if (!result.toolCalls || !result.toolCalls.length) break;
+
+      const tc = result.toolCalls[0];
+      let query = "";
+      try { query = JSON.parse(tc.function.arguments).query || ""; } catch (e) {}
+
+      if (!searchNotice) {
+        searchNotice = document.createElement("div");
+        searchNotice.className = "msg-row assistant";
+        searchNotice.style.opacity = "0.7";
+        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在搜索「${escapeHtml(query)}」...</div>`;
+        box.appendChild(searchNotice);
         box.scrollTop = box.scrollHeight;
-      }});
-    } else {
-      fullReply = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
-        lastChunkTime = Date.now();
-        hasReceivedContent = true;
-        bubble.innerHTML = renderBubbleContent(acc);
-        box.scrollTop = box.scrollHeight;
-      }});
+      }
+
+      let searchResult;
+      try { searchResult = await duckDuckGoSearch(query); }
+      catch (e) { searchResult = `搜索失败：${e.message}`; }
+
+      if (provider.apiStyle === "anthropic") {
+        messages.push({ role: "assistant", content: [{ type: "tool_use", id: tc.id, name: "web_search", input: { query } }] });
+        messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: searchResult }] });
+      } else {
+        messages.push({ role: "assistant", content: result.text, tool_calls: [{ id: tc.id, type: "function", function: { name: "web_search", arguments: tc.function.arguments } }] });
+        messages.push({ role: "tool", tool_call_id: tc.id, content: searchResult });
+      }
+
+      bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
+      if (searchNotice) { searchNotice.remove(); searchNotice = null; }
     }
     clearInterval(timeoutTimer);
 
@@ -1798,13 +1852,99 @@ userInput.addEventListener("keydown", (e) => {
 // ============================================================
 // 发送逻辑
 // ============================================================
-$("#sendBtn").onclick = sendChat;
+$("#sendBtn").onclick = () => sendChat();
+
+// ============================================================
+// 联网能力（tool use）：开关开启后，Leith 可自主决定是否搜索网页，并感知当前时间
+// ============================================================
+const WEB_LS_KEY = "companion_web_enabled_v1";
+let webEnabled = localStorage.getItem(WEB_LS_KEY) === "1";
+
+function updateWebToggleUI() {
+  const btn = $("#webToggleBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", webEnabled);
+}
+$("#webToggleBtn").onclick = () => {
+  webEnabled = !webEnabled;
+  localStorage.setItem(WEB_LS_KEY, webEnabled ? "1" : "0");
+  updateWebToggleUI();
+  showToast(webEnabled ? "联网已开启：Leith 可以自己搜索网页、并知道现在的时间" : "联网已关闭");
+};
+updateWebToggleUI();
+
+// 工具定义（OpenAI 兼容格式）
+const WEB_SEARCH_TOOL = {
+  type: "function",
+  function: {
+    name: "web_search",
+    description: "搜索网页获取最新信息。当你需要查实时信息、不确定的事实、或用户问了你不知道的事时调用。每次只搜一个关键词。",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "搜索关键词，用英文或精炼的中文" }
+      },
+      required: ["query"]
+    }
+  }
+};
+
+// DuckDuckGo 搜索（用 HTML 接口，免 key）
+// 注意：浏览器直连 duckduckgo 会有 CORS，需走代理。代理地址可在 localStorage 配置。
+const SEARCH_PROXY_LS = "companion_search_proxy_v1";
+const DEFAULT_SEARCH_PROXY = "https://corsproxy.io/?url=";
+
+function getSearchProxy() {
+  return localStorage.getItem(SEARCH_PROXY_LS) || DEFAULT_SEARCH_PROXY;
+}
+
+async function duckDuckGoSearch(query) {
+  const targetUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const proxy = getSearchProxy();
+  // corsproxy.io 需要把目标 url 编码后拼在后面
+  const fetchUrl = proxy + encodeURIComponent(targetUrl);
+  const resp = await fetch(fetchUrl);
+  if (!resp.ok) throw new Error(`搜索请求失败 HTTP ${resp.status}`);
+  const html = await resp.text();
+  // 解析结果
+  const results = [];
+  const linkRe = /<a rel="nofollow" class="result__a" href="([^"]+)">(.*?)<\/a>/g;
+  const snippetRe = /<a class="result__snippet"[^>]*>(.*?)<\/a>/g;
+  const links = [...html.matchAll(linkRe)];
+  const snippets = [...html.matchAll(snippetRe)];
+  for (let i = 0; i < Math.min(links.length, 5); i++) {
+    const title = links[i][2].replace(/<[^>]+>/g, "").trim();
+    const snippet = (snippets[i]?.[1] || "").replace(/<[^>]+>/g, "").trim();
+    if (title) results.push(`${i + 1}. ${title}\n${snippet}`);
+  }
+  return results.length ? results.join("\n\n") : "没有找到相关结果。";
+}
+
+// Anthropic 工具格式转换
+function getAnthropicTools() {
+  return [{
+    name: "web_search",
+    description: WEB_SEARCH_TOOL.function.description,
+    input_schema: WEB_SEARCH_TOOL.function.parameters
+  }];
+}
+
+// 拼接联网相关的系统提示（时间感知 + 工具说明）
+function buildWebPromptBlock() {
+  if (!webEnabled) return "";
+  const now = new Date();
+  const timeStr = now.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "full", timeStyle: "short" });
+  return `【联网能力已开启】
+- 现在的真实时间是：${timeStr}（Asia/Shanghai）。请基于这个时间理解"今天""刚才""最近"等词。
+- 你有一个工具 web_search，可以搜索网页获取最新信息。当用户问到实时信息、你不确定的事实、或需要查证时，主动调用它。不需要搜索时就正常回答，不要为了用而用。`;
+}
 
 async function buildEffectiveSystemPrompt() {
   const base = localStorage.getItem(LS.systemPrompt) || "";
   const memoryBlock = window.Memory ? await window.Memory.asPromptBlock() : "";
   const worldBlock = buildWorldPromptBlock();
-  return [base.trim(), memoryBlock.trim(), worldBlock.trim()].filter(Boolean).join("\n\n");
+  const webBlock = buildWebPromptBlock();
+  return [base.trim(), memoryBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 把小世界状态拼成提示词，让 Leith 能感知到
@@ -1999,7 +2139,8 @@ async function sendChat(overrideContent) {
   const model = customModel || $("#modelSelect").value;
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
   // 支持外部传入文本（编辑消息后重新发送用），否则读输入框
-  const content = (overrideContent !== undefined ? overrideContent : userInput.value).trim();
+  // 注意：按钮点击时 event 会被当第一个参数传进来，要过滤掉
+  const content = (typeof overrideContent === "string" ? overrideContent : userInput.value).trim();
 
   if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
   if (!provider) return showModal("提示", "请先在设置里添加一个服务商。");
@@ -2045,23 +2186,90 @@ async function sendChat(overrideContent) {
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
-    const textMessages = messages.filter(m => m.type !== "sticker");
+    let textMessages = messages.filter(m => m.type !== "sticker");
+    // 联网开启时传入工具定义
+    const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
     let fullReply = "";
-    if (provider.apiStyle === "anthropic") {
-      fullReply = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
-        lastChunkTime = Date.now();
-        hasReceivedContent = true;
-        bubble.innerHTML = renderBubbleContent(acc);
+    let searchNotice = null; // 搜索提示气泡
+    const MAX_TOOL_ROUNDS = 3; // 防止无限循环
+
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      let result;
+      if (provider.apiStyle === "anthropic") {
+        result = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
+          lastChunkTime = Date.now();
+          hasReceivedContent = true;
+          if (searchNotice) { searchNotice.remove(); searchNotice = null; }
+          bubble.innerHTML = renderBubbleContent(acc);
+          box.scrollTop = box.scrollHeight;
+        }, tools });
+      } else {
+        result = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
+          lastChunkTime = Date.now();
+          hasReceivedContent = true;
+          if (searchNotice) { searchNotice.remove(); searchNotice = null; }
+          bubble.innerHTML = renderBubbleContent(acc);
+          box.scrollTop = box.scrollHeight;
+        }, tools });
+      }
+
+      fullReply = result.text;
+
+      // 如果没有工具调用，循环结束
+      if (!result.toolCalls || !result.toolCalls.length) break;
+
+      // 处理工具调用
+      const tc = result.toolCalls[0];
+      let query = "";
+      try { query = JSON.parse(tc.function.arguments).query || ""; } catch (e) { query = ""; }
+
+      // 显示"正在搜索"提示
+      if (!searchNotice) {
+        searchNotice = document.createElement("div");
+        searchNotice.className = "msg-row assistant";
+        searchNotice.style.opacity = "0.7";
+        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在搜索「${escapeHtml(query)}」...</div>`;
+        box.appendChild(searchNotice);
         box.scrollTop = box.scrollHeight;
-      }});
-    } else {
-      fullReply = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
-        lastChunkTime = Date.now();
-        hasReceivedContent = true;
-        bubble.innerHTML = renderBubbleContent(acc);
-        box.scrollTop = box.scrollHeight;
-      }});
+      }
+
+      // 执行搜索
+      let searchResult;
+      try {
+        searchResult = await duckDuckGoSearch(query);
+      } catch (e) {
+        searchResult = `搜索失败：${e.message}`;
+      }
+
+      // 把 assistant 的 tool_call 消息 + tool 结果追加到上下文
+      if (provider.apiStyle === "anthropic") {
+        // Anthropic: assistant 消息 content 是数组，含 tool_use block；用户消息 content 含 tool_result block
+        textMessages.push({
+          role: "assistant",
+          content: [{ type: "tool_use", id: tc.id, name: "web_search", input: { query } }]
+        });
+        textMessages.push({
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: tc.id, content: searchResult }]
+        });
+      } else {
+        // OpenAI: assistant 消息带 tool_calls；单独的 tool 角色消息带 tool_call_id
+        textMessages.push({
+          role: "assistant",
+          content: result.text,
+          tool_calls: [{ id: tc.id, type: "function", function: { name: "web_search", arguments: tc.function.arguments } }]
+        });
+        textMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: searchResult
+        });
+      }
+
+      // 清空当前气泡，准备接收下一轮回复
+      bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
+      if (searchNotice) { searchNotice.remove(); searchNotice = null; }
     }
     clearInterval(timeoutTimer);
 
@@ -2126,7 +2334,8 @@ function restoreSendUI(sendBtn) {
   sendBtn.style.border = "";
   sendBtn.style.color = "";
   sendBtn.disabled = false;
-  sendBtn.onclick = sendChat;
+  // 包一层，避免点击事件 event 对象被当成 overrideContent 传进去
+  sendBtn.onclick = () => sendChat();
 }
 
 function maybeAutoNameThread(threadId, firstUserContent) {
@@ -2139,15 +2348,26 @@ function maybeAutoNameThread(threadId, firstUserContent) {
 }
 
 // ---- OpenAI 兼容 ----
-async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta }) {
+// 返回 { text, toolCalls } —— text 是文字内容，toolCalls 是待执行的工具调用
+async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta, tools }) {
   const payloadMessages = [];
   if (systemPrompt.trim()) payloadMessages.push({ role: "system", content: systemPrompt });
-  payloadMessages.push(...messages.map(m => ({ role: m.role, content: m.content })));
+  payloadMessages.push(...messages.map(m => {
+    // 保留 tool_call_id 等字段（tool 结果消息）
+    if (m.role === "tool" || m.tool_calls || m.tool_call_id) return m;
+    return { role: m.role, content: m.content };
+  }));
+
+  const body = { model, messages: payloadMessages, stream: true, temperature: temp };
+  if (tools && tools.length) {
+    body.tools = tools;
+    body.tool_choice = "auto";
+  }
 
   const resp = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages: payloadMessages, stream: true, temperature: temp }),
+    body: JSON.stringify(body),
     signal: controller.signal
   });
 
@@ -2160,6 +2380,8 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
   const decoder = new TextDecoder("utf-8");
   let fullReply = "";
   let buffer = "";
+  // 累积 tool_calls（按 index 聚合，流式 delta 会分片到达）
+  const toolCallAcc = {};
 
   while (true) {
     const { done, value } = await reader.read();
@@ -2173,18 +2395,47 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
       if (jsonStr === "[DONE]") continue;
       try {
         const chunkJson = JSON.parse(jsonStr);
-        const deltaText = chunkJson.choices?.[0]?.delta?.content || "";
-        fullReply += deltaText;
-        onDelta(fullReply);
+        const delta = chunkJson.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (delta.content) {
+          fullReply += delta.content;
+          onDelta(fullReply);
+        }
+        // 累积 tool_call
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            if (!toolCallAcc[idx]) toolCallAcc[idx] = { id: tc.id || "", function: { name: "", arguments: "" } };
+            if (tc.id) toolCallAcc[idx].id = tc.id;
+            if (tc.function?.name) toolCallAcc[idx].function.name += tc.function.name;
+            if (tc.function?.arguments) toolCallAcc[idx].function.arguments += tc.function.arguments;
+          }
+        }
       } catch (e) {}
     }
   }
-  return fullReply;
+  const toolCalls = Object.keys(toolCallAcc).length
+    ? Object.values(toolCallAcc).filter(tc => tc.function.name)
+    : null;
+  return { text: fullReply, toolCalls };
 }
 
 // ---- Anthropic 官方 ----
-async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta }) {
-  const payloadMessages = messages.map(m => ({ role: m.role, content: m.content }));
+// 返回 { text, toolCalls } —— 兼容 Anthropic 的 tool_use 内容块
+async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta, tools }) {
+  // Anthropic 的 messages 格式：content 可以是字符串或 content blocks 数组
+  // 需要：1) 把历史里的 tool_result 保留为正确格式 2) assistant 的 tool_use 消息保留为 content blocks
+  const payloadMessages = messages.map(m => {
+    if (Array.isArray(m.content)) return { role: m.role, content: m.content };
+    return { role: m.role, content: m.content };
+  });
+
+  const body = {
+    model, max_tokens: 4096,
+    system: systemPrompt.trim() || undefined,
+    messages: payloadMessages, temperature: temp, stream: true
+  };
+  if (tools && tools.length) body.tools = tools;
 
   const resp = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/messages`, {
     method: "POST",
@@ -2194,11 +2445,7 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true"
     },
-    body: JSON.stringify({
-      model, max_tokens: 2048,
-      system: systemPrompt.trim() || undefined,
-      messages: payloadMessages, temperature: temp, stream: true
-    }),
+    body: JSON.stringify(body),
     signal: controller.signal
   });
 
@@ -2211,6 +2458,9 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   const decoder = new TextDecoder("utf-8");
   let fullReply = "";
   let buffer = "";
+  // 当前 content block 的累积
+  let currentBlock = null; // { type, text, toolUse: {id, name, input} }
+  const toolUses = [];
 
   while (true) {
     const { done, value } = await reader.read();
@@ -2224,14 +2474,36 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
       if (!jsonStr) continue;
       try {
         const evt = JSON.parse(jsonStr);
-        if (evt.type === "content_block_delta" && evt.delta?.text) {
-          fullReply += evt.delta.text;
-          onDelta(fullReply);
+        if (evt.type === "content_block_start" && evt.index != null) {
+          const block = evt.content_block;
+          currentBlock = { type: block.type, text: "", toolUse: block.type === "tool_use" ? { id: block.id, name: block.name, input: "" } : null };
+        } else if (evt.type === "content_block_delta") {
+          if (evt.delta?.text) {
+            fullReply += evt.delta.text;
+            currentBlock && (currentBlock.text += evt.delta.text);
+            onDelta(fullReply);
+          } else if (evt.delta?.type === "input_json_delta" && currentBlock?.toolUse) {
+            currentBlock.toolUse.input += evt.delta.partial_json;
+          }
+        } else if (evt.type === "content_block_stop") {
+          if (currentBlock?.toolUse) {
+            toolUses.push({
+              id: currentBlock.toolUse.id,
+              name: currentBlock.toolUse.name,
+              input: (() => { try { return JSON.parse(currentBlock.toolUse.input || "{}"); } catch (e) { return {}; } })()
+            });
+          }
+          currentBlock = null;
         }
       } catch (e) {}
     }
   }
-  return fullReply;
+  // 转换成统一的 toolCalls 格式（兼容 OpenAI 风格的处理逻辑）
+  const toolCalls = toolUses.length ? toolUses.map(tu => ({
+    id: tu.id,
+    function: { name: tu.name, arguments: JSON.stringify(tu.input) }
+  })) : null;
+  return { text: fullReply, toolCalls };
 }
 
 // ============================================================
