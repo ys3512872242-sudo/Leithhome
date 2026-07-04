@@ -1287,9 +1287,16 @@ function applySelectableUI(row, msgId) {
   row.classList.add("selectable");
   const bubble = row.querySelector(".bubble");
   if (bubble) bubble.style.pointerEvents = "none";
+  // 选取模式下隐藏编辑/重新生成按钮，避免遮挡 checkbox
+  row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "none");
   if (!row.querySelector(".msg-checkbox")) {
     const cb = document.createElement("div");
     cb.className = "msg-checkbox" + (selectedMessageIds.has(msgId) ? " checked" : "");
+    // checkbox 本身也能点，避免误触
+    cb.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMessageSelect(row, msgId);
+    });
     row.insertBefore(cb, row.firstChild);
   }
 }
@@ -1325,6 +1332,8 @@ function exitSelectMode() {
     row.classList.remove("selectable");
     const bubble = row.querySelector(".bubble");
     if (bubble) bubble.style.pointerEvents = "";
+    // 恢复编辑/重新生成按钮
+    row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "");
   });
 }
 
@@ -1380,10 +1389,13 @@ function startEditMessage(row, msg) {
     messages = messages.slice(0, idx);
     saveThreadMessages(threadId, messages);
 
-    userInput.value = newText;
-    userInput.focus();
+    // 清空输入框，避免和直接传入的文本重复
+    userInput.value = "";
+    userInput.style.height = "auto";
+    // 重新渲染聊天框（显示裁剪后的历史）
     loadActiveThreadIntoChat();
-    sendChat();
+    // 直接把编辑后的文本传给 sendChat，不再依赖输入框中间状态
+    sendChat(newText);
   };
 }
 
@@ -1418,7 +1430,6 @@ async function regenerateFromMessage(userMsg) {
 
   const threadId = getActiveThreadId();
   const sendBtn = $("#sendBtn");
-  sendBtn.disabled = false;
 
   const box = $("#chatBox");
   const row = document.createElement("div");
@@ -1441,16 +1452,8 @@ async function regenerateFromMessage(userMsg) {
     }
   }, 1000);
 
-  const originalSendHTML = sendBtn.innerHTML;
-  const originalSendBg = sendBtn.style.background;
-  const originalSendBorder = sendBtn.style.border;
-  const originalSendColor = sendBtn.style.color;
-  const originalSendHandler = sendBtn.onclick;
-  sendBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
-  sendBtn.style.background = "var(--bg-elevated)";
-  sendBtn.style.border = "1px solid var(--accent-dim)";
-  sendBtn.style.color = "var(--paper)";
-  sendBtn.onclick = () => controller.abort();
+  // 统一用 setSendingUI 管理停止按钮
+  setSendingUI(sendBtn, () => controller.abort());
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
@@ -1508,12 +1511,7 @@ async function regenerateFromMessage(userMsg) {
     }
   } finally {
     currentController = null;
-    sendBtn.disabled = false;
-    sendBtn.innerHTML = originalSendHTML;
-    sendBtn.style.background = originalSendBg;
-    sendBtn.style.border = originalSendBorder;
-    sendBtn.style.color = originalSendColor;
-    sendBtn.onclick = originalSendHandler;
+    restoreSendUI(sendBtn);
   }
 }
 
@@ -1991,13 +1989,17 @@ function showGiftModal(item) {
   });
 }
 
-async function sendChat() {
+async function sendChat(overrideContent) {
+  // 防止重复发送：如果正在回复中，直接忽略
+  if (currentController) return showToast("请先等当前回复结束，或点停止");
+
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
   const customModel = ($("#customModelInput").value || "").trim();
   const model = customModel || $("#modelSelect").value;
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
-  const content = userInput.value.trim();
+  // 支持外部传入文本（编辑消息后重新发送用），否则读输入框
+  const content = (overrideContent !== undefined ? overrideContent : userInput.value).trim();
 
   if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
   if (!provider) return showModal("提示", "请先在设置里添加一个服务商。");
@@ -2016,7 +2018,6 @@ async function sendChat() {
   renderTokenBanner();
 
   const sendBtn = $("#sendBtn");
-  sendBtn.disabled = true;
 
   const box = $("#chatBox");
   const row = document.createElement("div");
@@ -2039,17 +2040,8 @@ async function sendChat() {
     }
   }, 1000);
 
-  // 发送按钮变成停止按钮
-  const originalSendHTML = sendBtn.innerHTML;
-  const originalSendBg = sendBtn.style.background;
-  const originalSendBorder = sendBtn.style.border;
-  const originalSendColor = sendBtn.style.color;
-  const originalSendHandler = sendBtn.onclick;
-  sendBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
-  sendBtn.style.background = "var(--bg-elevated)";
-  sendBtn.style.border = "1px solid var(--accent-dim)";
-  sendBtn.style.color = "var(--paper)";
-  sendBtn.onclick = () => controller.abort();
+  // 发送按钮变成停止按钮（统一管理样式，避免状态错乱）
+  setSendingUI(sendBtn, () => controller.abort());
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
@@ -2109,13 +2101,32 @@ async function sendChat() {
     }
   } finally {
     currentController = null;
-    sendBtn.disabled = false;
-    sendBtn.innerHTML = originalSendHTML;
-    sendBtn.style.background = originalSendBg;
-    sendBtn.style.border = originalSendBorder;
-    sendBtn.style.color = originalSendColor;
-    sendBtn.onclick = originalSendHandler;
+    restoreSendUI(sendBtn);
   }
+}
+
+// ===== 发送按钮状态管理（统一，避免停止键/编辑后状态错乱）=====
+const SEND_BTN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`;
+const STOP_BTN_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
+
+function setSendingUI(sendBtn, onStop) {
+  sendBtn.dataset.sending = "1";
+  sendBtn.innerHTML = STOP_BTN_SVG;
+  sendBtn.style.background = "var(--bg-elevated)";
+  sendBtn.style.border = "1px solid var(--accent-dim)";
+  sendBtn.style.color = "var(--paper)";
+  sendBtn.disabled = false; // 停止键必须可点
+  sendBtn.onclick = onStop;
+}
+
+function restoreSendUI(sendBtn) {
+  delete sendBtn.dataset.sending;
+  sendBtn.innerHTML = SEND_BTN_SVG;
+  sendBtn.style.background = "";
+  sendBtn.style.border = "";
+  sendBtn.style.color = "";
+  sendBtn.disabled = false;
+  sendBtn.onclick = sendChat;
 }
 
 function maybeAutoNameThread(threadId, firstUserContent) {
