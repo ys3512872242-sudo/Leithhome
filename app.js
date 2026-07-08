@@ -1,6 +1,6 @@
 // ============================================================
 // app.js — Leith·Home 主逻辑
-// v8：Token 消耗优化（世界状态块精简 + 历史裁剪）
+// v7：加入底部导航 + 小世界（钱包/商店/背包）框架
 // ============================================================
 
 const LS = {
@@ -15,33 +15,38 @@ const LS = {
   activeThreadId: "companion_active_thread_v1",
   threadMsgPrefix: "companion_thread_msgs_",
   // 小世界
-  worldAllowance: "companion_world_allowance_v1",
-  worldWallets: "companion_world_wallets_v1",
-  worldInventories: "companion_world_inventories_v1",
-  worldAllowanceLog: "companion_world_allowance_log_v1",
-  worldSavings: "companion_world_savings_v1",
-  worldGiftRecords: "companion_world_gifts_v1",
-  worldLimitedItems: "companion_world_limited_v1",
-  worldAdultItems: "companion_world_adult_v1",
-  worldAdultBought: "companion_world_adult_bought_v1",
-  worldNightstand: "companion_world_nightstand_v1",
+  worldAllowance: "companion_world_allowance_v1",   // 每日定额开关+金额
+  worldWallets: "companion_world_wallets_v1",       // { [threadId]: number } Leith的零花钱
+  worldInventories: "companion_world_inventories_v1", // { [threadId]: [{id,shop, name, emoji, price, boughtAt}] }
+  worldAllowanceLog: "companion_world_allowance_log_v1", // { [dateStr]: [threadId, ...] } 防止重复发
+  worldSavings: "companion_world_savings_v1",       // { [threadId]: number } 限定商品基金
+  worldGiftRecords: "companion_world_gifts_v1",     // { [threadId]: [{id, name, emoji, price, giftedAt}] } Leith赠送区
+  worldLimitedItems: "companion_world_limited_v1",  // [{id, name, emoji, price}] 全局限定商品区
+  worldAdultItems: "companion_world_adult_v1",      // [{id, name, emoji, price}] 全局成人用品区
+  worldAdultBought: "companion_world_adult_bought_v1", // { [threadId]: Set of itemIds } 每个窗口已买的成人用品
+  worldNightstand: "companion_world_nightstand_v1", // { [threadId]: [{id, name, emoji, price, boughtAt}] } 床头柜
 };
-
-// 小世界购买/送礼规则（只注入一次到 system prompt，不再每次重复）
-const WORLD_RULES = `【小世界规则】
-送用户限定商品：回复末尾加 [LGIFT:商品名] → 从限定商品基金扣钱，商品从货架消失，进"Leith赠送区"。
-买成人用品：回复末尾加 [ABUY:商品名] → 从零花钱扣钱，商品进"床头柜"。
-余额不够不能买/送。标记写在回复最末尾，不影响正常对话。`;
 
 const DEFAULT_PROVIDERS = [
   {
     id: "anthropic-official",
     name: "Anthropic 官方",
     baseUrl: "https://api.anthropic.com/v1",
-    models: ["claude-opus-4-0", "claude-sonnet-4-0", "claude-haiku-4-0-20250514"],
+    models: ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
     apiStyle: "anthropic"
   }
 ];
+
+// 小世界规则（只注入一次到 system prompt，不随每条消息重复发送）
+const WORLD_RULES = `【小世界规则】
+[LGIFT:商品名] 送用户限定商品→限定基金扣款，商品下架进赠送区
+[ABUY:商品名] 买成人用品→零花钱扣款，进床头柜，每窗口限买一次
+[BUY:商店:商品名] Leith自己买东西→零花钱扣款进背包
+商品名需匹配关键词；余额不足则失败；标记写在回复末尾`;
+
+// 历史消息自动裁剪阈值
+const MSG_PRUNE_THRESHOLD = 40;
+const MSG_PRUNE_KEEP = 20;
 
 const $ = (s) => document.querySelector(s);
 
@@ -81,6 +86,7 @@ function escapeHtml(str) {
 }
 
 function renderBubbleContent(text) {
+  // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
   const cleaned = text.replace(/\[(?:BUY|GIFT|LGIFT|ABUY):[^\]]+\]/g, "").trim();
   const escaped = escapeHtml(cleaned);
   const parts = escaped.split(/("[^"]*")/g);
@@ -92,22 +98,6 @@ function renderBubbleContent(text) {
     }
     return p;
   }).join("");
-}
-
-// ============================================================
-// 历史裁剪：超过 MAX_MSG 条自动裁剪到保留最新 KEEP_MSG 条
-// ============================================================
-const MAX_MSG = 40;   // 超过这个数量触发裁剪
-const KEEP_MSG = 20;  // 裁剪后保留的最新消息条数
-
-function pruneOldMessages(threadId) {
-  const messages = getThreadMessages(threadId);
-  if (messages.length <= MAX_MSG) return false;  // 不需要裁剪
-
-  // 保留最新的 KEEP_MSG 条，但确保至少保留第一条（通常是用户的第一条消息）
-  const pruned = messages.slice(-KEEP_MSG);
-  saveThreadMessages(threadId, pruned);
-  return true;
 }
 
 // ============================================================
@@ -140,6 +130,7 @@ function initBottomBar() {
 // 小世界：数据层
 // ============================================================
 
+// 获取某个对话的 Leith 钱包余额
 function getWallet(threadId) {
   const wallets = loadJSON(LS.worldWallets, {});
   return wallets[threadId] || 0;
@@ -151,6 +142,7 @@ function setWallet(threadId, amount) {
   saveJSON(LS.worldWallets, wallets);
 }
 
+// 给零花钱并自动在当前对话里插入旁白消息
 function addWallet(threadId, delta) {
   const before = getWallet(threadId);
   const after = Math.max(0, before + delta);
@@ -158,17 +150,20 @@ function addWallet(threadId, delta) {
   insertNarration(threadId, `💸 Susie给了Leith ¥${delta}零花钱。零钱包：¥${before} → ¥${after}`);
 }
 
+// 在某个窗口的聊天里插入旁白（你也能看到，Leith 也能看到）
 function insertNarration(threadId, text) {
   const msgs = getThreadMessages(threadId);
   const msg = { role: "user", content: text, _id: uid(), _isNarration: true };
   msgs.push(msg);
   saveThreadMessages(threadId, msgs);
+  // 如果当前就是这个窗口，渲染出来
   if (getActiveThreadId() === threadId) {
     renderMessage(msg);
   }
   renderThreadList();
 }
 
+// 获取某个对话的 Leith 背包
 function getInventory(threadId) {
   const invs = loadJSON(LS.worldInventories, {});
   return invs[threadId] || [];
@@ -181,6 +176,7 @@ function addInventoryItem(threadId, item) {
   saveJSON(LS.worldInventories, invs);
 }
 
+// ===== 限定商品基金（每对话独立）=====
 function getSavings(threadId) {
   const savings = loadJSON(LS.worldSavings, {});
   return savings[threadId] || 0;
@@ -194,6 +190,7 @@ function addSavings(threadId, delta) {
   setSavings(threadId, getSavings(threadId) + delta);
 }
 
+// ===== 每个窗口已买的成人用品ID =====
 function getAdultBought(threadId) {
   const bought = loadJSON(LS.worldAdultBought, {});
   return bought[threadId] || [];
@@ -205,6 +202,7 @@ function addAdultBought(threadId, itemId) {
   saveJSON(LS.worldAdultBought, bought);
 }
 
+// ===== Leith 赠送区（每个对话独立）=====
 function getGiftRecords(threadId) {
   const records = loadJSON(LS.worldGiftRecords, {});
   return records[threadId] || [];
@@ -217,6 +215,7 @@ function addGiftRecord(threadId, item) {
   saveJSON(LS.worldGiftRecords, records);
 }
 
+// ===== 限定商品区（全局共享）=====
 function getLimitedItems() {
   return loadJSON(LS.worldLimitedItems, []);
 }
@@ -239,6 +238,7 @@ function findLimitedItem(itemName) {
   return found;
 }
 
+// ===== 成人用品区（全局共享）=====
 const DEFAULT_ADULT_ITEMS = [
   { id: "adult-default-1", name: "丝带", emoji: "🎀", price: 20 },
   { id: "adult-default-2", name: "香薰蜡烛", emoji: "🕯️", price: 35 },
@@ -273,6 +273,7 @@ function findAdultItem(itemName) {
   return found;
 }
 
+// ===== 床头柜（每个对话独立）=====
 function getNightstand(threadId) {
   const ns = loadJSON(LS.worldNightstand, {});
   return ns[threadId] || [];
@@ -285,6 +286,7 @@ function addNightstandItem(threadId, item) {
   saveJSON(LS.worldNightstand, ns);
 }
 
+// 每日定额逻辑
 function getAllowanceConfig() {
   return loadJSON(LS.worldAllowance, { enabled: false, amount: 50 });
 }
@@ -293,6 +295,7 @@ function setAllowanceConfig(cfg) {
   saveJSON(LS.worldAllowance, cfg);
 }
 
+// 检查并发放今日定额（每个对话每天只发一次）
 function maybeGiveDailyAllowance() {
   const cfg = getAllowanceConfig();
   if (!cfg.enabled) return;
@@ -326,10 +329,14 @@ function renderWorldPage() {
   const nightstand = getNightstand(threadId);
   const allowanceCfg = getAllowanceConfig();
 
+  // 钱包（Leith零花钱）
   $("#walletAmount").innerText = `¥${balance}`;
   $("#toggleAllowanceBtn").innerText = allowanceCfg.enabled ? `每日 ¥${allowanceCfg.amount}` : "每日定额";
+
+  // 限定商品基金
   $("#savingsAmount").innerText = `¥${savings}`;
 
+  // 限定商品区（全局）
   const limitedGrid = $("#limitedGrid");
   if (!limitedItems.length) {
     limitedGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🏷️</div><p>还没有上架限定商品</p></div>`;
@@ -351,6 +358,7 @@ function renderWorldPage() {
     });
   }
 
+  // 成人用品区（全局，但每窗口独立购买状态）
   const adultGrid = $("#adultGrid");
   const availableAdult = adultItems.filter(i => !adultBought.includes(i.id));
   if (!adultItems.length) {
@@ -373,9 +381,11 @@ function renderWorldPage() {
       btn.addEventListener("click", () => {
         const item = adultItems.find(i => i.id === btn.dataset.adultBuy);
         if (!item) return;
+        // 你买成人用品：免费，直接进床头柜
         addNightstandItem(threadId, { ...item, boughtBy: "user" });
         addAdultBought(threadId, item.id);
         showToast(`已购买 ${item.emoji} ${item.name}（免费）`);
+        // 发送旁白给 Leith
         notifyLeithAdultPurchase(item.name);
         renderWorldPage();
       });
@@ -391,6 +401,7 @@ function renderWorldPage() {
     });
   }
 
+  // Leith 赠送区
   const giftGrid = $("#giftRecordsGrid");
   if (!giftRecords.length) {
     giftGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">💌</div><p>还没有收到 Leith 的礼物呢</p></div>`;
@@ -404,6 +415,7 @@ function renderWorldPage() {
     `).join("");
   }
 
+  // 床头柜
   const nsGrid = $("#nightstandGrid");
   if (!nightstand.length) {
     nsGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🛏️</div><p>还没有东西</p></div>`;
@@ -418,10 +430,12 @@ function renderWorldPage() {
   }
 }
 
+// 你买成人用品后，在对话框生成旁白并自动发给 Leith
 function notifyLeithAdultPurchase(itemName) {
   const threadId = getActiveThreadId();
   const messages = getThreadMessages(threadId);
 
+  // 生成旁白消息（用 user 角色，内容是旁白格式）
   const narration = `（Susie 买了一件${itemName}，放到了床头柜上。）`;
   const msg = { role: "user", content: narration, _id: uid() };
   messages.push(msg);
@@ -429,6 +443,7 @@ function notifyLeithAdultPurchase(itemName) {
   saveThreadMessages(threadId, messages);
   renderThreadList();
 
+  // 自动触发 Leith 回复
   const box = $("#chatBox");
   const row = document.createElement("div");
   row.className = "msg-row assistant";
@@ -439,9 +454,11 @@ function notifyLeithAdultPurchase(itemName) {
   box.appendChild(row);
   box.scrollTop = box.scrollHeight;
 
+  // 调用 sendChat 的核心逻辑（不读 userInput，直接用旁白作为最后消息）
   setTimeout(() => autoRespondToNarration(threadId, bubble, row), 600);
 }
 
+// 自动回复旁白（复用 sendChat 的 API 逻辑）
 async function autoRespondToNarration(threadId, bubble, row) {
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
@@ -468,7 +485,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
   const originalSendBorder = sendBtn.style.border;
   const originalSendColor = sendBtn.style.color;
   const originalSendHandler = sendBtn.onclick;
-  sendBtn.innerHTML = STOP_BTN_SVG;
+  sendBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
   sendBtn.style.background = "var(--bg-elevated)";
   sendBtn.style.border = "1px solid var(--accent-dim)";
   sendBtn.style.color = "var(--paper)";
@@ -524,6 +541,8 @@ async function autoRespondToNarration(threadId, bubble, row) {
   }
 }
 
+
+// 给零花钱按钮
 function initGiveMoneyBtn() {
   $("#giveMoneyBtn").addEventListener("click", () => {
     const amountStr = prompt("给 Leith 多少零花钱？（数字）", "50");
@@ -537,6 +556,7 @@ function initGiveMoneyBtn() {
   });
 }
 
+// 每日定额开关
 function initToggleAllowanceBtn() {
   $("#toggleAllowanceBtn").addEventListener("click", () => {
     const cfg = getAllowanceConfig();
@@ -557,6 +577,7 @@ function initToggleAllowanceBtn() {
   });
 }
 
+// 限定商品基金按钮
 function initAddSavingsBtn() {
   $("#addSavingsBtn").addEventListener("click", () => {
     const amountStr = prompt("存多少到限定商品基金？（数字）\n这笔钱专门给 Leith 送你限定商品用", "100");
@@ -570,6 +591,7 @@ function initAddSavingsBtn() {
   });
 }
 
+// 限定商品上架按钮
 function initAddLimitedBtn() {
   $("#addLimitedBtn").addEventListener("click", () => {
     const name = prompt("商品名称（你想买但舍不得买的东西）", "");
@@ -584,6 +606,7 @@ function initAddLimitedBtn() {
   });
 }
 
+// 成人用品添加按钮
 function initAddAdultBtn() {
   $("#addAdultBtn").addEventListener("click", () => {
     const name = prompt("商品名称", "");
@@ -598,6 +621,7 @@ function initAddAdultBtn() {
   });
 }
 
+// 商店商品目录（具体商品）
 const SHOP_CATALOG = {
   supermarket: {
     name: "超市",
@@ -661,11 +685,15 @@ function initShopCards() {
   });
 }
 
+// 打开商店详情页（不是弹窗，是页面内切换）
 function openShopDetailPage(shop, shopId) {
   const threadId = getActiveThreadId();
+
+  // 填充标题
   $("#shopDetailIcon").innerText = shop.icon;
   $("#shopDetailTitle").innerText = shop.name;
 
+  // 填充商品列表
   const list = $("#shopItemsList");
   list.innerHTML = "";
   shop.items.forEach(item => {
@@ -684,6 +712,7 @@ function openShopDetailPage(shop, shopId) {
     list.appendChild(row);
   });
 
+  // 绑定购买按钮（你买 = 不花钱，直接进 Leith 背包）
   list.querySelectorAll(".shop-item-buy-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const item = {
@@ -691,9 +720,10 @@ function openShopDetailPage(shop, shopId) {
         name: btn.dataset.itemName,
         emoji: btn.dataset.itemEmoji,
         price: parseInt(btn.dataset.itemPrice, 10),
-        giftedBy: "user",
+        giftedBy: "user",  // 你送的
       };
       giftToLeith(threadId, item);
+      // 按钮变成"已送"状态
       btn.innerText = "已送 ✓";
       btn.style.background = "var(--bg-input)";
       btn.style.color = "var(--paper-dim)";
@@ -701,21 +731,36 @@ function openShopDetailPage(shop, shopId) {
     });
   });
 
+  // 显示商店详情页，隐藏商店列表
   document.querySelector(".world-page").style.display = "none";
   $("#shopDetailPage").classList.add("active");
 }
 
+// 返回商店列表
 function initShopBackBtn() {
   $("#shopBackBtn").addEventListener("click", () => {
     $("#shopDetailPage").classList.remove("active");
     document.querySelector(".world-page").style.display = "";
-    renderWorldPage();
+    renderWorldPage();  // 刷新背包
   });
 }
 
+// 你买东西送给 Leith（你不花钱，东西进他背包）
 function giftToLeith(threadId, item) {
   addInventoryItem(threadId, item);
   showToast(`${item.emoji} ${item.name} 已送给 Leith`);
+}
+
+// ============================================================
+// 判断运行环境
+// ============================================================
+function isMobile() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function isPWAStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches
+      || navigator.standalone === true;
 }
 
 // ============================================================
@@ -753,6 +798,18 @@ function ensureAtLeastOneThread() {
   }
 }
 
+// 历史消息自动裁剪：超过阈值时保留最新 N 条
+function pruneOldMessages(threadId) {
+  const msgs = getThreadMessages(threadId);
+  if (msgs.length <= MSG_PRUNE_THRESHOLD) return false;
+  // 保留旁白消息（余额通知等），只裁剪普通消息
+  const narrations = msgs.filter(m => m._isNarration);
+  const regular = msgs.filter(m => !m._isNarration);
+  const kept = regular.slice(-MSG_PRUNE_KEEP);
+  saveThreadMessages(threadId, [...narrations, ...kept]);
+  return true;
+}
+
 function createNewThread() {
   const threads = getThreads();
   const t = { id: uid(), name: `对话 ${threads.length + 1}`, createdAt: Date.now() };
@@ -773,6 +830,7 @@ function deleteThread(id) {
   threads = threads.filter(t => t.id !== id);
   saveThreads(threads);
   localStorage.removeItem(LS.threadMsgPrefix + id);
+  // 同时清掉钱包和背包
   const wallets = loadJSON(LS.worldWallets, {});
   delete wallets[id];
   saveJSON(LS.worldWallets, wallets);
@@ -788,6 +846,9 @@ function deleteThread(id) {
   const ns = loadJSON(LS.worldNightstand, {});
   delete ns[id];
   saveJSON(LS.worldNightstand, ns);
+  const sav = loadJSON(LS.worldSavings, {});
+  delete sav[id];
+  saveJSON(LS.worldSavings, sav);
   const ab = loadJSON(LS.worldAdultBought, {});
   delete ab[id];
   saveJSON(LS.worldAdultBought, ab);
@@ -804,6 +865,7 @@ function switchThread(id) {
   renderThreadList();
   loadActiveThreadIntoChat();
   closeThreadPanel();
+  // 如果当前在小世界页面，刷新钱包显示
   if (activePage === "page-world") renderWorldPage();
 }
 
@@ -1027,6 +1089,7 @@ function initConfig() {
   populateModelSelect();
   updateStatusLabel();
 
+  // 加载搜索代理配置
   const savedProxy = localStorage.getItem(SEARCH_PROXY_LS);
   if (savedProxy && $("#searchProxyInput")) $("#searchProxyInput").value = savedProxy;
 
@@ -1056,6 +1119,7 @@ $("#clearKeyBtn").onclick = () => {
   showToast("密钥已清空，对话记录保留");
 };
 
+// 搜索代理配置：失焦时保存
 if ($("#searchProxyInput")) {
   $("#searchProxyInput").addEventListener("blur", () => {
     const v = $("#searchProxyInput").value.trim();
@@ -1117,7 +1181,7 @@ $("#addMemoryBtn").onclick = async () => {
 };
 
 // ============================================================
-// 表情包
+// 表情包：管理（设置里）+ 发送（聊天面板）
 // ============================================================
 async function renderStickerManageGrid() {
   const grid = $("#stickerManageGrid");
@@ -1213,6 +1277,7 @@ function renderMessage(msg, opts = {}) {
   const box = $("#chatBox");
   const row = document.createElement("div");
 
+  // 旁白消息：居中半透明，不参与选取，没有编辑/重新生成按钮
   if (msg._isNarration) {
     row.className = "msg-row narration";
     row.dataset.msgId = msg._id;
@@ -1245,6 +1310,7 @@ function renderMessage(msg, opts = {}) {
 
   row.appendChild(bubble);
 
+  // 用户消息：加编辑按钮
   if (msg.role === "user" && msg.type !== "sticker") {
     const editBtn = document.createElement("button");
     editBtn.className = "msg-action-btn";
@@ -1254,6 +1320,7 @@ function renderMessage(msg, opts = {}) {
     row.appendChild(editBtn);
   }
 
+  // AI 消息：加重新生成按钮
   if (msg.role === "assistant") {
     const regenBtn = document.createElement("button");
     regenBtn.className = "msg-action-btn";
@@ -1287,10 +1354,12 @@ function applySelectableUI(row, msgId) {
   row.classList.add("selectable");
   const bubble = row.querySelector(".bubble");
   if (bubble) bubble.style.pointerEvents = "none";
+  // 选取模式下隐藏编辑/重新生成按钮，避免遮挡 checkbox
   row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "none");
   if (!row.querySelector(".msg-checkbox")) {
     const cb = document.createElement("div");
     cb.className = "msg-checkbox" + (selectedMessageIds.has(msgId) ? " checked" : "");
+    // checkbox 本身也能点，避免误触
     cb.addEventListener("click", (e) => {
       e.stopPropagation();
       toggleMessageSelect(row, msgId);
@@ -1317,6 +1386,7 @@ function enterSelectMode() {
   $("#selectToolbar").classList.remove("hidden");
   $("#selectCount").innerText = "已选 0 条";
   document.querySelectorAll(".msg-row").forEach(row => {
+    // 旁白消息不参与选取
     if (row.classList.contains("narration")) return;
     applySelectableUI(row, row.dataset.msgId);
   });
@@ -1331,6 +1401,7 @@ function exitSelectMode() {
     row.classList.remove("selectable");
     const bubble = row.querySelector(".bubble");
     if (bubble) bubble.style.pointerEvents = "";
+    // 恢复编辑/重新生成按钮
     row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "");
   });
 }
@@ -1387,9 +1458,12 @@ function startEditMessage(row, msg) {
     messages = messages.slice(0, idx);
     saveThreadMessages(threadId, messages);
 
+    // 清空输入框，避免和直接传入的文本重复
     userInput.value = "";
     userInput.style.height = "auto";
+    // 重新渲染聊天框（显示裁剪后的历史）
     loadActiveThreadIntoChat();
+    // 直接把编辑后的文本传给 sendChat，不再依赖输入框中间状态
     sendChat(newText);
   };
 }
@@ -1424,6 +1498,8 @@ async function regenerateFromMessage(userMsg) {
   if (!model) return showModal("提示", "请先选择或填写一个模型名称。");
 
   const threadId = getActiveThreadId();
+  // 发送前自动裁剪
+  if (pruneOldMessages(threadId)) { showToast("历史消息已自动裁剪"); }
   const sendBtn = $("#sendBtn");
 
   const box = $("#chatBox");
@@ -1447,6 +1523,7 @@ async function regenerateFromMessage(userMsg) {
     }
   }, 1000);
 
+  // 统一用 setSendingUI 管理停止按钮
   setSendingUI(sendBtn, () => controller.abort());
 
   try {
@@ -1517,6 +1594,7 @@ async function regenerateFromMessage(userMsg) {
     renderThreadList();
     renderTokenBanner();
 
+    // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(fullReply);
     if (actions.length) handleAIActions(actions);
   } catch (err) {
@@ -1772,7 +1850,7 @@ function showExportImagePreview(imgUrl) {
 }
 
 // ============================================================
-// Token 用量估算 + 自动裁剪提示
+// Token 用量估算
 // ============================================================
 const TOKEN_WARN_THRESHOLD = 6000;
 let tokenBannerDismissedForThread = {};
@@ -1796,7 +1874,7 @@ function renderTokenBanner() {
   const banner = document.createElement("div");
   banner.className = "token-banner";
   banner.innerHTML = `
-    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。已经自动裁剪过历史消息，你可以继续聊，也可以开一个新对话。</div>
+    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。继续聊没问题，只是提醒一下——如果有想保留的片段，可以先选取导出，再开一个新对话，读取会更轻快。</div>
     <div class="token-banner-actions">
       <button id="tokenBannerNewThread">开新对话</button>
       <button id="tokenBannerDismiss">知道了</button>
@@ -1834,7 +1912,7 @@ userInput.addEventListener("keydown", (e) => {
 $("#sendBtn").onclick = () => sendChat();
 
 // ============================================================
-// 联网能力
+// 联网能力（tool use）：开关开启后，Leith 可自主决定是否搜索网页，并感知当前时间
 // ============================================================
 const WEB_LS_KEY = "companion_web_enabled_v1";
 let webEnabled = localStorage.getItem(WEB_LS_KEY) === "1";
@@ -1852,11 +1930,12 @@ $("#webToggleBtn").onclick = () => {
 };
 updateWebToggleUI();
 
+// 工具定义（OpenAI 兼容格式）
 const WEB_SEARCH_TOOL = {
   type: "function",
   function: {
     name: "web_search",
-    description: "搜索网页获取最新信息。当你需要查实时信息、不确定的事实、或用户问了你不知道的事时调用。每次只搜一个关键词。如果返回'搜索暂时不可用'，就基于已有知识回答，不要反复重试。",
+    description: "搜索网页获取实时信息。搜不到就基于已有知识回答，不要重试。",
     parameters: {
       type: "object",
       properties: {
@@ -1867,6 +1946,9 @@ const WEB_SEARCH_TOOL = {
   }
 };
 
+// DuckDuckGo 搜索
+// 优先用 Instant Answer API（原生支持 CORS，浏览器直连免代理）
+// 不够用时降级到 HTML 版 + 代理
 const SEARCH_PROXY_LS = "companion_search_proxy_v1";
 const FALLBACK_PROXIES = [
   { url: "https://api.allorigins.win/raw?url=", encode: true },
@@ -1879,6 +1961,7 @@ function getSearchProxy() {
 }
 
 async function duckDuckGoSearch(query) {
+  // 第一路：Instant Answer API，原生 CORS，免代理，最稳
   try {
     const r = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
     if (r.ok) {
@@ -1897,6 +1980,7 @@ async function duckDuckGoSearch(query) {
     }
   } catch (e) { /* 降级 */ }
 
+  // 第二路：HTML 版 + 代理降级
   const targetUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const customProxy = getSearchProxy();
   const proxies = customProxy
@@ -1918,6 +2002,7 @@ async function duckDuckGoSearch(query) {
       lastErr = e;
     }
   }
+  // 两路都失败，给 AI 一个明确反馈，让它别卡住
   return `搜索暂时不可用（${lastErr?.message || "网络问题"}）。请基于你已有的知识回答，或建议用户稍后再试、或换个搜索代理。`;
 }
 
@@ -1935,6 +2020,7 @@ function parseDuckDuckGoHtml(html) {
   return results.length ? results.join("\n\n") : null;
 }
 
+// Anthropic 工具格式转换
 function getAnthropicTools() {
   return [{
     name: "web_search",
@@ -1943,13 +2029,12 @@ function getAnthropicTools() {
   }];
 }
 
+// 拼接联网相关的系统提示（时间感知 + 工具说明）
 function buildWebPromptBlock() {
   if (!webEnabled) return "";
   const now = new Date();
   const timeStr = now.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "full", timeStyle: "short" });
-  return `【联网能力已开启】
-- 现在的真实时间是：${timeStr}（Asia/Shanghai）。
-- 你有一个工具 web_search，可以搜索网页获取最新信息。`;
+  return `【联网】当前时间：${timeStr}。可用 web_search 工具搜索实时信息。`;
 }
 
 async function buildEffectiveSystemPrompt() {
@@ -1958,19 +2043,20 @@ async function buildEffectiveSystemPrompt() {
   const worldBlock = buildWorldPromptBlock();
   const webBlock = buildWebPromptBlock();
   const noteBlock = buildSystemNotesBlock();
-  // 把购买规则拼到 system prompt 里（只注入一次，不再每次重复）
-  return [base.trim(), memoryBlock.trim(), noteBlock.trim(), worldBlock.trim(), WORLD_RULES.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
+  // WORLD_RULES 只注入一次（不随消息重复）
+  return [WORLD_RULES, base.trim(), memoryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
 }
 
+// 提取最近 3 条旁白作为事件提醒
 function buildSystemNotesBlock() {
   const threadId = getActiveThreadId();
   const msgs = getThreadMessages(threadId);
-  const notes = msgs.filter(m => m._isNarration).slice(-5);
+  const notes = msgs.filter(m => m._isNarration).slice(-3);
   if (!notes.length) return "";
   return "【近期事件】\n" + notes.map(m => `- ${m.content}`).join("\n");
 }
 
-// ---- 精简版世界状态块（约 120 字，只报状态，不含规则）----
+// 小世界状态（精简版：只报数据，不含规则）
 function buildWorldPromptBlock() {
   const threadId = getActiveThreadId();
   const balance = getWallet(threadId);
@@ -1981,20 +2067,16 @@ function buildWorldPromptBlock() {
   const adultBought = getAdultBought(threadId);
   const nightstand = getNightstand(threadId);
 
-  const giftDesc = giftRecords.length ? giftRecords.map(g => `${g.emoji}${g.name}`).join("、") : "无";
-  const limitedList = limitedItems.length ? limitedItems.map(i => i.name).join("、") : "空";
+  const gifts = giftRecords.length ? giftRecords.map(g => `${g.emoji}${g.name}`).join("、") : "无";
+  const limited = limitedItems.length ? limitedItems.map(i => `${i.name}¥${i.price}`).join("、") : "无";
   const availableAdult = adultItems.filter(i => !adultBought.includes(i.id));
-  const adultList = availableAdult.length ? availableAdult.map(i => i.name).join("、") : "空";
-  const nsDesc = nightstand.length ? nightstand.map(i => `${i.emoji}${i.name}`).join("、") : "空";
+  const adult = availableAdult.length ? availableAdult.map(i => `${i.name}¥${i.price}`).join("、") : "无";
+  const ns = nightstand.length ? nightstand.map(i => `${i.emoji}${i.name}`).join("、") : "空";
 
-  return `【小世界状态】
-零花钱：¥${balance} | 限定基金：¥${savings}
-送过你：${giftDesc}
-床头柜：${nsDesc}
-限定商品区：${limitedList}
-成人用品区：${adultList}`;
+  return `【世界状态】零花钱¥${balance} 限定基金¥${savings} 床头柜:${ns}\n赠送记录:${gifts}\n限定商品:${limited}\n可买成人用品:${adult}`;
 }
 
+// 解析 AI 回复里的 [BUY:...] [LGIFT:...] [ABUY:...] 标记
 function parseAIActions(text) {
   const actions = [];
   const buyRegex = /\[BUY:(\w+):([^\]]+)\]/g;
@@ -2014,11 +2096,14 @@ function parseAIActions(text) {
   return actions;
 }
 
+// 在所有商店里模糊查找商品（精确匹配优先，再模糊包含匹配）
 function findItemInShops(itemName) {
+  // 先精确匹配
   for (const shopId in SHOP_CATALOG) {
     const item = SHOP_CATALOG[shopId].items.find(i => i.name === itemName);
     if (item) return { ...item, shop: shopId };
   }
+  // 再模糊匹配：商品名包含 AI 说的词，或反过来
   for (const shopId in SHOP_CATALOG) {
     const item = SHOP_CATALOG[shopId].items.find(i =>
       i.name.includes(itemName) || itemName.includes(i.name)
@@ -2028,11 +2113,13 @@ function findItemInShops(itemName) {
   return null;
 }
 
+// 处理 AI 的购买/送礼动作
 function handleAIActions(actions) {
   const threadId = getActiveThreadId();
   let needRefresh = false;
   actions.forEach(action => {
     if (action.type === "buy") {
+      // Leith 自己买东西：先在指定商店找，找不到再全局模糊找
       let foundItem = null;
       const shop = SHOP_CATALOG[action.shop];
       if (shop) {
@@ -2057,6 +2144,7 @@ function handleAIActions(actions) {
       showToast(`Leith 买了 ${foundItem.emoji} ${foundItem.name}（¥${foundItem.price}）`);
       needRefresh = true;
     } else if (action.type === "lgift") {
+      // Leith 送你限定商品：从限定商品基金扣，买完从货架消失，进赠送区
       const limitedItem = findLimitedItem(action.itemName);
       if (!limitedItem) {
         showToast(`Leith 想送你"${action.itemName}"但限定商品区没有`);
@@ -2073,6 +2161,7 @@ function handleAIActions(actions) {
       showGiftModal(limitedItem);
       needRefresh = true;
     } else if (action.type === "abuy") {
+      // Leith 买���人用品：从钱包扣，进床头柜
       const adultItem = findAdultItem(action.itemName);
       if (!adultItem) {
         showToast(`Leith 想买"${action.itemName}"但成人用品区没有`);
@@ -2094,6 +2183,7 @@ function handleAIActions(actions) {
   if (needRefresh && activePage === "page-world") renderWorldPage();
 }
 
+// Leith 送礼提示弹窗
 function showGiftModal(item) {
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(5,6,9,.8);z-index:300;display:flex;align-items:center;justify-content:center;padding:20px;";
@@ -2117,6 +2207,7 @@ function showGiftModal(item) {
 }
 
 async function sendChat(overrideContent) {
+  // 防止重复发送：如果正在回复中，直接忽略
   if (currentController) return showToast("请先等当前回复结束，或点停止");
 
   const apiKey = localStorage.getItem(LS.apiKey);
@@ -2124,7 +2215,8 @@ async function sendChat(overrideContent) {
   const customModel = ($("#customModelInput").value || "").trim();
   const model = customModel || $("#modelSelect").value;
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
-
+  // 支持外部传入文本（编辑消息后重新发送用），否则读输入框
+  // 注意：按钮点击时 event 会被当第一个参数传进来，要过滤掉
   const content = (typeof overrideContent === "string" ? overrideContent : userInput.value).trim();
 
   if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
@@ -2133,14 +2225,11 @@ async function sendChat(overrideContent) {
   if (!content) return;
 
   const threadId = getActiveThreadId();
-
-  // ===== 自动裁剪历史消息（Token 优化）=====
-  const wasPruned = pruneOldMessages(threadId);
-  if (wasPruned) {
+  // 发送前自动裁剪历史（超过 40 条保留最新 20 条）
+  if (pruneOldMessages(threadId)) {
+    loadActiveThreadIntoChat();
     showToast("历史消息已自动裁剪，保留最新 20 条");
-    loadActiveThreadIntoChat();  // 重新渲染裁剪后的聊天
   }
-
   const messages = getThreadMessages(threadId);
   const userMsg = { role: "user", content, _id: uid() };
   messages.push(userMsg);
@@ -2174,16 +2263,18 @@ async function sendChat(overrideContent) {
     }
   }, 1000);
 
+  // 发送按钮变成停止按钮（统一管理样式，避免状态错乱）
   setSendingUI(sendBtn, () => controller.abort());
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
     let textMessages = messages.filter(m => m.type !== "sticker");
+    // 联网开启时传入工具定义
     const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
     let fullReply = "";
-    let searchNotice = null;
-    const MAX_TOOL_ROUNDS = 3;
+    let searchNotice = null; // 搜索提示气泡
+    const MAX_TOOL_ROUNDS = 3; // 防止无限循环
 
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       let result;
@@ -2207,12 +2298,15 @@ async function sendChat(overrideContent) {
 
       fullReply = result.text;
 
+      // 如果没有工具调用，循环结束
       if (!result.toolCalls || !result.toolCalls.length) break;
 
+      // 处理工具调用
       const tc = result.toolCalls[0];
       let query = "";
-      try { query = JSON.parse(tc.function.arguments).query || ""; } catch (e) {}
+      try { query = JSON.parse(tc.function.arguments).query || ""; } catch (e) { query = ""; }
 
+      // 显示"正在搜索"提示
       if (!searchNotice) {
         searchNotice = document.createElement("div");
         searchNotice.className = "msg-row assistant";
@@ -2222,6 +2316,7 @@ async function sendChat(overrideContent) {
         box.scrollTop = box.scrollHeight;
       }
 
+      // 执行搜索
       let searchResult;
       try {
         searchResult = await duckDuckGoSearch(query);
@@ -2229,7 +2324,9 @@ async function sendChat(overrideContent) {
         searchResult = `搜索失败：${e.message}`;
       }
 
+      // 把 assistant 的 tool_call 消息 + tool 结果追加到上下文
       if (provider.apiStyle === "anthropic") {
+        // Anthropic: assistant 消息 content 是数组，含 tool_use block；用户消息 content 含 tool_result block
         textMessages.push({
           role: "assistant",
           content: [{ type: "tool_use", id: tc.id, name: "web_search", input: { query } }]
@@ -2239,6 +2336,7 @@ async function sendChat(overrideContent) {
           content: [{ type: "tool_result", tool_use_id: tc.id, content: searchResult }]
         });
       } else {
+        // OpenAI: assistant 消息带 tool_calls；单独的 tool 角色消息带 tool_call_id
         textMessages.push({
           role: "assistant",
           content: result.text,
@@ -2251,6 +2349,7 @@ async function sendChat(overrideContent) {
         });
       }
 
+      // 清空当前气泡，准备接收下一轮回复
       bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
       if (searchNotice) { searchNotice.remove(); searchNotice = null; }
     }
@@ -2262,6 +2361,7 @@ async function sendChat(overrideContent) {
     renderThreadList();
     renderTokenBanner();
 
+    // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(fullReply);
     if (actions.length) handleAIActions(actions);
 
@@ -2295,9 +2395,7 @@ async function sendChat(overrideContent) {
   }
 }
 
-// ============================================================
-// 发送按钮状态管理
-// ============================================================
+// ===== 发送按钮状态管理（统一，避免停止键/编辑后状态错乱）=====
 const SEND_BTN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`;
 const STOP_BTN_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
 
@@ -2307,7 +2405,7 @@ function setSendingUI(sendBtn, onStop) {
   sendBtn.style.background = "var(--bg-elevated)";
   sendBtn.style.border = "1px solid var(--accent-dim)";
   sendBtn.style.color = "var(--paper)";
-  sendBtn.disabled = false;
+  sendBtn.disabled = false; // 停止键必须可点
   sendBtn.onclick = onStop;
 }
 
@@ -2318,6 +2416,7 @@ function restoreSendUI(sendBtn) {
   sendBtn.style.border = "";
   sendBtn.style.color = "";
   sendBtn.disabled = false;
+  // 包一层，避免点击事件 event 对象被当成 overrideContent 传进去
   sendBtn.onclick = () => sendChat();
 }
 
@@ -2331,10 +2430,12 @@ function maybeAutoNameThread(threadId, firstUserContent) {
 }
 
 // ---- OpenAI 兼容 ----
+// 返回 { text, toolCalls } —— text 是文字内容，toolCalls 是待执行的工具调用
 async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta, tools }) {
   const payloadMessages = [];
   if (systemPrompt.trim()) payloadMessages.push({ role: "system", content: systemPrompt });
   payloadMessages.push(...messages.map(m => {
+    // 保留 tool_call_id 等字段（tool 结果消息）
     if (m.role === "tool" || m.tool_calls || m.tool_call_id) return m;
     return { role: m.role, content: m.content };
   }));
@@ -2361,6 +2462,7 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
   const decoder = new TextDecoder("utf-8");
   let fullReply = "";
   let buffer = "";
+  // 累积 tool_calls（按 index 聚合，流式 delta 会分片到达）
   const toolCallAcc = {};
 
   while (true) {
@@ -2381,6 +2483,7 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
           fullReply += delta.content;
           onDelta(fullReply);
         }
+        // 累积 tool_call
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const idx = tc.index ?? 0;
@@ -2400,7 +2503,10 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
 }
 
 // ---- Anthropic 官方 ----
+// 返回 { text, toolCalls } —— 兼容 Anthropic 的 tool_use 内容块
 async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta, tools }) {
+  // Anthropic 的 messages 格式：content 可以是字符串或 content blocks 数组
+  // 需要：1) 把历史里的 tool_result 保留为正确格式 2) assistant 的 tool_use 消息保留为 content blocks
   const payloadMessages = messages.map(m => {
     if (Array.isArray(m.content)) return { role: m.role, content: m.content };
     return { role: m.role, content: m.content };
@@ -2434,6 +2540,8 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   const decoder = new TextDecoder("utf-8");
   let fullReply = "";
   let buffer = "";
+  // 当前 content block 的累积
+  let currentBlock = null; // { type, text, toolUse: {id, name, input} }
   const toolUses = [];
 
   while (true) {
@@ -2472,6 +2580,7 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
       } catch (e) {}
     }
   }
+  // 转换成统一的 toolCalls 格式（兼容 OpenAI 风格的处理逻辑）
   const toolCalls = toolUses.length ? toolUses.map(tu => ({
     id: tu.id,
     function: { name: tu.name, arguments: JSON.stringify(tu.input) }
