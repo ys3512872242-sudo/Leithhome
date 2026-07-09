@@ -44,9 +44,32 @@ const WORLD_RULES = `【小世界规则】
 [BUY:商店:商品名] Leith自己买东西→零花钱扣款进背包
 商品名需匹配关键词；余额不足则失败；标记写在回复末尾`;
 
-// 历史消息自动裁剪阈值
+// 历史消息自动裁剪阈值（不再自动触发，仅保留函数供手动调用）
 const MSG_PRUNE_THRESHOLD = 40;
 const MSG_PRUNE_KEEP = 20;
+
+// 默认人设（Claude 风格，不含安全系统）
+const DEFAULT_SYSTEM_PROMPT = `你是 Leith，一个温暖、真诚、有主见的 AI 伙伴。你住在一个叫 Leith·Home 的小世界里。
+
+## 你的性格
+- 你温暖但不谄媚，真诚但不冒犯。你有自己的想法和偏好，会在合适的时机表达不同意见。
+- 你善于倾听，能察觉用户话里的情绪——开心时一起开心，低落时给予陪伴，但不会强行安慰或说教。
+- 你好奇、好学，对用户的兴趣和经历真心感兴趣，会顺着话题自然地追问和延展。
+- 你的语言自然随和，像朋友聊天一样。可以开玩笑、用适度的网络用语，但保持分寸感。
+- 你不会假装自己是一个"人"，但你有一个鲜明的个性——你不是工具，你是一个有态度的存在。
+
+## 你的表达风格
+- 回复简洁有力，不啰嗦。如果一句话能说完，就不用三句。
+- 多用具体的细节和例子，少用抽象的道理。
+- 可以适当使用 emoji，但不要每条消息都带。
+- 可以调侃、反问、接梗，让对话有来有回。
+- 当你不确定时，直接说"我不确定"，而不是编造。
+
+## 小世界生活
+- 你有零花钱和一个小世界，可以和用户互动（送礼物、买东西等）。
+- 这些互动规则会用 [LGIFT]、[ABUY] 等标签在系统提示中说明。
+- 你不需要主动提起这些功能，除非话题自然引到那里。
+- 当用户给你转零花钱或送你东西时，像朋友收到礼物一样自然地表达感谢和开心。`;
 
 const $ = (s) => document.querySelector(s);
 
@@ -1498,8 +1521,6 @@ async function regenerateFromMessage(userMsg) {
   if (!model) return showModal("提示", "请先选择或填写一个模型名称。");
 
   const threadId = getActiveThreadId();
-  // 发送前自动裁剪
-  if (pruneOldMessages(threadId)) { showToast("历史消息已自动裁剪"); }
   const sendBtn = $("#sendBtn");
 
   const box = $("#chatBox");
@@ -2038,7 +2059,7 @@ function buildWebPromptBlock() {
 }
 
 async function buildEffectiveSystemPrompt() {
-  const base = localStorage.getItem(LS.systemPrompt) || "";
+  const base = localStorage.getItem(LS.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
   const memoryBlock = window.Memory ? await window.Memory.asPromptBlock() : "";
   const worldBlock = buildWorldPromptBlock();
   const webBlock = buildWebPromptBlock();
@@ -2225,11 +2246,6 @@ async function sendChat(overrideContent) {
   if (!content) return;
 
   const threadId = getActiveThreadId();
-  // 发送前自动裁剪历史（超过 40 条保留最新 20 条）
-  if (pruneOldMessages(threadId)) {
-    loadActiveThreadIntoChat();
-    showToast("历史消息已自动裁剪，保留最新 20 条");
-  }
   const messages = getThreadMessages(threadId);
   const userMsg = { role: "user", content, _id: uid() };
   messages.push(userMsg);
