@@ -2281,12 +2281,18 @@ async function sendChat(overrideContent) {
     // 同步到云端短期记忆
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
       window.Memory.saveShortTerm(threadId, "assistant", fullReply);
-      // 短期记忆超阈值时自动压缩
+      // 短期记忆超阈值时自动压缩（滑动窗口：压缩旧消息，保留最近消息）
       const cloudShortTermCount = freshMessages.filter(m => !m._isNarration && m.type !== "sticker").length;
       if (cloudShortTermCount >= 20) {
-        await window.Memory.compressMemory(threadId, freshMessages.filter(m => !m._isNarration), async (prompt) => {
+        const result = await window.Memory.compressMemory(threadId, freshMessages.filter(m => !m._isNarration), async (prompt) => {
           return await callLLMForSummary({ provider, apiKey, model, temp, prompt });
         });
+        // 压缩后更新本地消息（只保留最近的一半）
+        if (result && result.keptMessages) {
+          const narrations = freshMessages.filter(m => m._isNarration);
+          saveThreadMessages(threadId, [...narrations, ...result.keptMessages]);
+          loadActiveThreadIntoChat();
+        }
       }
     }
     renderThreadList();

@@ -1,17 +1,25 @@
 // ============================================================
-// 记忆系统接口层（Memory Adapter）
+// 记忆系统接口层（Memory Adapter）— 分层记忆架构
 // ------------------------------------------------------------
 // app.js 里所有跟"记忆"和"表情包"相关的读写，都只通过这里的函数进行。
-// 当前状态：Supabase 云端记忆 + localStorage 本地表情包。
 //
-// Supabase 表结构（需要在 Supabase 仪表板创建）：
+// 记忆分层（通过 thread_id 区分，不需要改表结构）：
+//   ┌─────────────────────────────────────────────────────┐
+//   │ profile  │ 人设档案 │ 始终加载 │ 精简事实，每条<50字  │
+//   │ core     │ 核心记忆 │ 始终加载 │ 用户手动添加的重要事 │
+//   │ archive  │ 归档信件 │ 不进上下文 │ 完整原文，仅UI可查看 │
+//   │ <threadId> │ 短期记忆 │ 按对话加载 │ 当前对话消息       │
+//   │ <threadId> │ 对话摘要 │ 按对话加载 │ 压缩后的长期摘要    │
+//   └─────────────────────────────────────────────────────┘
+//
+// Supabase 表结构：
 //   memories (
 //     id          bigint generated always as identity primary key,
 //     created_at  timestamptz default now(),
 //     type        text not null,         -- 'long_term' | 'short_term'
-//     content     text not null,         -- 记忆内容
-//     thread_id   text default 'global', -- 对话线程ID（短期记忆按对话隔离）
-//     role        text default 'user'     -- 消息角色（短期记忆用）
+//     content     text not null,
+//     thread_id   text default 'global', -- 'profile' | 'core' | 'archive' | <对话ID>
+//     role        text default 'user'     -- 'user' | 'assistant' | 'summary' | 'archive'
 //   )
 // ============================================================
 
@@ -54,7 +62,6 @@ async function testSupabaseConnection() {
       console.error('❌ Leith 连接云端大脑失败:', error);
       supabaseConnectError = error.message;
       supabaseReady = false;
-      // 不弹窗打断用户，只在控制台提示
       return false;
     } else {
       console.log('✅ Leith 连接云端成功！');
@@ -72,7 +79,8 @@ async function testSupabaseConnection() {
 
 // ---- 本地存储工具（表情包仍用本地） ----
 const STICKER_LS_KEY = 'companion_stickers_v1';
-const MEMORY_LS_KEY = 'companion_memory_v2'; // 本地降级用
+const MEMORY_LS_KEY = 'companion_memory_v2';       // 本地降级用（core）
+const PROFILE_LS_KEY = 'companion_profile_v1';      // 本地降级用（profile）
 
 function readLS(key, fallback) {
   try {
@@ -89,11 +97,97 @@ function genId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// 粗略估算 token 数（中文约1字=1.5token，英文约4字符=1token）
+function estimateTokens(text) {
+  if (!text) return 0;
+  const cnChars = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+  const otherChars = text.length - cnChars;
+  return Math.ceil(cnChars * 1.5 + otherChars / 4);
+}
+
+// 记忆注入的 token 预算（超过则从尾部截断低优先级条目）
+const MEMORY_TOKEN_BUDGET = 800;
+
 // ============================================================
 // Supabase 记忆适配器
 // ============================================================
 const SupabaseMemoryAdapter = {
-  // ---- 核心记忆（用户手动写入的长期记忆，type='long_term', thread_id='core'）----
+  // ============================================================
+  // 第一层：人设档案（profile）— 始终加载，精简事实
+  // ============================================================
+  async listProfile() {
+    if (!supabaseReady) return readLS(PROFILE_LS_KEY, []);
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'long_term')
+        .eq('thread_id', 'profile')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data || []).map(item => ({
+        id: String(item.id),
+        content: item.content,
+        createdAt: new Date(item.created_at).getTime()
+      }));
+    } catch (e) {
+      console.error('加载人设档案失败:', e);
+      return readLS(PROFILE_LS_KEY, []);
+    }
+  },
+
+  async addProfile(content) {
+    const trimmed = content.trim();
+    const local = readLS(PROFILE_LS_KEY, []);
+    const record = { id: genId(), content: trimmed, createdAt: Date.now() };
+    local.push(record);
+    if (supabaseReady) {
+      try {
+        const { error } = await supabaseClient
+          .from('memories')
+          .insert([{ content: trimmed, type: 'long_term', thread_id: 'profile', role: 'profile' }]);
+        if (error) throw error;
+      } catch (e) {
+        console.error('人设档案上传失败:', e);
+      }
+    }
+    writeLS(PROFILE_LS_KEY, local);
+    return record;
+  },
+
+  async removeProfile(id) {
+    const local = readLS(PROFILE_LS_KEY, []);
+    writeLS(PROFILE_LS_KEY, local.filter(m => m.id !== id));
+    if (supabaseReady) {
+      try {
+        const numId = parseInt(id, 10);
+        if (!isNaN(numId)) {
+          await supabaseClient.from('memories').delete().eq('id', numId);
+        }
+      } catch (e) {
+        console.error('删除人设档案失败:', e);
+      }
+    }
+  },
+
+  async clearProfile() {
+    localStorage.removeItem(PROFILE_LS_KEY);
+    if (supabaseReady) {
+      try {
+        await supabaseClient
+          .from('memories')
+          .delete()
+          .eq('type', 'long_term')
+          .eq('thread_id', 'profile');
+      } catch (e) {
+        console.error('清空人设档案失败:', e);
+      }
+    }
+  },
+
+  // ============================================================
+  // 第二层：核心记忆（core）— 用户手动添加，始终加载
+  // ============================================================
   async list() {
     if (!supabaseReady) return readLS(MEMORY_LS_KEY, []);
     try {
@@ -118,21 +212,17 @@ const SupabaseMemoryAdapter = {
 
   async add(content) {
     const trimmed = content.trim();
-    // 先存本地（防止网络失败丢数据）
     const local = readLS(MEMORY_LS_KEY, []);
     const record = { id: genId(), content: trimmed, createdAt: Date.now(), pinned: true };
     local.push(record);
-
     if (supabaseReady) {
       try {
         const { error } = await supabaseClient
           .from('memories')
           .insert([{ content: trimmed, type: 'long_term', thread_id: 'core', role: 'user' }]);
         if (error) throw error;
-        // 云端成功后，可以从本地缓存中移除（避免重复），但保留以备离线
       } catch (e) {
         console.error('核心记忆上传失败:', e);
-        // 失败时保留在本地，稍后可重试
       }
     }
     writeLS(MEMORY_LS_KEY, local);
@@ -140,14 +230,10 @@ const SupabaseMemoryAdapter = {
   },
 
   async remove(id) {
-    // 本地删除
     const local = readLS(MEMORY_LS_KEY, []);
     writeLS(MEMORY_LS_KEY, local.filter(m => m.id !== id));
-
     if (supabaseReady) {
       try {
-        // id 可能是本地的 genId 或云端返回的数字 ID
-        // 尝试按数字 ID 删，如果是纯数字就用它
         const numId = parseInt(id, 10);
         if (!isNaN(numId)) {
           await supabaseClient.from('memories').delete().eq('id', numId);
@@ -173,16 +259,108 @@ const SupabaseMemoryAdapter = {
     }
   },
 
-  // 拼接成一段文字，供插入 system prompt 使用
-  async asPromptBlock() {
-    const all = await this.list();
-    if (!all.length) return '';
-    const lines = all.map(m => `- ${m.content}`).join('\n');
-    return `以下是关于对方、你们之间关系的一些长期记忆，请自然地记住并体现在回应中，不要机械复述：\n${lines}`;
+  // ============================================================
+  // 第三层：归档信件（archive）— 完整原文，不进 system prompt
+  // ============================================================
+  async listArchive() {
+    if (!supabaseReady) return [];
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'long_term')
+        .eq('thread_id', 'archive')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data || []).map(item => ({
+        id: String(item.id),
+        content: item.content,
+        createdAt: new Date(item.created_at).getTime()
+      }));
+    } catch (e) {
+      console.error('加载归档失败:', e);
+      return [];
+    }
   },
 
-  // ---- 短期记忆（对话消息，type='short_term', thread_id=对话ID）----
-  // 保存单条短期记忆
+  async addArchive(content) {
+    const trimmed = content.trim();
+    if (!supabaseReady) return;
+    try {
+      const { error } = await supabaseClient
+        .from('memories')
+        .insert([{ content: trimmed, type: 'long_term', thread_id: 'archive', role: 'archive' }]);
+      if (error) throw error;
+    } catch (e) {
+      console.error('归档上传失败:', e);
+    }
+  },
+
+  async removeArchive(id) {
+    if (!supabaseReady) return;
+    try {
+      const numId = parseInt(id, 10);
+      if (!isNaN(numId)) {
+        await supabaseClient.from('memories').delete().eq('id', numId);
+      }
+    } catch (e) {
+      console.error('删除归档失败:', e);
+    }
+  },
+
+  // ============================================================
+  // 拼接 system prompt 用的记忆块（profile + core，带 token 预算）
+  // ============================================================
+  async asPromptBlock() {
+    // 并行加载 profile 和 core
+    const [profileList, coreList] = await Promise.all([
+      this.listProfile(),
+      this.list()
+    ]);
+
+    if (!profileList.length && !coreList.length) return '';
+
+    // 人设档案放前面（最重要），核心记忆放后面
+    const profileLines = profileList.map(m => `- ${m.content}`);
+    const coreLines = coreList.map(m => `- ${m.content}`);
+
+    let lines = [];
+    let tokensUsed = 0;
+    let profileTruncated = false;
+    let coreTruncated = false;
+
+    // 先填人设档案
+    for (const line of profileLines) {
+      const t = estimateTokens(line);
+      if (tokensUsed + t > MEMORY_TOKEN_BUDGET) {
+        profileTruncated = true;
+        break;
+      }
+      lines.push(line);
+      tokensUsed += t;
+    }
+
+    // 再填核心记忆
+    for (const line of coreLines) {
+      const t = estimateTokens(line);
+      if (tokensUsed + t > MEMORY_TOKEN_BUDGET) {
+        coreTruncated = true;
+        break;
+      }
+      lines.push(line);
+      tokensUsed += t;
+    }
+
+    let result = `以下是关于对方、你们之间关系的一些长期记忆，请自然地记住并体现在回应中，不要机械复述：\n${lines.join('\n')}`;
+    if (profileTruncated || coreTruncated) {
+      result += '\n（部分记忆因篇幅已省略）';
+    }
+    return result;
+  },
+
+  // ============================================================
+  // 短期记忆（对话消息）
+  // ============================================================
   async saveShortTerm(threadId, role, content) {
     if (!supabaseReady) return;
     try {
@@ -200,7 +378,6 @@ const SupabaseMemoryAdapter = {
     }
   },
 
-  // 批量保存短期记忆
   async saveShortTermBatch(threadId, messages) {
     if (!supabaseReady || !messages.length) return;
     try {
@@ -217,7 +394,6 @@ const SupabaseMemoryAdapter = {
     }
   },
 
-  // 加载某个对话的短期记忆
   async loadShortTerm(threadId, limit = 50) {
     if (!supabaseReady) return [];
     try {
@@ -239,7 +415,6 @@ const SupabaseMemoryAdapter = {
     }
   },
 
-  // 清空某个对话的短期记忆
   async clearShortTerm(threadId) {
     if (!supabaseReady) return;
     try {
@@ -255,7 +430,6 @@ const SupabaseMemoryAdapter = {
     }
   },
 
-  // 清空某个对话的全部记忆（短期+长期摘要）
   async clearThreadMemory(threadId) {
     if (!supabaseReady) return;
     try {
@@ -268,17 +442,22 @@ const SupabaseMemoryAdapter = {
     }
   },
 
-  // ---- 记忆压缩 ----
-  // 将短期记忆压缩为长期摘要，然后清空短期记忆
+  // ============================================================
+  // 记忆压缩（滑动窗口：压缩旧消息，保留最近消息）
+  // ============================================================
   async compressMemory(threadId, messages, llmCallback) {
-    if (!messages || !messages.length) return;
+    if (!messages || messages.length < 10) return;
     console.log('🧠 Leith 正在整理记忆...');
 
+    // 滑动窗口：压缩前半部分，保留后半部分
+    const compressCount = Math.floor(messages.length / 2);
+    const toCompress = messages.slice(0, compressCount);
+    const toKeep = messages.slice(compressCount);
+
     // 1. 构造总结提示词
-    const summaryPrompt = `请把下面的对话总结成一段简短的话（50字以内），提取关键信息，不要用"用户说""AI说"这种格式，直接写成对事实的描述。\n对话内容：\n${messages.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`;
+    const summaryPrompt = `请把下面的对话总结成一段简短的话（80字以内），提取关键信息：事实、决定、情感、偏好。不要用"用户说""AI说"这种格式，直接写成对事实的描述。\n对话内容：\n${toCompress.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`;
 
     let summary = '';
-    // 2. 调用 LLM 总结（llmCallback 由 app.js 传入）
     if (typeof llmCallback === 'function') {
       try {
         summary = await llmCallback(summaryPrompt);
@@ -290,7 +469,7 @@ const SupabaseMemoryAdapter = {
 
     if (!summary || !summary.trim()) return;
 
-    // 3. 保存为长期记忆摘要（type='long_term', thread_id=对话ID）
+    // 3. 保存为长期记忆摘要
     try {
       const { error } = await supabaseClient
         .from('memories')
@@ -306,11 +485,30 @@ const SupabaseMemoryAdapter = {
       console.error('保存记忆摘要失败:', e);
     }
 
-    // 4. 清空短期记忆
-    await this.clearShortTerm(threadId);
+    // 4. 只删除已压缩的短期记忆，保留最近的
+    if (supabaseReady) {
+      try {
+        // 获取该 thread 最旧的 compressCount 条短期记忆，删除它们
+        const { data: oldRows } = await supabaseClient
+          .from('memories')
+          .select('id')
+          .eq('type', 'short_term')
+          .eq('thread_id', threadId || 'global')
+          .order('created_at', { ascending: true })
+          .limit(compressCount);
+        if (oldRows && oldRows.length) {
+          const idsToDelete = oldRows.map(r => r.id);
+          await supabaseClient.from('memories').delete().in('id', idsToDelete);
+        }
+      } catch (e) {
+        console.error('清理旧短期记忆失败:', e);
+      }
+    }
+
+    // 5. 通知 app.js 更新本地消息（只保留 toKeep）
+    return { keptMessages: toKeep };
   },
 
-  // 加载某个对话的长期摘要（压缩后的记忆）
   async loadLongTermSummary(threadId) {
     if (!supabaseReady) return '';
     try {
@@ -322,7 +520,6 @@ const SupabaseMemoryAdapter = {
         .order('created_at', { ascending: false });
       if (error) throw error;
       if (!data || !data.length) return '';
-      // 拼接所有摘要
       return data.map(item => item.content).join('\n- ');
     } catch (e) {
       console.error('加载长期摘要失败:', e);
@@ -344,6 +541,27 @@ const SupabaseMemoryAdapter = {
 // 本地记忆适配器（降级方案）
 // ============================================================
 const LocalMemoryAdapter = {
+  async listProfile() {
+    return readLS(PROFILE_LS_KEY, []);
+  },
+  async addProfile(content) {
+    const all = await this.listProfile();
+    const record = { id: genId(), content: content.trim(), createdAt: Date.now() };
+    all.push(record);
+    writeLS(PROFILE_LS_KEY, all);
+    return record;
+  },
+  async removeProfile(id) {
+    const all = await this.listProfile();
+    writeLS(PROFILE_LS_KEY, all.filter(m => m.id !== id));
+  },
+  async clearProfile() {
+    localStorage.removeItem(PROFILE_LS_KEY);
+  },
+  async listArchive() { return []; },
+  async addArchive() {},
+  async removeArchive() {},
+
   async list() {
     return readLS(MEMORY_LS_KEY, []);
   },
@@ -362,10 +580,13 @@ const LocalMemoryAdapter = {
     localStorage.removeItem(MEMORY_LS_KEY);
   },
   async asPromptBlock() {
-    const all = await this.list();
-    if (!all.length) return '';
-    const lines = all.map(m => `- ${m.content}`).join('\n');
-    return `以下是关于对方、你们之间关系的一些长期记忆，请自然地记住并体现在回应中，不要机械复述：\n${lines}`;
+    const [profileList, coreList] = await Promise.all([this.listProfile(), this.list()]);
+    if (!profileList.length && !coreList.length) return '';
+    const lines = [
+      ...profileList.map(m => `- ${m.content}`),
+      ...coreList.map(m => `- ${m.content}`)
+    ];
+    return `以下是关于对方、你们之间关系的一些长期记忆，请自然地记住并体现在回应中，不要机械复述：\n${lines.join('\n')}`;
   },
   async saveShortTerm() {},
   async saveShortTermBatch() {},
@@ -407,17 +628,14 @@ const LocalStickerAdapter = {
 // ============================================================
 // 导出：优先用 Supabase，连接失败则降级为本地
 // ============================================================
-// 先用本地（同步可用），异步连接成功后切换为 Supabase
 window.Memory = LocalMemoryAdapter;
 window.Stickers = LocalStickerAdapter;
 
-// 页面加载时异步测试连接
 window.addEventListener('DOMContentLoaded', async () => {
   const ok = await testSupabaseConnection();
   if (ok) {
     window.Memory = SupabaseMemoryAdapter;
     console.log('🧠 记忆系统已切换为 Supabase 云端模式');
-    // 重新渲染记忆列表
     if (typeof renderMemoryList === 'function') {
       renderMemoryList();
     }
@@ -429,6 +647,5 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// 暴露测试函数供 app.js 调用
 window.testSupabaseConnection = testSupabaseConnection;
 window.SupabaseMemoryAdapter = SupabaseMemoryAdapter;
