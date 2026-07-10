@@ -645,134 +645,19 @@ function initAddAdultBtn() {
 }
 
 // 商店商品目录（具体商品）
-const SHOP_CATALOG = {
-  supermarket: {
-    name: "超市",
-    icon: "🏪",
-    items: [
-      { name: "可乐", emoji: "🥤", price: 5 },
-      { name: "黄瓜味薯片", emoji: "🍟", price: 8 },
-      { name: "明治雪吻巧克力", emoji: "🍫", price: 12 },
-      { name: "草莓牛奶", emoji: "🥛", price: 10 },
-      { name: "便利店饭团", emoji: "🍙", price: 7 },
-      { name: "创可贴", emoji: "🩹", price: 6 },
-      { name: "润唇膏", emoji: "💄", price: 25 },
-    ]
-  },
-  cafe: {
-    name: "咖啡&食物",
-    icon: "🍰",
-    items: [
-      { name: "冰美式", emoji: "☕", price: 22 },
-      { name: "燕麦拿铁", emoji: "☕", price: 28 },
-      { name: "抹茶拿铁", emoji: "🍵", price: 30 },
-      { name: "草莓奶油蛋糕", emoji: "🍰", price: 35 },
-      { name: "火腿可颂", emoji: "🥐", price: 18 },
-      { name: "提拉米苏", emoji: "🍮", price: 32 },
-    ]
-  },
-  flower: {
-    name: "花店",
-    icon: "🌸",
-    items: [
-      { name: "三支红玫瑰", emoji: "🌹", price: 30 },
-      { name: "一束向日葵", emoji: "🌻", price: 45 },
-      { name: "白色雏菊", emoji: "🌼", price: 25 },
-      { name: "薰衣草干花", emoji: "💜", price: 20 },
-      { name: "熊童子多肉", emoji: "🪴", price: 15 },
-      { name: "满天星花束", emoji: "✨", price: 35 },
-    ]
-  },
-  bookstore: {
-    name: "书店",
-    icon: "📚",
-    items: [
-      { name: "《小王子》", emoji: "📖", price: 28 },
-      { name: "《人间失格》", emoji: "📕", price: 32 },
-      { name: "《飞鸟集》", emoji: "📗", price: 25 },
-      { name: "明信片套装", emoji: "💌", price: 15 },
-      { name: "Moleskine手账", emoji: "📓", price: 50 },
-      { name: "黄铜书签", emoji: "🔖", price: 18 },
-    ]
-  }
-};
+// 商店功能已移除
 
-function initShopCards() {
-  document.querySelectorAll(".shop-card").forEach(card => {
-    card.addEventListener("click", () => {
-      const shopId = card.dataset.shop;
-      const shop = SHOP_CATALOG[shopId];
-      if (!shop) return;
-      openShopDetailPage(shop, shopId);
-    });
-  });
-}
+
+// 商店功能已移除
 
 // 打开商店详情页（不是弹窗，是页面内切换）
-function openShopDetailPage(shop, shopId) {
-  const threadId = getActiveThreadId();
-
-  // 填充标题
-  $("#shopDetailIcon").innerText = shop.icon;
-  $("#shopDetailTitle").innerText = shop.name;
-
-  // 填充商品列表
-  const list = $("#shopItemsList");
-  list.innerHTML = "";
-  shop.items.forEach(item => {
-    const row = document.createElement("div");
-    row.className = "shop-item-row";
-    row.innerHTML = `
-      <div class="shop-item-info">
-        <span class="shop-item-emoji">${item.emoji}</span>
-        <div>
-          <div class="shop-item-name">${escapeHtml(item.name)}</div>
-          <div class="shop-item-price">¥${item.price}</div>
-        </div>
-      </div>
-      <button class="shop-item-buy-btn" data-shop="${shopId}" data-item-name="${escapeHtml(item.name)}" data-item-emoji="${item.emoji}" data-item-price="${item.price}">送给他</button>
-    `;
-    list.appendChild(row);
-  });
-
-  // 绑定购买按钮（你买 = 不花钱，直接进 Leith 背包）
-  list.querySelectorAll(".shop-item-buy-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const item = {
-        shop: btn.dataset.shop,
-        name: btn.dataset.itemName,
-        emoji: btn.dataset.itemEmoji,
-        price: parseInt(btn.dataset.itemPrice, 10),
-        giftedBy: "user",  // 你送的
-      };
-      giftToLeith(threadId, item);
-      // 按钮变成"已送"状态
-      btn.innerText = "已送 ✓";
-      btn.style.background = "var(--bg-input)";
-      btn.style.color = "var(--paper-dim)";
-      btn.disabled = true;
-    });
-  });
-
-  // 显示商店详情页，隐藏商店列表
-  document.querySelector(".world-page").style.display = "none";
-  $("#shopDetailPage").classList.add("active");
-}
+// 商店功能已移除
 
 // 返回商店列表
-function initShopBackBtn() {
-  $("#shopBackBtn").addEventListener("click", () => {
-    $("#shopDetailPage").classList.remove("active");
-    document.querySelector(".world-page").style.display = "";
-    renderWorldPage();  // 刷新背包
-  });
-}
+// 商店功能已移除
 
 // 你买东西送给 Leith（你不花钱，东西进他背包）
-function giftToLeith(threadId, item) {
-  addInventoryItem(threadId, item);
-  showToast(`${item.emoji} ${item.name} 已送给 Leith`);
-}
+// 商店功能已移除
 
 // ============================================================
 // 判断运行环境
@@ -1930,7 +1815,7 @@ userInput.addEventListener("keydown", (e) => {
 // ============================================================
 // 发送逻辑
 // ============================================================
-$("#sendBtn").onclick = () => sendChat();
+// sendBtn 绑定移到文件末尾初始化处
 
 // ============================================================
 // 联网能力（tool use）：开关开启后，Leith 可自主决定是否搜索网页，并感知当前时间
@@ -2117,53 +2002,14 @@ function parseAIActions(text) {
   return actions;
 }
 
-// 在所有商店里模糊查找商品（精确匹配优先，再模糊包含匹配）
-function findItemInShops(itemName) {
-  // 先精确匹配
-  for (const shopId in SHOP_CATALOG) {
-    const item = SHOP_CATALOG[shopId].items.find(i => i.name === itemName);
-    if (item) return { ...item, shop: shopId };
-  }
-  // 再模糊匹配：商品名包含 AI 说的词，或反过来
-  for (const shopId in SHOP_CATALOG) {
-    const item = SHOP_CATALOG[shopId].items.find(i =>
-      i.name.includes(itemName) || itemName.includes(i.name)
-    );
-    if (item) return { ...item, shop: shopId };
-  }
-  return null;
-}
-
 // 处理 AI 的购买/送礼动作
 function handleAIActions(actions) {
   const threadId = getActiveThreadId();
   let needRefresh = false;
   actions.forEach(action => {
     if (action.type === "buy") {
-      // Leith 自己买东西：先在指定商店找，找不到再全局模糊找
-      let foundItem = null;
-      const shop = SHOP_CATALOG[action.shop];
-      if (shop) {
-        const item = shop.items.find(i => i.name === action.itemName);
-        if (item) foundItem = { ...item, shop: action.shop };
-      }
-      if (!foundItem) {
-        foundItem = findItemInShops(action.itemName);
-      }
-      if (!foundItem) {
-        showToast(`Leith 想买"${action.itemName}"但商店里没有`);
-        return;
-      }
-      const balance = getWallet(threadId);
-      if (balance < foundItem.price) {
-        showToast(`Leith 想买 ${foundItem.name} 但零花钱不足`);
-        return;
-      }
-      setWallet(threadId, balance - foundItem.price);
-      addInventoryItem(threadId, { ...foundItem, giftedBy: "leith" });
-      insertNarration(threadId, `🛒 Leith在商店买了 ${foundItem.emoji} ${foundItem.name}，花费¥${foundItem.price}。零钱包：¥${balance} → ¥${balance - foundItem.price}`);
-      showToast(`Leith 买了 ${foundItem.emoji} ${foundItem.name}（¥${foundItem.price}）`);
-      needRefresh = true;
+      // 商店功能已移除，Leith 自己买东西暂不处理
+      return;
     } else if (action.type === "lgift") {
       // Leith 送你限定商品：从限定商品基金扣，买完从货架消失，进赠送区
       const limitedItem = findLimitedItem(action.itemName);
@@ -2525,7 +2371,8 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   // 需要：1) 把历史里的 tool_result 保留为正确格式 2) assistant 的 tool_use 消息保留为 content blocks
   const payloadMessages = messages.map(m => {
     if (Array.isArray(m.content)) return { role: m.role, content: m.content };
-    return { role: m.role, content: m.content };
+    // 统一转成 content blocks 数组，兼容严格的中转服务
+    return { role: m.role, content: [{ type: "text", text: String(m.content || "") }] };
   });
 
   const body = {
@@ -2621,8 +2468,7 @@ initToggleAllowanceBtn();
 initAddSavingsBtn();
 initAddLimitedBtn();
 initAddAdultBtn();
-initShopCards();
-initShopBackBtn();
 initConfig();
+$("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
 renderStickerManageGrid();
