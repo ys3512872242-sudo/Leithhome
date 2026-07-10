@@ -838,12 +838,13 @@
         <input type="text" id="searchProxyInput" placeholder="https://corsproxy.io/?url=">
         <p class="helper-text">联网开关打开时，Leith 搜索网页走的 CORS 代理。默认 corsproxy.io，如果搜索失败可以换成 https://api.allorigins.win/raw?url= 等。</p>
       </div>
-      <div class="placeholder-slot">云端同步 / 跨设备（待添加，可接 Supabase）</div>
+      <div class="placeholder-slot" id="supabaseStatus">云端记忆：检测中...</div>
+      <button class="btn btn-ghost btn-sm btn-block" id="testSupabaseBtn" style="margin-bottom:8px;">测试云端连接</button>
 
       <div class="divider"></div>
 
       <button class="btn btn-danger btn-block" id="clearAllBtn">清空全部本地数据</button>
-      <p class="helper-text" style="text-align:center;margin-top:8px;">对话记录、密钥、服务商配置、记忆、表情包都存储在这台设备的浏览器里。换设备或清浏览器数据会丢失。</p>
+      <p class="helper-text" style="text-align:center;margin-top:8px;">对话记录、密钥、服务商配置存储在本机浏览器。核心记忆和对话摘要通过 Supabase 云端同步，换设备也不会丢失。</p>
 
     </div>
   </div>
@@ -871,6 +872,7 @@
 
   <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="memory.js"></script>
 <script src="app.js"></script>
 </body>

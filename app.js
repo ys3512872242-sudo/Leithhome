@@ -464,6 +464,10 @@ function notifyLeithAdultPurchase(itemName) {
   messages.push(msg);
   renderMessage(msg);
   saveThreadMessages(threadId, messages);
+  // 同步到云端短期记忆
+  if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+    window.Memory.saveShortTerm(threadId, "user", narration);
+  }
   renderThreadList();
 
   // 自动触发 Leith 回复
@@ -535,6 +539,10 @@ async function autoRespondToNarration(threadId, bubble, row) {
     const freshMessages = getThreadMessages(threadId);
     freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
     saveThreadMessages(threadId, freshMessages);
+    // 同步到云端短期记忆
+    if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+      window.Memory.saveShortTerm(threadId, "assistant", fullReply);
+    }
     renderThreadList();
     const actions = parseAIActions(fullReply);
     if (actions.length) handleAIActions(actions);
@@ -547,6 +555,9 @@ async function autoRespondToNarration(threadId, bubble, row) {
           const freshMessages = getThreadMessages(threadId);
           freshMessages.push({ role: "assistant", content: partial, _id: uid() });
           saveThreadMessages(threadId, freshMessages);
+          if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+            window.Memory.saveShortTerm(threadId, "assistant", partial);
+          }
           showToast("已停止，已保存");
         } else { row.remove(); }
       } else { row.remove(); }
@@ -760,6 +771,11 @@ function deleteThread(id) {
   const ab = loadJSON(LS.worldAdultBought, {});
   delete ab[id];
   saveJSON(LS.worldAdultBought, ab);
+
+  // 同时清空该对话的云端记忆
+  if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+    window.Memory.clearThreadMemory(id);
+  }
 
   if (getActiveThreadId() === id) {
     setActiveThreadId(threads[0].id);
@@ -1946,11 +1962,20 @@ function buildWebPromptBlock() {
 async function buildEffectiveSystemPrompt() {
   const base = localStorage.getItem(LS.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
   const memoryBlock = window.Memory ? await window.Memory.asPromptBlock() : "";
+  // 从云端加载当前对话的长期记忆摘要（压缩后的记忆）
+  let summaryBlock = "";
+  if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+    const threadId = getActiveThreadId();
+    const summary = await window.Memory.loadLongTermSummary(threadId);
+    if (summary) {
+      summaryBlock = `【对话记忆摘要】以下是之前对话中被压缩记住的关键信息：\n- ${summary}`;
+    }
+  }
   const worldBlock = buildWorldPromptBlock();
   const webBlock = buildWebPromptBlock();
   const noteBlock = buildSystemNotesBlock();
   // WORLD_RULES 只注入一次（不随消息重复）
-  return [WORLD_RULES, base.trim(), memoryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
+  return [WORLD_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -2073,6 +2098,35 @@ function showGiftModal(item) {
   });
 }
 
+// ============================================================
+// 记忆压缩用 LLM 调用（复用现有服务商配置）
+// ============================================================
+async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
+  if (!provider || !apiKey || !model) return '';
+  try {
+    const messages = [{ role: 'user', content: prompt }];
+    const systemPrompt = '你是一个记忆压缩助手。请把对话总结成简短的事实描述。';
+    let result;
+    if (provider.apiStyle === 'anthropic') {
+      result = await streamAnthropic({
+        provider, apiKey, model, temp, systemPrompt, messages,
+        controller: new AbortController(),
+        onDelta: () => {}
+      });
+    } else {
+      result = await streamOpenAICompatible({
+        provider, apiKey, model, temp, systemPrompt, messages,
+        controller: new AbortController(),
+        onDelta: () => {}
+      });
+    }
+    return result.text || '';
+  } catch (e) {
+    console.error('记忆压缩 LLM 调用失败:', e);
+    return '';
+  }
+}
+
 async function sendChat(overrideContent) {
   // 防止重复发送：如果正在回复中，直接忽略
   if (currentController) return showToast("请先等当前回复结束，或点停止");
@@ -2099,6 +2153,10 @@ async function sendChat(overrideContent) {
   userInput.value = "";
   userInput.style.height = "auto";
   saveThreadMessages(threadId, messages);
+  // 同步到云端短期记忆
+  if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+    window.Memory.saveShortTerm(threadId, "user", content);
+  }
   renderThreadList();
   renderTokenBanner();
 
@@ -2220,6 +2278,17 @@ async function sendChat(overrideContent) {
     const freshMessages = getThreadMessages(threadId);
     freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
     saveThreadMessages(threadId, freshMessages);
+    // 同步到云端短期记忆
+    if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+      window.Memory.saveShortTerm(threadId, "assistant", fullReply);
+      // 短期记忆超阈值时自动压缩
+      const cloudShortTermCount = freshMessages.filter(m => !m._isNarration && m.type !== "sticker").length;
+      if (cloudShortTermCount >= 20) {
+        await window.Memory.compressMemory(threadId, freshMessages.filter(m => !m._isNarration), async (prompt) => {
+          return await callLLMForSummary({ provider, apiKey, model, temp, prompt });
+        });
+      }
+    }
     renderThreadList();
     renderTokenBanner();
 
@@ -2472,3 +2541,43 @@ initConfig();
 $("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
 renderStickerManageGrid();
+
+// ============================================================
+// Supabase 云端记忆状态显示
+// ============================================================
+function updateSupabaseStatus() {
+  const el = $("#supabaseStatus");
+  if (!el) return;
+  if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+    el.innerHTML = "☁️ 云端记忆：已连接（核心记忆 + 对话摘要自动同步）";
+    el.style.borderColor = "var(--accent-dim)";
+    el.style.color = "var(--accent)";
+  } else {
+    const err = (window.Memory && window.Memory.getError) ? window.Memory.getError() : "";
+    el.innerHTML = err
+      ? `⚠️ 云端记忆：未连接（${err}）`
+      : "📦 云端记忆：未连接（使用本地模式）";
+    el.style.borderColor = "var(--line)";
+    el.style.color = "var(--paper-dim)";
+  }
+}
+
+// 测试连接按钮
+if ($("#testSupabaseBtn")) {
+  $("#testSupabaseBtn").addEventListener("click", async () => {
+    showToast("正在测试连接...");
+    const ok = await window.testSupabaseConnection();
+    if (ok) {
+      window.Memory = SupabaseMemoryAdapter;
+      showToast("✅ 云端连接成功");
+      renderMemoryList();
+    } else {
+      showToast("❌ 连接失败，请检查网络和配置");
+    }
+    updateSupabaseStatus();
+  });
+}
+
+// Supabase 连接是异步的（DOMContentLoaded 触发），延迟刷新状态
+setTimeout(updateSupabaseStatus, 2000);
+setTimeout(updateSupabaseStatus, 5000);
