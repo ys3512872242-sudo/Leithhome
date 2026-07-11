@@ -121,50 +121,6 @@
   .icon-btn:active{transform:scale(.94);}
   .icon-btn svg{width:18px;height:18px;}
 
-  /* ===== 线程侧栏 ===== */
-  .thread-overlay{
-    position:fixed;inset:0;background:rgba(3,5,8,.55);
-    backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
-    z-index:105;opacity:0;pointer-events:none;transition:opacity .25s ease;
-  }
-  .thread-overlay.open{opacity:1;pointer-events:auto;}
-  .thread-panel{
-    position:fixed;top:0;left:0;bottom:var(--bottom-bar-h);
-    width:min(300px,84vw);background:var(--bg-deep);
-    border-right:1px solid var(--line-soft);z-index:110;
-    transform:translateX(-100%);transition:transform .3s var(--ease-out),visibility .3s;
-    display:flex;flex-direction:column;visibility:hidden;pointer-events:none;
-    box-shadow:4px 0 24px rgba(0,0,0,.4);
-  }
-  .thread-panel.open{transform:translateX(0);visibility:visible;pointer-events:auto;}
-  .thread-head{
-    padding:calc(env(safe-area-inset-top)+16px) 16px 14px;
-    border-bottom:1px solid var(--line-soft);
-    display:flex;align-items:center;justify-content:space-between;
-  }
-  .thread-head h3{margin:0;font-size:15px;font-family:'Noto Serif SC',serif;font-weight:600;}
-  .thread-list{flex:1;overflow-y:auto;padding:8px;}
-  .thread-list::-webkit-scrollbar{width:3px;}
-  .thread-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
-  .thread-item{
-    padding:12px 14px;border-radius:var(--radius-md);margin-bottom:2px;
-    cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;
-    transition:all .18s var(--ease-out);
-  }
-  .thread-item:hover{background:var(--bg-elevated);}
-  .thread-item.active{background:var(--bg-elevated);border:1px solid var(--accent-dim);box-shadow:0 0 12px var(--accent-glow);}
-  .thread-info{min-width:0;flex:1;}
-  .thread-name{font-size:13.5px;color:var(--paper);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .thread-preview{font-size:11px;color:var(--paper-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;}
-  .thread-del{
-    background:none;border:none;color:var(--paper-dim);cursor:pointer;padding:4px;
-    flex-shrink:0;opacity:0;transition:opacity .18s ease;border-radius:6px;
-  }
-  .thread-item:hover .thread-del{opacity:1;}
-  .thread-del:hover{color:var(--danger);background:rgba(196,132,126,.1);}
-  .thread-del svg{width:14px;height:14px;}
-  .thread-foot{padding:12px;border-top:1px solid var(--line-soft);}
-
   /* ===== 聊天区 ===== */
   .chat-scroll{
     flex:1;overflow-y:auto;padding:20px 16px 16px;
@@ -217,6 +173,22 @@
   .typing-dots span:nth-child(3){animation-delay:.3s;}
   @keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.35;}30%{transform:translateY(-5px);opacity:1;}}
 
+  /* ===== 消息删除按钮 ===== */
+  .msg-delete-btn{
+    position:absolute;top:-8px;width:24px;height:24px;
+    border-radius:50%;border:1px solid var(--line);
+    background:var(--bg-elevated);color:var(--paper-dim);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;opacity:0;transition:all .2s var(--ease-out);
+    z-index:5;-webkit-tap-highlight-color:transparent;
+    box-shadow:var(--shadow-sm);
+  }
+  .msg-row.user .msg-delete-btn{right:-6px;}
+  .msg-row.assistant .msg-delete-btn{left:-6px;}
+  .msg-row:hover .msg-delete-btn,.msg-row.tapped .msg-delete-btn{opacity:1;}
+  .msg-delete-btn:hover,.msg-delete-btn:active{color:var(--danger);border-color:var(--danger);transform:scale(1.1);}
+  .msg-delete-btn svg{width:12px;height:12px;}
+
   /* ===== 输入区 ===== */
   .input-bar{
     flex-shrink:0;padding:10px 12px;
@@ -255,21 +227,6 @@
   .send-btn:active{transform:scale(.9);}
   .send-btn:disabled{opacity:.35;cursor:default;pointer-events:none;}
   .send-btn svg{width:18px;height:18px;color:#0A1622;}
-
-  /* ===== 消息操作按钮 ===== */
-  .msg-action-btn{
-    position:absolute;bottom:-6px;width:26px;height:26px;
-    border-radius:8px;border:1px solid var(--line);
-    background:var(--bg-elevated);color:var(--paper-dim);
-    display:flex;align-items:center;justify-content:center;
-    cursor:pointer;opacity:0;transition:all .2s var(--ease-out);
-    z-index:5;-webkit-tap-highlight-color:transparent;
-    box-shadow:var(--shadow-sm);
-  }
-  .msg-row.user .msg-action-btn{right:-2px;}
-  .msg-row.assistant .msg-action-btn{left:-2px;}
-  .msg-row:hover .msg-action-btn,.msg-row.tapped .msg-action-btn{opacity:1;}
-  .msg-action-btn:hover,.msg-action-btn:active{color:var(--paper);border-color:var(--accent-dim);transform:scale(1.08);}
 
   /* ===== 表情包面板 ===== */
   .sticker-panel{
@@ -467,7 +424,7 @@
     background:var(--bg-input);transition:all .2s var(--ease-out);
   }
   .msg-checkbox.checked{background:var(--accent);border-color:var(--accent);box-shadow:0 0 8px var(--accent-glow);}
-  .msg-checkbox.checked::after{content:'✓';color:#0A1622;font-size:12px;font-weight:700;}
+  .msg-checkbox.checked::after{content:'\2713';color:#0A1622;font-size:12px;font-weight:700;}
 
   /* ===== token 用量提醒条 ===== */
   .token-banner{
@@ -488,20 +445,95 @@
   }
   .token-banner button:hover{color:var(--paper);border-color:var(--accent-dim);}
 
-  /* ===== 小世界页面 ===== */
-  .world-page{
-    flex:1;overflow-y:auto;
-    padding:20px 16px 20px;
+  /* ===== 应用桌面 ===== */
+  .desktop-page{
+    flex:1;overflow-y:auto;padding:20px 16px 20px;
     display:flex;flex-direction:column;gap:16px;
   }
-  .world-page::-webkit-scrollbar{width:3px;}
-  .world-page::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
-  .world-header{
+  .desktop-page::-webkit-scrollbar{width:3px;}
+  .desktop-page::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
+  .desktop-header{
     text-align:center;padding:calc(env(safe-area-inset-top)+10px) 0 6px;
   }
-  .world-header h2{margin:0;font-family:'Noto Serif SC',serif;font-size:22px;font-weight:700;color:var(--paper);}
-  .world-header p{margin:6px 0 0;font-size:12px;color:var(--paper-dim);}
+  .desktop-header h2{margin:0;font-family:'Noto Serif SC',serif;font-size:22px;font-weight:700;color:var(--paper);}
+  .desktop-header p{margin:6px 0 0;font-size:12px;color:var(--paper-dim);}
 
+  /* 小组件卡片（桌面顶部） */
+  .widget-card{
+    background:linear-gradient(135deg,var(--bg-elevated),rgba(107,155,210,.06));
+    border:1px solid var(--accent-dim);border-radius:var(--radius-lg);
+    padding:18px;display:flex;justify-content:space-between;align-items:center;
+    box-shadow:0 2px 16px rgba(0,0,0,.2);cursor:pointer;
+    transition:all .2s var(--ease-out);
+  }
+  .widget-card:hover{border-color:var(--accent);box-shadow:0 4px 20px rgba(107,155,210,.15);}
+  .widget-left{display:flex;flex-direction:column;gap:4px;}
+  .widget-time{font-size:28px;font-weight:700;color:var(--paper);font-family:'Noto Serif SC',serif;letter-spacing:1px;}
+  .widget-weather{font-size:12px;color:var(--paper-dim);}
+  .widget-note{
+    max-width:50%;font-size:12px;color:var(--paper);line-height:1.6;
+    font-family:'Noto Serif SC',serif;font-style:italic;opacity:.85;
+    border-left:2px solid var(--accent-dim);padding-left:10px;
+  }
+
+  /* App 图标网格 */
+  .app-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:16px;
+    padding:8px 0;
+  }
+  .app-icon{
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+    cursor:pointer;transition:all .2s var(--ease-out);
+    -webkit-tap-highlight-color:transparent;
+  }
+  .app-icon:active{transform:scale(.92);}
+  .app-icon-img{
+    width:60px;height:60px;border-radius:16px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:30px;position:relative;overflow:hidden;
+    box-shadow:0 4px 16px rgba(0,0,0,.3);
+    transition:all .2s var(--ease-out);
+  }
+  .app-icon:hover .app-icon-img{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.4);}
+  .app-icon-label{font-size:12px;color:var(--paper);font-weight:500;}
+  .app-icon-badge{
+    position:absolute;top:-2px;right:-2px;
+    background:var(--rose);color:#fff;font-size:9px;
+    width:16px;height:16px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    font-weight:700;border:2px solid var(--bg);
+  }
+
+  /* App 页面通用 */
+  .app-page{
+    display:none;flex-direction:column;width:100%;
+    position:absolute;top:0;left:0;right:0;bottom:var(--bottom-bar-h);
+    z-index:50;
+  }
+  .app-page.active{display:flex;animation:pageIn .25s var(--ease-out);}
+  .app-page-head{
+    display:flex;align-items:center;gap:12px;
+    padding:calc(env(safe-area-inset-top)+14px) 16px 14px;
+    background:rgba(10,13,20,.92);
+    backdrop-filter:blur(16px) saturate(1.4);
+    -webkit-backdrop-filter:blur(16px) saturate(1.4);
+    border-bottom:1px solid var(--line-soft);
+    flex-shrink:0;z-index:10;
+  }
+  .app-back-btn{
+    width:36px;height:36px;border-radius:var(--radius-md);
+    border:1px solid var(--line);background:rgba(20,24,34,.6);
+    color:var(--paper-dim);display:flex;align-items:center;justify-content:center;
+    cursor:pointer;flex-shrink:0;transition:all .18s ease;
+  }
+  .app-back-btn:hover{color:var(--paper);border-color:var(--accent-dim);}
+  .app-back-btn svg{width:18px;height:18px;}
+  .app-title{font-size:18px;font-weight:600;font-family:'Noto Serif SC',serif;}
+  .app-body{flex:1;overflow-y:auto;padding:20px 16px;}
+  .app-body::-webkit-scrollbar{width:3px;}
+  .app-body::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
+
+  /* ===== 购物 app（原小世界） ===== */
   .wallet-card{
     background:linear-gradient(135deg,var(--bg-elevated),rgba(107,155,210,.06));
     border:1px solid var(--accent-dim);border-radius:var(--radius-lg);
@@ -511,18 +543,6 @@
   .wallet-label{font-size:11px;color:var(--paper-dim);margin-bottom:4px;}
   .wallet-amount{font-size:28px;font-weight:700;color:var(--accent);font-family:'Noto Serif SC',serif;}
   .wallet-actions{display:flex;gap:6px;}
-
-  .shop-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
-  .shop-card{
-    background:var(--bg-elevated);border:1px solid var(--line);
-    border-radius:var(--radius-lg);padding:18px 14px;text-align:center;
-    cursor:pointer;transition:all .2s var(--ease-out);
-  }
-  .shop-card:hover{border-color:var(--accent-dim);transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.3);}
-  .shop-card:active{transform:scale(.97);}
-  .shop-card .shop-icon{font-size:34px;margin-bottom:8px;}
-  .shop-card .shop-name{font-size:14px;font-weight:500;color:var(--paper);}
-  .shop-card .shop-desc{font-size:11px;color:var(--paper-dim);margin-top:4px;line-height:1.5;}
 
   .inventory-section{margin-top:4px;}
   .inventory-section h3{font-size:13px;color:var(--paper-dim);margin:0 0 10px;font-weight:500;}
@@ -541,25 +561,11 @@
   .world-empty .emoji{font-size:42px;margin-bottom:12px;opacity:.8;}
   .world-empty p{font-size:13px;line-height:1.8;}
 
-  /* ===== 商店详情页 ===== */
+  /* 商店详情 */
   .shop-detail-page{
-    flex:1;overflow-y:auto;padding:20px 16px 20px;
     display:none;flex-direction:column;gap:14px;
   }
   .shop-detail-page.active{display:flex;animation:pageIn .25s var(--ease-out);}
-  .shop-detail-head{
-    display:flex;align-items:center;gap:12px;
-    padding-top:calc(env(safe-area-inset-top)+6px);
-  }
-  .shop-detail-head .back-btn{
-    width:36px;height:36px;border-radius:var(--radius-md);
-    border:1px solid var(--line);background:var(--bg-elevated);
-    color:var(--paper-dim);display:flex;align-items:center;justify-content:center;
-    cursor:pointer;flex-shrink:0;transition:all .18s ease;
-  }
-  .shop-detail-head .back-btn:hover{color:var(--paper);border-color:var(--accent-dim);}
-  .shop-detail-head .shop-title{font-size:18px;font-weight:600;font-family:'Noto Serif SC',serif;}
-  .shop-detail-head .shop-icon-lg{font-size:24px;}
   .shop-items-list{display:flex;flex-direction:column;gap:10px;}
   .shop-item-row{
     display:flex;align-items:center;justify-content:space-between;
@@ -581,6 +587,75 @@
   .shop-item-buy-btn:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(107,155,210,.35);}
   .shop-item-buy-btn:active{transform:scale(.93);}
 
+  /* ===== 小剧场 app ===== */
+  .theater-setup{
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-lg);padding:16px;margin-bottom:16px;
+  }
+  .theater-setup textarea{
+    width:100%;background:var(--bg-input);border:1px solid var(--line);
+    color:var(--paper);border-radius:var(--radius-md);padding:10px 14px;
+    font-size:14px;font-family:inherit;outline:none;resize:vertical;
+    min-height:80px;caret-color:var(--accent);
+  }
+  .theater-setup textarea:focus{border-color:var(--accent-dim);box-shadow:0 0 0 3px var(--accent-glow);}
+  .theater-chat{
+    flex:1;overflow-y:auto;padding:0 0 12px;
+    display:flex;flex-direction:column;gap:14px;
+  }
+  .theater-chat::-webkit-scrollbar{width:4px;}
+  .theater-chat::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
+  .theater-input-bar{
+    flex-shrink:0;padding:10px 0;
+    border-top:1px solid var(--line-soft);
+    display:flex;align-items:flex-end;gap:8px;
+  }
+
+  /* ===== 记忆可视化 app ===== */
+  .memory-tab-bar{
+    display:flex;gap:0;margin-bottom:16px;
+    background:var(--bg-input);border-radius:var(--radius-md);
+    padding:3px;
+  }
+  .memory-tab{
+    flex:1;padding:8px 12px;border:none;background:none;
+    color:var(--paper-dim);font-size:12px;cursor:pointer;
+    border-radius:8px;transition:all .18s ease;font-weight:500;
+  }
+  .memory-tab.active{background:var(--bg-elevated);color:var(--paper);box-shadow:var(--shadow-sm);}
+
+  /* ===== 小组件 app ===== */
+  .widget-page-card{
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-lg);padding:20px;margin-bottom:16px;
+  }
+  .widget-big-time{
+    font-size:48px;font-weight:700;color:var(--paper);
+    font-family:'Noto Serif SC',serif;text-align:center;
+    letter-spacing:2px;
+  }
+  .widget-big-date{
+    font-size:13px;color:var(--paper-dim);text-align:center;margin-top:6px;
+  }
+  .widget-weather-info{
+    display:flex;align-items:center;justify-content:center;gap:12px;
+    margin-top:16px;font-size:14px;color:var(--paper);
+  }
+  .widget-weather-icon{font-size:36px;}
+  .widget-note-card{
+    background:linear-gradient(135deg,rgba(107,155,210,.08),rgba(123,142,196,.06));
+    border:1px solid var(--accent-dim);border-radius:var(--radius-lg);
+    padding:20px;margin-top:16px;
+  }
+  .widget-note-label{
+    font-size:11px;color:var(--accent);text-transform:uppercase;
+    letter-spacing:1px;margin-bottom:10px;font-weight:600;
+  }
+  .widget-note-text{
+    font-size:15px;color:var(--paper);line-height:1.8;
+    font-family:'Noto Serif SC',serif;font-style:italic;
+  }
+
   .hidden{display:none!important;}
 </style>
 </head>
@@ -589,12 +664,8 @@
   <!-- ===== 页面1：对话页 ===== -->
   <div class="page active" id="page-chat">
 
-    <!-- 顶栏 -->
     <div class="topbar">
       <div class="topbar-left">
-        <button class="icon-btn" id="openThreadBtn" title="对话列表">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-        </button>
         <div class="brand">
           <span class="brand-mark" id="brandMark">Leith</span>
           <span class="brand-sub" id="statusLabel">未连接</span>
@@ -610,7 +681,6 @@
       </div>
     </div>
 
-    <!-- 选取模式操作条 -->
     <div class="select-toolbar hidden" id="selectToolbar">
       <span id="selectCount">已选 0 条</span>
       <div class="select-actions">
@@ -620,7 +690,6 @@
       </div>
     </div>
 
-    <!-- 聊天区 -->
     <div id="tokenBannerSlot"></div>
     <div class="chat-scroll" id="chatBox">
       <div class="empty-state" id="emptyState">
@@ -629,7 +698,6 @@
       </div>
     </div>
 
-    <!-- 表情包选择面板 -->
     <div class="sticker-panel" id="stickerPanel">
       <div class="sticker-panel-head">
         <h4>表情包</h4>
@@ -640,12 +708,11 @@
       <div class="sticker-grid" id="stickerGrid"></div>
     </div>
 
-    <!-- 输入区 -->
     <div class="input-bar">
       <button class="sticker-btn" id="openStickerPanelBtn" title="表情包">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
       </button>
-      <button class="sticker-btn" id="webToggleBtn" title="联网开关（开了之后 Leith 可以自己决定要不要搜索网页，并感知当前时间）">
+      <button class="sticker-btn" id="webToggleBtn" title="联网开关">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
       </button>
       <textarea id="userInput" rows="1" placeholder="想说点什么..."></textarea>
@@ -656,16 +723,58 @@
 
   </div><!-- /page-chat -->
 
-  <!-- ===== 页面2：小世界 ===== -->
-  <div class="page" id="page-world">
-
-    <div class="world-page">
-      <div class="world-header">
-        <h2>🏘️ 小世界</h2>
-        <p>Leith 在这里生活、消费、和你互动</p>
+  <!-- ===== 页面2：应用桌面 ===== -->
+  <div class="page" id="page-desktop">
+    <div class="desktop-page">
+      <div class="desktop-header">
+        <h2>Leith·Home</h2>
+        <p>Leith 的小世界</p>
       </div>
 
-      <!-- Leith零花钱 -->
+      <!-- 小组件预览卡 -->
+      <div class="widget-card" id="widgetPreview" onclick="openApp('page-app-widget')">
+        <div class="widget-left">
+          <div class="widget-time" id="widgetTime">--:--</div>
+          <div class="widget-weather" id="widgetWeather">加载中...</div>
+        </div>
+        <div class="widget-note" id="widgetNotePreview">点击查看今日小纸条</div>
+      </div>
+
+      <!-- App 图标网格 -->
+      <div class="app-grid">
+        <div class="app-icon" onclick="openApp('page-app-shop')">
+          <div class="app-icon-img" style="background:linear-gradient(135deg,#6B9BD2,#3D5C8F);">🛍️</div>
+          <div class="app-icon-label">购物</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-theater')">
+          <div class="app-icon-img" style="background:linear-gradient(135deg,#D9708C,#9B4D6A);">🎭</div>
+          <div class="app-icon-label">小剧场</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-memory')">
+          <div class="app-icon-img" style="background:linear-gradient(135deg,#7B8EC4,#4A5A8A);">🧠</div>
+          <div class="app-icon-label">记忆</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-widget')">
+          <div class="app-icon-img" style="background:linear-gradient(135deg,#DBA95A,#9B7738);">🌤️</div>
+          <div class="app-icon-label">小组件</div>
+        </div>
+        <div class="app-icon" onclick="showToast('共读小说 · 即将上线')">
+          <div class="app-icon-img" style="background:linear-gradient(135deg,#4A5A8A,#2D3A5A);">📖</div>
+          <div class="app-icon-label">共读小说</div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /page-desktop -->
+
+  <!-- ===== App: 购物 ===== -->
+  <div class="app-page" id="page-app-shop">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeApp()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">🛍️ 购物</span>
+    </div>
+    <div class="app-body">
       <div class="wallet-card" id="walletCard">
         <div class="wallet-info">
           <div class="wallet-label">💵 Leith 的零花钱</div>
@@ -676,8 +785,7 @@
           <button class="btn btn-ghost btn-sm" id="toggleAllowanceBtn">每日定额</button>
         </div>
       </div>
-
-      <!-- 限定商品基金 -->
+      <div style="height:12px;"></div>
       <div class="wallet-card" id="savingsCard" style="border-color:var(--violet);">
         <div class="wallet-info">
           <div class="wallet-label">📒 限定商品基金</div>
@@ -687,8 +795,7 @@
           <button class="btn btn-primary btn-sm" id="addSavingsBtn">存一笔</button>
         </div>
       </div>
-
-      <!-- 限定商品区（全局共享） -->
+      <div style="height:16px;"></div>
       <div class="inventory-section">
         <h3>🏷️ 限定商品区 <button class="btn btn-primary btn-sm" id="addLimitedBtn" style="float:right;margin-top:-3px;">+ 上架</button></h3>
         <p style="font-size:11px;color:var(--paper-dim);margin:0 0 10px;">你想买但舍不得买的东西。Leith 可以送你，买了就从货架消失。</p>
@@ -699,10 +806,8 @@
           </div>
         </div>
       </div>
-
-      <!-- 成人用品区（全局共享） -->
       <div class="inventory-section">
-        <h3 style="color:#D970A0;">🔞 ��人用品区 <button class="btn btn-primary btn-sm" id="addAdultBtn" style="float:right;margin-top:-3px;">+ 添加</button></h3>
+        <h3 style="color:#D970A0;">🔞 成人用品区 <button class="btn btn-primary btn-sm" id="addAdultBtn" style="float:right;margin-top:-3px;">+ 添加</button></h3>
         <p style="font-size:11px;color:var(--paper-dim);margin:0 0 10px;">你或 Leith 都可以买，对方都会知道。买完移到床头柜。</p>
         <div class="inventory-grid" id="adultGrid">
           <div class="world-empty" style="grid-column:1/-1;">
@@ -711,8 +816,6 @@
           </div>
         </div>
       </div>
-
-      <!-- Leith 赠送区（每个对话独立） -->
       <div class="inventory-section">
         <h3>💌 Leith 赠送区</h3>
         <div class="inventory-grid" id="giftRecordsGrid">
@@ -722,10 +825,8 @@
           </div>
         </div>
       </div>
-
-      <!-- Susie和Leith的床头柜（每个对话独立） -->
       <div class="inventory-section">
-        <h3>🛏️ Susie和Leith的床头柜</h3>
+        <h3>🛏️ 床头柜</h3>
         <div class="inventory-grid" id="nightstandGrid">
           <div class="world-empty" style="grid-column:1/-1;">
             <div class="emoji">🛏️</div>
@@ -734,36 +835,97 @@
         </div>
       </div>
       <div style="height:20px;"></div>
-    </div>
 
-    <!-- 商店详情页（点商店后展开） -->
-    <div class="shop-detail-page" id="shopDetailPage">
-      <div class="shop-detail-head">
-        <button class="back-btn" id="shopBackBtn">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
-        </button>
-        <span class="shop-icon-lg" id="shopDetailIcon"></span>
-        <span class="shop-title" id="shopDetailTitle"></span>
+      <!-- 商店详情（点商店后展开） -->
+      <div class="shop-detail-page" id="shopDetailPage">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+          <button class="app-back-btn" onclick="closeShopDetail()">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <span class="shop-icon-lg" id="shopDetailIcon"></span>
+          <span class="app-title" id="shopDetailTitle"></span>
+        </div>
+        <div class="shop-items-list" id="shopItemsList"></div>
       </div>
-      <div class="shop-items-list" id="shopItemsList"></div>
     </div>
+  </div><!-- /app-shop -->
 
-  </div><!-- /page-world -->
-
-  <!-- ===== 对话线程侧栏 ===== -->
-  <div class="thread-overlay" id="threadOverlay"></div>
-  <div class="thread-panel" id="threadPanel">
-    <div class="thread-head">
-      <h3>对话</h3>
-      <button class="icon-btn" id="closeThreadBtn" style="width:30px;height:30px;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+  <!-- ===== App: 小剧场 ===== -->
+  <div class="app-page" id="page-app-theater">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeApp()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
+      <span class="app-title">🎭 小剧场</span>
     </div>
-    <div class="thread-list" id="threadList"></div>
-    <div class="thread-foot">
-      <button class="btn btn-primary btn-block" id="newThreadBtn">+ 新建对话</button>
+    <div class="app-body" style="display:flex;flex-direction:column;">
+      <div class="theater-setup">
+        <label class="field-label">故事背景 / 世界线设定</label>
+        <textarea id="theaterSetting" placeholder="设定一个故事背景，比如：我们是大学同学，你暗恋我很久了。这个世界线里的角色扮演不会影响主对话的记忆。"></textarea>
+        <button class="btn btn-primary btn-sm" id="theaterStartBtn" style="margin-top:8px;">开始角色扮演</button>
+      </div>
+      <div class="theater-chat" id="theaterChatBox">
+        <div class="empty-state">
+          <div class="mark">🎭</div>
+          <p>设定一个故事背景，<br>和 Leith 开始一场不设限的角色扮演。</p>
+        </div>
+      </div>
+      <div class="theater-input-bar">
+        <textarea id="theaterInput" rows="1" placeholder="角色扮演中..." style="flex:1;resize:none;background:var(--bg-input);border:1px solid var(--line);color:var(--paper);border-radius:16px;padding:11px 16px;font-size:15px;font-family:inherit;max-height:120px;outline:none;caret-color:var(--accent);"></textarea>
+        <button class="send-btn" id="theaterSendBtn">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </div>
     </div>
-  </div>
+  </div><!-- /app-theater -->
+
+  <!-- ===== App: 记忆可视化 ===== -->
+  <div class="app-page" id="page-app-memory">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeApp()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">🧠 记忆</span>
+    </div>
+    <div class="app-body">
+      <div class="memory-tab-bar">
+        <button class="memory-tab active" data-mem-tab="profile">人设档案</button>
+        <button class="memory-tab" data-mem-tab="core">核心记忆</button>
+        <button class="memory-tab" data-mem-tab="archive">归档信件</button>
+      </div>
+      <div id="memoryAddArea">
+        <textarea class="field" id="memoryAddInput" rows="2" placeholder="添加一条记忆..." style="margin-bottom:8px;"></textarea>
+        <button class="btn btn-primary btn-sm btn-block" id="memoryAddBtn">+ 添加</button>
+      </div>
+      <div style="height:16px;"></div>
+      <div id="memoryViewList"></div>
+    </div>
+  </div><!-- /app-memory -->
+
+  <!-- ===== App: 小组件 ===== -->
+  <div class="app-page" id="page-app-widget">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeApp()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">🌤️ 小组件</span>
+    </div>
+    <div class="app-body">
+      <div class="widget-page-card">
+        <div class="widget-big-time" id="widgetBigTime">--:--</div>
+        <div class="widget-big-date" id="widgetBigDate">--</div>
+        <div class="widget-weather-info" id="widgetWeatherInfo">
+          <span class="widget-weather-icon" id="widgetWeatherIcon">⏳</span>
+          <span id="widgetWeatherText">正在获取天气...</span>
+        </div>
+      </div>
+      <div class="widget-note-card">
+        <div class="widget-note-label">💌 Leith 的今日小纸条</div>
+        <div class="widget-note-text" id="widgetNoteText">正在生成今日小纸条...</div>
+        <button class="btn btn-ghost btn-sm btn-block" id="refreshNoteBtn" style="margin-top:12px;">重新生成</button>
+      </div>
+    </div>
+  </div><!-- /app-widget -->
 
   <!-- ===== 设置抽屉 ===== -->
   <div class="drawer-overlay" id="drawerOverlay"></div>
@@ -786,7 +948,7 @@
       <div class="field-group">
         <label class="field-label">API Key</label>
         <input type="password" id="apiKey" placeholder="sk-...">
-        <p class="helper-text">保存在本机浏览器里，不会发送给除你选择的服务商以外的任何地方。公用设备上不建议保存。</p>
+        <p class="helper-text">保存在本机浏览器里，不会发送给除你选择的服务商以外的任何地方。</p>
       </div>
       <div class="field-group">
         <label class="field-label">模型</label>
@@ -806,7 +968,7 @@
 
       <div class="section-title">人设 / 系统提示词</div>
       <div class="field-group">
-        <textarea class="field" id="systemPromptInput" rows="4" placeholder="留空则不注入任何系统提示词"></textarea>
+        <textarea class="field" id="systemPromptInput" rows="4" placeholder="留空则使用默认人设"></textarea>
         <p class="helper-text">这里的内容会作为 system prompt 发送给模型，影响它回应的方式。</p>
       </div>
 
@@ -814,7 +976,7 @@
 
       <div class="section-title">核心记忆</div>
       <div class="field-group">
-        <p class="helper-text" style="margin-top:0;">这里存放你希望被长期记住的内容——每次对话都会自动带上，不需要重复介绍自己。</p>
+        <p class="helper-text" style="margin-top:0;">这里存放你希望被长期记住的内容。也可在"桌面 > 记忆"app 中管理。</p>
         <textarea class="field" id="newMemoryInput" rows="3" placeholder="写下想让 Leith 一直记得的事..." style="margin-top:8px;"></textarea>
         <button class="btn btn-primary btn-sm" id="addMemoryBtn" style="margin-top:8px;">+ 存入记忆</button>
       </div>
@@ -836,7 +998,7 @@
       <div class="field-group">
         <label class="field-label">联网搜索代理</label>
         <input type="text" id="searchProxyInput" placeholder="https://corsproxy.io/?url=">
-        <p class="helper-text">联网开关打开时，Leith 搜索网页走的 CORS 代理。默认 corsproxy.io，如果搜索失败可以换成 https://api.allorigins.win/raw?url= 等。</p>
+        <p class="helper-text">联网开关打开时，Leith 搜索网页走的 CORS 代理。</p>
       </div>
       <div class="placeholder-slot" id="supabaseStatus">云端记忆：检测中...</div>
       <button class="btn btn-ghost btn-sm btn-block" id="testSupabaseBtn" style="margin-bottom:8px;">测试云端连接</button>
@@ -844,7 +1006,7 @@
       <div class="divider"></div>
 
       <button class="btn btn-danger btn-block" id="clearAllBtn">清空全部本地数据</button>
-      <p class="helper-text" style="text-align:center;margin-top:8px;">对话记录、密钥、服务商配置存储在本机浏览器。核心记忆和对话摘要通过 Supabase 云端同步，换设备也不会丢失。</p>
+      <p class="helper-text" style="text-align:center;margin-top:8px;">对话记录、密钥、服务商配置存储在本机浏览器。人设档案、核心记忆和归档信件通过 Supabase 云端同步。</p>
 
     </div>
   </div>
@@ -855,9 +1017,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       <span>对话</span>
     </div>
-    <div class="bottom-tab" data-page="page-world">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-      <span>小世界</span>
+    <div class="bottom-tab" data-page="page-desktop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="5" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="12" cy="19" r="2"/><circle cx="19" cy="19" r="2"/></svg>
+      <span>桌面</span>
     </div>
   </div>
 

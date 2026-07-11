@@ -124,7 +124,7 @@ function renderBubbleContent(text) {
 }
 
 // ============================================================
-// 页面切换（底部导航）
+// 页面切换（底部导航）+ App 页面管理
 // ============================================================
 let activePage = "page-chat";
 
@@ -138,7 +138,31 @@ function switchPage(pageId) {
     tab.classList.toggle("active", tab.dataset.page === pageId);
   });
 
-  if (pageId === "page-world") renderWorldPage();
+  // 进入桌面时刷新小组件预览
+  if (pageId === "page-desktop") updateWidgetPreview();
+}
+
+// 打开某个 app 页面（覆盖在桌面之上）
+function openApp(appPageId) {
+  const target = document.getElementById(appPageId);
+  if (!target) return;
+  document.querySelectorAll(".app-page").forEach(p => p.classList.remove("active"));
+  target.classList.add("active");
+
+  if (appPageId === "page-app-shop") renderShopPage();
+  if (appPageId === "page-app-memory") renderMemoryAppList();
+  if (appPageId === "page-app-widget") refreshWidgetApp();
+}
+
+// 关闭 app 页面，回到桌面
+function closeApp() {
+  document.querySelectorAll(".app-page").forEach(p => p.classList.remove("active"));
+}
+
+// 关闭商店详情子页
+function closeShopDetail() {
+  const sdp = $("#shopDetailPage");
+  if (sdp) sdp.classList.remove("active");
 }
 
 function initBottomBar() {
@@ -339,7 +363,7 @@ function maybeGiveDailyAllowance() {
 // ============================================================
 // 小世界：UI 渲染
 // ============================================================
-function renderWorldPage() {
+function renderShopPage() {
   maybeGiveDailyAllowance();
 
   const threadId = getActiveThreadId();
@@ -375,7 +399,7 @@ function renderWorldPage() {
     limitedGrid.querySelectorAll("[data-limited-del]").forEach(btn => {
       btn.addEventListener("click", () => {
         removeLimitedItem(btn.dataset.limitedDel);
-        renderWorldPage();
+        renderShopPage();
         showToast("已下架");
       });
     });
@@ -410,14 +434,14 @@ function renderWorldPage() {
         showToast(`已购买 ${item.emoji} ${item.name}（免费）`);
         // 发送旁白给 Leith
         notifyLeithAdultPurchase(item.name);
-        renderWorldPage();
+        renderShopPage();
       });
     });
     adultGrid.querySelectorAll("[data-adult-del]").forEach(btn => {
       btn.addEventListener("click", () => {
         if (confirm("确定下架这个商品？")) {
           removeAdultItem(btn.dataset.adultDel);
-          renderWorldPage();
+          renderShopPage();
           showToast("已下架");
         }
       });
@@ -585,7 +609,7 @@ function initGiveMoneyBtn() {
     if (isNaN(amount) || amount <= 0) return showToast("请输入有效金额");
     const threadId = getActiveThreadId();
     addWallet(threadId, amount);
-    renderWorldPage();
+    renderShopPage();
     showToast(`已给 Leith ¥${amount}，零钱包现有 ¥${getWallet(threadId)}`);
   });
 }
@@ -606,7 +630,7 @@ function initToggleAllowanceBtn() {
       cfg.enabled = false;
       setAllowanceConfig(cfg);
     }
-    renderWorldPage();
+    renderShopPage();
     showToast(cfg.enabled ? `已开启每日定额 ¥${cfg.amount}` : "已关闭每日定额");
   });
 }
@@ -620,7 +644,7 @@ function initAddSavingsBtn() {
     if (isNaN(amount) || amount <= 0) return showToast("请输入有效金额");
     const threadId = getActiveThreadId();
     addSavings(threadId, amount);
-    renderWorldPage();
+    renderShopPage();
     showToast(`限定商品基金 +¥${amount}`);
   });
 }
@@ -635,7 +659,7 @@ function initAddLimitedBtn() {
     const price = parseInt(priceStr, 10);
     if (isNaN(price) || price <= 0) return showToast("请输入有效价格");
     addLimitedItem({ name: name.trim(), price });
-    renderWorldPage();
+    renderShopPage();
     showToast(`已上架：${name}（¥${price}）`);
   });
 }
@@ -650,7 +674,7 @@ function initAddAdultBtn() {
     const price = parseInt(priceStr, 10);
     if (isNaN(price) || price <= 0) return showToast("请输入有效价格");
     addAdultItem({ name: name.trim(), price });
-    renderWorldPage();
+    renderShopPage();
     showToast(`已添加：${name}（¥${price}）`);
   });
 }
@@ -729,104 +753,9 @@ function pruneOldMessages(threadId) {
   return true;
 }
 
-function createNewThread() {
-  const threads = getThreads();
-  const t = { id: uid(), name: `对话 ${threads.length + 1}`, createdAt: Date.now() };
-  threads.push(t);
-  saveThreads(threads);
-  setActiveThreadId(t.id);
-  renderThreadList();
-  loadActiveThreadIntoChat();
-  closeThreadPanel();
-}
-
-function deleteThread(id) {
-  let threads = getThreads();
-  if (threads.length <= 1) {
-    showModal("无法删除", "至少需要保留一个对话。");
-    return;
-  }
-  threads = threads.filter(t => t.id !== id);
-  saveThreads(threads);
-  localStorage.removeItem(LS.threadMsgPrefix + id);
-  // 同时清掉钱包和背包
-  const wallets = loadJSON(LS.worldWallets, {});
-  delete wallets[id];
-  saveJSON(LS.worldWallets, wallets);
-  const invs = loadJSON(LS.worldInventories, {});
-  delete invs[id];
-  saveJSON(LS.worldInventories, invs);
-  const savings = loadJSON(LS.worldSavings, {});
-  delete savings[id];
-  saveJSON(LS.worldSavings, savings);
-  const gifts = loadJSON(LS.worldGiftRecords, {});
-  delete gifts[id];
-  saveJSON(LS.worldGiftRecords, gifts);
-  const ns = loadJSON(LS.worldNightstand, {});
-  delete ns[id];
-  saveJSON(LS.worldNightstand, ns);
-  const sav = loadJSON(LS.worldSavings, {});
-  delete sav[id];
-  saveJSON(LS.worldSavings, sav);
-  const ab = loadJSON(LS.worldAdultBought, {});
-  delete ab[id];
-  saveJSON(LS.worldAdultBought, ab);
-
-  // 同时清空该对话的云端记忆
-  if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-    window.Memory.clearThreadMemory(id);
-  }
-
-  if (getActiveThreadId() === id) {
-    setActiveThreadId(threads[0].id);
-    loadActiveThreadIntoChat();
-  }
-  renderThreadList();
-}
-
-function switchThread(id) {
-  setActiveThreadId(id);
-  renderThreadList();
-  loadActiveThreadIntoChat();
-  closeThreadPanel();
-  // 如果当前在小世界页面，刷新钱包显示
-  if (activePage === "page-world") renderWorldPage();
-}
-
-function renderThreadList() {
-  const list = $("#threadList");
-  const threads = getThreads().slice().sort((a, b) => b.createdAt - a.createdAt);
-  const activeId = getActiveThreadId();
-  list.innerHTML = "";
-  threads.forEach(t => {
-    const msgs = getThreadMessages(t.id);
-    const last = msgs[msgs.length - 1];
-    const preview = last ? (last.type === "sticker" ? "[表情包]" : last.content) : "还没有消息";
-
-    const item = document.createElement("div");
-    item.className = "thread-item" + (t.id === activeId ? " active" : "");
-    item.innerHTML = `
-      <div class="thread-info">
-        <div class="thread-name">${escapeHtml(t.name)}</div>
-        <div class="thread-preview">${escapeHtml(preview)}</div>
-      </div>
-      <button class="thread-del" title="删除">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
-      </button>
-    `;
-    item.addEventListener("click", (e) => {
-      if (e.target.closest(".thread-del")) return;
-      switchThread(t.id);
-    });
-    item.querySelector(".thread-del").addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (confirm(`删除对话[${t.name}]？聊天记录也会一并删除。`)) {
-        deleteThread(t.id);
-      }
-    });
-    list.appendChild(item);
-  });
-}
+// 单对话模式：不再有多对话管理
+// renderThreadList 保留为空函数，避免已有调用报错
+function renderThreadList() {}
 
 function loadActiveThreadIntoChat() {
   exitSelectMode();
@@ -847,19 +776,7 @@ function loadActiveThreadIntoChat() {
   renderTokenBanner();
 }
 
-$("#newThreadBtn").onclick = createNewThread;
-
-function openThreadPanel() {
-  $("#threadPanel").classList.add("open");
-  $("#threadOverlay").classList.add("open");
-}
-function closeThreadPanel() {
-  $("#threadPanel").classList.remove("open");
-  $("#threadOverlay").classList.remove("open");
-}
-$("#openThreadBtn").onclick = () => { renderThreadList(); openThreadPanel(); };
-$("#closeThreadBtn").onclick = closeThreadPanel;
-$("#threadOverlay").onclick = closeThreadPanel;
+// 单对话模式：线程面板已移除
 
 // ============================================================
 // 服务商管理
@@ -1018,7 +935,6 @@ function initConfig() {
   if (savedProxy && $("#searchProxyInput")) $("#searchProxyInput").value = savedProxy;
 
   ensureAtLeastOneThread();
-  renderThreadList();
   loadActiveThreadIntoChat();
 }
 
@@ -1254,6 +1170,14 @@ function renderMessage(msg, opts = {}) {
     row.appendChild(regenBtn);
   }
 
+  // 所有消息：加删除按钮（本地+云端同步删除）
+  const delBtn = document.createElement("button");
+  delBtn.className = "msg-delete-btn";
+  delBtn.title = "删除";
+  delBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>`;
+  delBtn.onclick = (e) => { e.stopPropagation(); deleteMessage(msg._id, row); };
+  row.appendChild(delBtn);
+
   if (selectMode) {
     applySelectableUI(row, msg._id);
   }
@@ -1278,8 +1202,8 @@ function applySelectableUI(row, msgId) {
   row.classList.add("selectable");
   const bubble = row.querySelector(".bubble");
   if (bubble) bubble.style.pointerEvents = "none";
-  // 选取模式下隐藏编辑/重新生成按钮，避免遮挡 checkbox
-  row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "none");
+  // 选取模式下隐藏编辑/重新生成/删除按钮，避免遮挡 checkbox
+  row.querySelectorAll(".msg-action-btn, .msg-delete-btn").forEach(b => b.style.display = "none");
   if (!row.querySelector(".msg-checkbox")) {
     const cb = document.createElement("div");
     cb.className = "msg-checkbox" + (selectedMessageIds.has(msgId) ? " checked" : "");
@@ -1325,9 +1249,51 @@ function exitSelectMode() {
     row.classList.remove("selectable");
     const bubble = row.querySelector(".bubble");
     if (bubble) bubble.style.pointerEvents = "";
-    // 恢复编辑/重新生成按钮
-    row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "");
+    // 恢复编辑/重新生成/删除按钮
+    row.querySelectorAll(".msg-action-btn, .msg-delete-btn").forEach(b => b.style.display = "");
   });
+}
+
+// ============================================================
+// 删除单条消息（本地 + 云端同步）
+// ============================================================
+async function deleteMessage(msgId, rowEl) {
+  const threadId = getActiveThreadId();
+  let messages = getThreadMessages(threadId);
+  const msg = messages.find(m => m._id === msgId);
+  if (!msg) return;
+
+  // 从本地删除
+  messages = messages.filter(m => m._id !== msgId);
+  saveThreadMessages(threadId, messages);
+
+  // 从 DOM 删除
+  if (rowEl) rowEl.remove();
+
+  // 从云端短期记忆删除（按 content 匹配）
+  if (window.Memory && window.Memory.isReady && window.Memory.isReady() && msg.content) {
+    try {
+      const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
+      if (client) {
+        const { data: rows } = await client
+          .from('memories')
+          .select('id')
+          .eq('type', 'short_term')
+          .eq('thread_id', threadId || 'global')
+          .eq('content', msg.content)
+          .order('created_at', { ascending: true })
+          .limit(1);
+        if (rows && rows.length) {
+          await client.from('memories').delete().eq('id', rows[0].id);
+        }
+      }
+    } catch (e) {
+      console.error('删除云端记忆失败:', e);
+    }
+  }
+
+  showToast("已删除");
+  renderTokenBanner();
 }
 
 // ============================================================
@@ -1514,7 +1480,7 @@ async function regenerateFromMessage(userMsg) {
     freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
     saveThreadMessages(threadId, freshMessages);
     renderThreadList();
-    renderTokenBanner();
+    // 不在旁白回复后触发 token banner（避免每次买东西都弹提醒）
 
     // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(fullReply);
@@ -1796,16 +1762,37 @@ function renderTokenBanner() {
   const banner = document.createElement("div");
   banner.className = "token-banner";
   banner.innerHTML = `
-    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。继续聊没问题，只是提醒一下——如果有想保留的片段，可以先选取导出，再开一个新对话，读取会更轻快。</div>
+    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。继续聊没问题，只是提醒一下——如果有想保留的片段，可以先选取导出，然后清理旧消息，读取会更轻快。</div>
     <div class="token-banner-actions">
-      <button id="tokenBannerNewThread">开新对话</button>
+      <button id="tokenBannerCompress">压缩记忆</button>
       <button id="tokenBannerDismiss">知道了</button>
     </div>
   `;
   slot.appendChild(banner);
 
-  banner.querySelector("#tokenBannerNewThread").onclick = () => {
-    createNewThread();
+  banner.querySelector("#tokenBannerCompress").onclick = async () => {
+    showToast("正在压缩记忆...");
+    const messages = getThreadMessages(threadId).filter(m => !m._isNarration && m.type !== "sticker");
+    if (messages.length < 10) { showToast("消息不够多，无需压缩"); return; }
+    const provider = getActiveProvider();
+    const apiKey = localStorage.getItem(LS.apiKey);
+    const customModel = ($("#customModelInput").value || "").trim();
+    const model = customModel || $("#modelSelect").value;
+    const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
+    if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
+      const result = await window.Memory.compressMemory(threadId, messages, async (prompt) => {
+        return await callLLMForSummary({ provider, apiKey, model, temp, prompt });
+      });
+      if (result && result.keptMessages) {
+        const freshMsgs = getThreadMessages(threadId);
+        const narrations = freshMsgs.filter(m => m._isNarration);
+        saveThreadMessages(threadId, [...narrations, ...result.keptMessages]);
+        loadActiveThreadIntoChat();
+        showToast("记忆已压缩，旧消息已整理为摘要");
+      }
+    } else {
+      showToast("云端记忆未连接，无法压缩");
+    }
   };
   banner.querySelector("#tokenBannerDismiss").onclick = () => {
     tokenBannerDismissedForThread[threadId] = true;
@@ -2072,7 +2059,7 @@ function handleAIActions(actions) {
       needRefresh = true;
     }
   });
-  if (needRefresh && activePage === "page-world") renderWorldPage();
+  if (needRefresh && document.getElementById("page-app-shop") && document.getElementById("page-app-shop").classList.contains("active")) renderShopPage();
 }
 
 // Leith 送礼提示弹窗
@@ -2301,8 +2288,6 @@ async function sendChat(overrideContent) {
     // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(fullReply);
     if (actions.length) handleAIActions(actions);
-
-    maybeAutoNameThread(threadId, content);
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -2355,15 +2340,6 @@ function restoreSendUI(sendBtn) {
   sendBtn.disabled = false;
   // 包一层，避免点击事件 event 对象被当成 overrideContent 传进去
   sendBtn.onclick = () => sendChat();
-}
-
-function maybeAutoNameThread(threadId, firstUserContent) {
-  const threads = getThreads();
-  const t = threads.find(x => x.id === threadId);
-  if (!t || t.name !== "新的对话" && !/^对话 \d+$/.test(t.name)) return;
-  t.name = firstUserContent.slice(0, 16) || t.name;
-  saveThreads(threads);
-  renderThreadList();
 }
 
 // ---- OpenAI 兼容 ----
@@ -2535,6 +2511,472 @@ if ("serviceWorker" in navigator) {
 }
 
 // ============================================================
+// 小剧场 app（角色扮演独立空间）
+// ============================================================
+const THEATER_LS = "companion_theater_v1"; // { messages: [], setting: "" }
+
+function getTheaterData() {
+  return loadJSON(THEATER_LS, { messages: [], setting: "" });
+}
+function saveTheaterData(data) { saveJSON(THEATER_LS, data); }
+
+let theaterCurrentController = null;
+let memoryActiveTab = "profile"; // memory app current tab
+
+function initTheater() {
+  const data = getTheaterData();
+  if (data.setting) $("#theaterSetting").value = data.setting;
+  renderTheaterMessages();
+
+  // 开始角色扮演
+  $("#theaterStartBtn").onclick = () => {
+    const setting = $("#theaterSetting").value.trim();
+    if (!setting) return showToast("请先设定故事背景");
+    const d = getTheaterData();
+    d.setting = setting;
+    saveTheaterData(d);
+    showToast("世界线已设定，开始角色扮演吧");
+    $("#theaterInput").focus();
+  };
+
+  // 输入框
+  const ti = $("#theaterInput");
+  ti.addEventListener("input", () => {
+    ti.style.height = "auto";
+    ti.style.height = Math.min(ti.scrollHeight, 120) + "px";
+  });
+  ti.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTheaterMessage(); }
+  });
+
+  // 发送按钮
+  $("#theaterSendBtn").onclick = () => sendTheaterMessage();
+}
+
+function renderTheaterMessages() {
+  const box = $("#theaterChatBox");
+  const data = getTheaterData();
+  box.innerHTML = "";
+  if (!data.messages.length) {
+    box.innerHTML = `<div class="empty-state"><div class="mark">🎭</div><p>设定一个故事背景，<br>和 Leith 开始一场不设限的角色扮演。</p></div>`;
+    return;
+  }
+  data.messages.forEach(msg => {
+    const row = document.createElement("div");
+    row.className = `msg-row ${msg.role === "user" ? "user" : "assistant"}`;
+    const bubble = document.createElement("div");
+    bubble.className = `bubble ${msg.role === "user" ? "user" : "assistant"}`;
+    if (msg.role === "assistant") {
+      bubble.innerHTML = renderBubbleContent(msg.content);
+    } else {
+      bubble.innerText = msg.content;
+    }
+    row.appendChild(bubble);
+    box.appendChild(row);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendTheaterMessage() {
+  if (theaterCurrentController) return showToast("请等当前回复结束");
+
+  const input = $("#theaterInput");
+  const content = input.value.trim();
+  if (!content) return;
+
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || $("#modelSelect").value;
+  const temp = parseFloat(localStorage.getItem(LS.temp) || "0.8");
+
+  if (!apiKey || !provider || !model) {
+    return showToast("请先在设置里配置好服务商和密钥");
+  }
+
+  const data = getTheaterData();
+  if (!data.setting) return showToast("请先设定故事背景");
+
+  const userMsg = { role: "user", content, _id: uid() };
+  data.messages.push(userMsg);
+  saveTheaterData(data);
+  input.value = "";
+  input.style.height = "auto";
+  renderTheaterMessages();
+
+  // 显示 typing
+  const box = $("#theaterChatBox");
+  const row = document.createElement("div");
+  row.className = "msg-row assistant";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble assistant";
+  bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
+  row.appendChild(bubble);
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+
+  const controller = new AbortController();
+  theaterCurrentController = controller;
+
+  // 剧场专用系统提示
+  const theaterPrompt = `你现在在小剧场模式中。请完全按照以下世界线设定进行角色扮演，不要跳出角色，不要提及你是 AI。如果有不适合的内容，你可以委婉引导话题，但不要打破角色设定。\n\n【世界线设定】\n${data.setting}`;
+
+  try {
+    const messages = data.messages.map(m => ({ role: m.role, content: m.content }));
+    let fullReply = "";
+    if (provider.apiStyle === "anthropic") {
+      const result = await streamAnthropic({
+        provider, apiKey, model, temp,
+        systemPrompt: theaterPrompt,
+        messages, controller,
+        onDelta: (acc) => {
+          bubble.innerHTML = renderBubbleContent(acc);
+          box.scrollTop = box.scrollHeight;
+        }
+      });
+      fullReply = result.text;
+    } else {
+      const result = await streamOpenAICompatible({
+        provider, apiKey, model, temp,
+        systemPrompt: theaterPrompt,
+        messages, controller,
+        onDelta: (acc) => {
+          bubble.innerHTML = renderBubbleContent(acc);
+          box.scrollTop = box.scrollHeight;
+        }
+      });
+      fullReply = result.text;
+    }
+
+    const freshData = getTheaterData();
+    freshData.messages.push({ role: "assistant", content: fullReply, _id: uid() });
+    saveTheaterData(freshData);
+    renderTheaterMessages();
+  } catch (err) {
+    if (err.name === "AbortError") {
+      const partial = bubble.innerText;
+      if (partial.trim()) {
+        const freshData = getTheaterData();
+        freshData.messages.push({ role: "assistant", content: partial, _id: uid() });
+        saveTheaterData(freshData);
+        renderTheaterMessages();
+      } else {
+        row.remove();
+      }
+      showToast("已停止");
+    } else {
+      row.remove();
+      showToast(err.message || "请求失败");
+    }
+  } finally {
+    theaterCurrentController = null;
+  }
+}
+
+// ============================================================
+// 记忆可视化 app
+// ============================================================
+function initMemoryApp() {
+  // Tab 切换
+  document.querySelectorAll(".memory-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".memory-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      memoryActiveTab = tab.dataset.memTab;
+      renderMemoryAppList();
+      updateMemoryAddPlaceholder();
+    });
+  });
+
+  // 添加按钮
+  $("#memoryAddBtn").onclick = async () => {
+    const input = $("#memoryAddInput");
+    const val = input.value.trim();
+    if (!val) return;
+
+    if (memoryActiveTab === "profile") {
+      await window.Memory.addProfile(val);
+    } else if (memoryActiveTab === "core") {
+      await window.Memory.add(val);
+    } else if (memoryActiveTab === "archive") {
+      await window.Memory.addArchive(val);
+    }
+    input.value = "";
+    renderMemoryAppList();
+    showToast("已添加");
+  };
+}
+
+function updateMemoryAddPlaceholder() {
+  const input = $("#memoryAddInput");
+  if (!input) return;
+  if (memoryActiveTab === "profile") {
+    input.placeholder = "添加人设档案（如：喜欢猫、不喜欢早起）...";
+  } else if (memoryActiveTab === "core") {
+    input.placeholder = "添加核心记忆（如：上次聊到了XX）...";
+  } else if (memoryActiveTab === "archive") {
+    input.placeholder = "添加归档信件（完整原文，不进上下文）...";
+  }
+}
+
+async function renderMemoryAppList() {
+  const list = $("#memoryViewList");
+  if (!list || !window.Memory) return;
+
+  let items = [];
+  let tagLabel = "";
+  if (memoryActiveTab === "profile") {
+    items = await window.Memory.listProfile();
+    tagLabel = "人设档案";
+  } else if (memoryActiveTab === "core") {
+    items = await window.Memory.list();
+    tagLabel = "核心记忆";
+  } else if (memoryActiveTab === "archive") {
+    items = await window.Memory.listArchive();
+    tagLabel = "归档信件";
+  }
+
+  list.innerHTML = "";
+  if (!items.length) {
+    list.innerHTML = `<p class="helper-text" style="text-align:center;padding:20px;">还没有${tagLabel}。</p>`;
+    return;
+  }
+
+  items.forEach(m => {
+    const card = document.createElement("div");
+    card.className = "memory-card";
+    card.innerHTML = `
+      <div class="memory-card-head">
+        <span class="memory-tag">${tagLabel}</span>
+        <button class="memory-del" title="删除">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+        </button>
+      </div>
+      <div class="memory-content">${escapeHtml(m.content)}</div>
+    `;
+    card.querySelector(".memory-del").addEventListener("click", async () => {
+      if (memoryActiveTab === "profile") {
+        await window.Memory.removeProfile(m.id);
+      } else if (memoryActiveTab === "core") {
+        await window.Memory.remove(m.id);
+      } else if (memoryActiveTab === "archive") {
+        await window.Memory.removeArchive(m.id);
+      }
+      renderMemoryAppList();
+      showToast("已删除");
+    });
+    list.appendChild(card);
+  });
+}
+
+// ============================================================
+// 小组件 app（时间 + 天气 + 每日小纸条）
+// ============================================================
+let widgetTimeTimer = null;
+let cachedWeather = null;
+let cachedNote = null;
+let cachedNoteDate = "";
+
+function initWidget() {
+  // 时间更新定时器
+  updateWidgetTime();
+  if (widgetTimeTimer) clearInterval(widgetTimeTimer);
+  widgetTimeTimer = setInterval(updateWidgetTime, 1000);
+
+  // 刷新小纸条按钮
+  const refreshBtn = $("#refreshNoteBtn");
+  if (refreshBtn) {
+    refreshBtn.onclick = () => {
+      cachedNote = null;
+      cachedNoteDate = "";
+      generateDailyNote();
+    };
+  }
+
+  // 异步获取天气和小纸条
+  fetchWeather();
+}
+
+function updateWidgetTime() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, "0");
+  const m = String(now.getMinutes()).padStart(2, "0");
+  const timeStr = `${h}:${m}`;
+  const dateStr = now.toLocaleDateString("zh-CN", { weekday: "long", month: "long", day: "numeric" });
+
+  // 桌面预览
+  const wp = $("#widgetTime");
+  if (wp) wp.innerText = timeStr;
+
+  // 小组件 app 内
+  const bt = $("#widgetBigTime");
+  if (bt) bt.innerText = timeStr;
+  const bd = $("#widgetBigDate");
+  if (bd) bd.innerText = dateStr;
+}
+
+function updateWidgetPreview() {
+  updateWidgetTime();
+  if (!cachedWeather) fetchWeather();
+  if (!cachedNote) generateDailyNote();
+
+  // 更新桌面预览卡
+  if (cachedWeather) {
+    const ww = $("#widgetWeather");
+    if (ww) ww.innerText = cachedWeather.text;
+  }
+  if (cachedNote) {
+    const wn = $("#widgetNotePreview");
+    if (wn) wn.innerText = cachedNote.slice(0, 50) + (cachedNote.length > 50 ? "..." : "");
+  }
+}
+
+async function fetchWeather() {
+  // Open-Meteo 免费 API，无需 key
+  // 先尝试获取地理位置
+  const getCoords = () => new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => resolve(null),
+      { timeout: 5000 }
+    );
+  });
+
+  let coords = await getCoords();
+  // 默认深圳
+  if (!coords) coords = { lat: 22.5431, lon: 114.0579 };
+
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current_weather=true&timezone=auto`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("天气获取失败");
+    const data = await resp.json();
+    const cw = data.current_weather;
+    if (!cw) throw new Error("无天气数据");
+
+    const temp = Math.round(cw.temperature);
+    const code = cw.weathercode;
+    const icon = weatherCodeToIcon(code);
+    const desc = weatherCodeToText(code);
+    cachedWeather = { temp, icon, desc, text: `${icon} ${desc} ${temp}°C` };
+
+    // 更新 UI
+    const wi = $("#widgetWeatherIcon");
+    if (wi) wi.innerText = icon;
+    const wt = $("#widgetWeatherText");
+    if (wt) wt.innerText = `${desc} · ${temp}°C`;
+    const ww = $("#widgetWeather");
+    if (ww) ww.innerText = cachedWeather.text;
+  } catch (e) {
+    console.error("天气获取失败:", e);
+    const wt = $("#widgetWeatherText");
+    if (wt) wt.innerText = "天气获取失败";
+    const ww = $("#widgetWeather");
+    if (ww) ww.innerText = "天气获取失败";
+  }
+}
+
+function weatherCodeToIcon(code) {
+  if (code === 0) return "☀️";
+  if (code <= 3) return "⛅";
+  if (code <= 48) return "🌫️";
+  if (code <= 67) return "🌧️";
+  if (code <= 77) return "❄️";
+  if (code <= 82) return "🌦️";
+  if (code <= 86) return "🌨️";
+  if (code >= 95) return "⛈️";
+  return "🌤️";
+}
+
+function weatherCodeToText(code) {
+  const map = {
+    0: "晴", 1: "晴", 2: "多云", 3: "阴",
+    45: "雾", 48: "雾",
+    51: "毛毛雨", 53: "毛毛雨", 55: "毛毛雨",
+    56: "冻雨", 57: "冻雨",
+    61: "小雨", 63: "中雨", 65: "大雨",
+    66: "冻雨", 67: "冻雨",
+    71: "小雪", 73: "中雪", 75: "大雪",
+    77: "雪粒",
+    80: "阵雨", 81: "阵雨", 82: "暴雨",
+    85: "阵雪", 86: "阵雪",
+    95: "雷暴", 96: "雷暴", 99: "雷暴"
+  };
+  return map[code] || "未知";
+}
+
+async function generateDailyNote() {
+  const today = new Date().toISOString().slice(0, 10);
+  // 同一天不重复生成（除非手动刷新）
+  if (cachedNote && cachedNoteDate === today) {
+    updateNoteUI();
+    return;
+  }
+
+  const noteEl = $("#widgetNoteText");
+  if (noteEl) noteEl.innerText = "正在生成今日小纸条...";
+
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || $("#modelSelect").value;
+
+  if (!apiKey || !provider || !model) {
+    if (noteEl) noteEl.innerText = "（配置好服务商后，Leith 会给你写每日小纸条）";
+    return;
+  }
+
+  const weatherInfo = cachedWeather ? `今天天气：${cachedWeather.desc}，${cachedWeather.temp}°C` : "";
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+  const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+  const prompt = `今天是${dateStr}，现在${timeStr}。${weatherInfo}。请给 Susie 写一句简短温暖的小纸条（30字以内），像朋友随手写的便签一样自然。只写纸条内容，不要加引号或其他格式。`;
+
+  try {
+    const messages = [{ role: "user", content: prompt }];
+    const temp = 0.9;
+    let result;
+    if (provider.apiStyle === "anthropic") {
+      result = await streamAnthropic({
+        provider, apiKey, model, temp,
+        systemPrompt: "你是一个温暖的AI伙伴，正在给朋友写每日小纸条。简洁、真诚、不刻意煽情。",
+        messages, controller: new AbortController(),
+        onDelta: () => {}
+      });
+    } else {
+      result = await streamOpenAICompatible({
+        provider, apiKey, model, temp,
+        systemPrompt: "你是一个温暖的AI伙伴，正在给朋友写每日小纸条。简洁、真诚、不刻意煽情。",
+        messages, controller: new AbortController(),
+        onDelta: () => {}
+      });
+    }
+    cachedNote = (result.text || "").trim();
+    cachedNoteDate = today;
+    updateNoteUI();
+  } catch (e) {
+    console.error("小纸条生成失败:", e);
+    if (noteEl) noteEl.innerText = "（小纸条生成失败，稍后再试）";
+  }
+}
+
+function updateNoteUI() {
+  if (!cachedNote) return;
+  const noteEl = $("#widgetNoteText");
+  if (noteEl) noteEl.innerText = cachedNote;
+  const preview = $("#widgetNotePreview");
+  if (preview) preview.innerText = cachedNote.slice(0, 50) + (cachedNote.length > 50 ? "..." : "");
+}
+
+function refreshWidgetApp() {
+  updateWidgetTime();
+  if (!cachedWeather) fetchWeather();
+  if (!cachedNote) generateDailyNote();
+}
+
+// ============================================================
 // 初始化
 // ============================================================
 initBottomBar();
@@ -2544,6 +2986,9 @@ initAddSavingsBtn();
 initAddLimitedBtn();
 initAddAdultBtn();
 initConfig();
+initTheater();
+initMemoryApp();
+initWidget();
 $("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
 renderStickerManageGrid();

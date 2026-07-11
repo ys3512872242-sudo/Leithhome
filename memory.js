@@ -649,3 +649,4 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 window.testSupabaseConnection = testSupabaseConnection;
 window.SupabaseMemoryAdapter = SupabaseMemoryAdapter;
+window.getSupabaseClient = () => supabaseClient;
