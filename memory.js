@@ -527,6 +527,53 @@ const SupabaseMemoryAdapter = {
     }
   },
 
+  // 列出对话摘要（用于树状可视化）
+  async listSummary(threadId) {
+    if (!supabaseReady) return [];
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'long_term')
+        .eq('role', 'summary')
+        .eq('thread_id', threadId || 'global')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []).map(item => ({
+        id: String(item.id),
+        content: item.content,
+        createdAt: new Date(item.created_at).getTime()
+      }));
+    } catch (e) {
+      console.error('加载对话摘要失败:', e);
+      return [];
+    }
+  },
+
+  // 列出短期记忆（带 id/时间，用于树状可视化）
+  async listShortTermDetail(threadId, limit = 30) {
+    if (!supabaseReady) return [];
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'short_term')
+        .eq('thread_id', threadId || 'global')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data || []).map(item => ({
+        id: String(item.id),
+        content: item.content,
+        role: item.role || 'user',
+        createdAt: new Date(item.created_at).getTime()
+      }));
+    } catch (e) {
+      console.error('加载短期记忆详情失败:', e);
+      return [];
+    }
+  },
+
   // 连接状态
   isReady() {
     return supabaseReady;

@@ -150,7 +150,7 @@ function openApp(appPageId) {
   target.classList.add("active");
 
   if (appPageId === "page-app-shop") renderShopPage();
-  if (appPageId === "page-app-memory") renderMemoryAppList();
+  if (appPageId === "page-app-memory") renderMemoryTree();
   if (appPageId === "page-app-widget") refreshWidgetApp();
 }
 
@@ -2521,7 +2521,6 @@ function getTheaterData() {
 function saveTheaterData(data) { saveJSON(THEATER_LS, data); }
 
 let theaterCurrentController = null;
-let memoryActiveTab = "profile"; // memory app current tab
 
 function initTheater() {
   const data = getTheaterData();
@@ -2674,99 +2673,219 @@ async function sendTheaterMessage() {
 }
 
 // ============================================================
-// 记忆可视化 app
+// 记忆可视化 app（树状结构，联动 Supabase）
 // ============================================================
+let memoryExpandedNodes = new Set(["profile", "core"]); // 默认展开的分支
+let memoryAddTarget = ""; // 当前要添加记忆的分支
+
 function initMemoryApp() {
-  // Tab 切换
-  document.querySelectorAll(".memory-tab").forEach(tab => {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".memory-tab").forEach(t => t.classList.remove("active"));
-      tab.classList.add("active");
-      memoryActiveTab = tab.dataset.memTab;
-      renderMemoryAppList();
-      updateMemoryAddPlaceholder();
-    });
-  });
+  // 刷新按钮
+  const refreshBtn = $("#memoryRefreshBtn");
+  if (refreshBtn) {
+    refreshBtn.onclick = () => {
+      renderMemoryTree();
+      showToast("已刷新");
+    };
+  }
 
-  // 添加按钮
-  $("#memoryAddBtn").onclick = async () => {
-    const input = $("#memoryAddInput");
-    const val = input.value.trim();
+  // 添加记忆弹窗 — 取消
+  $("#memoryAddCancelBtn").onclick = () => {
+    $("#memoryAddModal").classList.add("hidden");
+    $("#memoryAddInput").value = "";
+    memoryAddTarget = "";
+  };
+
+  // 添加记忆弹窗 — 确认
+  $("#memoryAddConfirmBtn").onclick = async () => {
+    const val = $("#memoryAddInput").value.trim();
     if (!val) return;
+    if (!window.Memory) return;
 
-    if (memoryActiveTab === "profile") {
+    if (memoryAddTarget === "profile") {
       await window.Memory.addProfile(val);
-    } else if (memoryActiveTab === "core") {
+    } else if (memoryAddTarget === "core") {
       await window.Memory.add(val);
-    } else if (memoryActiveTab === "archive") {
+    } else if (memoryAddTarget === "archive") {
       await window.Memory.addArchive(val);
     }
-    input.value = "";
-    renderMemoryAppList();
+    $("#memoryAddModal").classList.add("hidden");
+    $("#memoryAddInput").value = "";
+    memoryAddTarget = "";
+    renderMemoryTree();
     showToast("已添加");
   };
+
+  // 点击遮罩关闭
+  $("#memoryAddModal").addEventListener("click", (e) => {
+    if (e.target.id === "memoryAddModal") {
+      $("#memoryAddModal").classList.add("hidden");
+      memoryAddTarget = "";
+    }
+  });
 }
 
-function updateMemoryAddPlaceholder() {
-  const input = $("#memoryAddInput");
-  if (!input) return;
-  if (memoryActiveTab === "profile") {
-    input.placeholder = "添加人设档案（如：喜欢猫、不喜欢早起）...";
-  } else if (memoryActiveTab === "core") {
-    input.placeholder = "添加核心记忆（如：上次聊到了XX）...";
-  } else if (memoryActiveTab === "archive") {
-    input.placeholder = "添加归档信件（完整原文，不进上下文）...";
-  }
+function openMemoryAddModal(branch) {
+  memoryAddTarget = branch;
+  const titles = {
+    profile: "👤 添加人设档案",
+    core: "💎 添加核心记忆",
+    archive: "📨 添加归档信件"
+  };
+  const placeholders = {
+    profile: "精简事实，如：喜欢猫、不喜欢早起...",
+    core: "重要的事，如：上次聊到了XX...",
+    archive: "完整原文，不进上下文，仅可查看..."
+  };
+  $("#memoryAddModalTitle").innerText = titles[branch] || "添加记忆";
+  $("#memoryAddInput").placeholder = placeholders[branch] || "写下要记住的内容...";
+  $("#memoryAddInput").value = "";
+  $("#memoryAddModal").classList.remove("hidden");
+  setTimeout(() => $("#memoryAddInput").focus(), 100);
 }
 
-async function renderMemoryAppList() {
-  const list = $("#memoryViewList");
-  if (!list || !window.Memory) return;
+async function renderMemoryTree() {
+  const container = $("#memoryTree");
+  if (!container) return;
 
-  let items = [];
-  let tagLabel = "";
-  if (memoryActiveTab === "profile") {
-    items = await window.Memory.listProfile();
-    tagLabel = "人设档案";
-  } else if (memoryActiveTab === "core") {
-    items = await window.Memory.list();
-    tagLabel = "核心记忆";
-  } else if (memoryActiveTab === "archive") {
-    items = await window.Memory.listArchive();
-    tagLabel = "归档信件";
-  }
-
-  list.innerHTML = "";
-  if (!items.length) {
-    list.innerHTML = `<p class="helper-text" style="text-align:center;padding:20px;">还没有${tagLabel}。</p>`;
+  if (!window.Memory) {
+    container.innerHTML = `<div class="mem-loading">记忆系统未加载</div>`;
     return;
   }
 
-  items.forEach(m => {
-    const card = document.createElement("div");
-    card.className = "memory-card";
-    card.innerHTML = `
-      <div class="memory-card-head">
-        <span class="memory-tag">${tagLabel}</span>
-        <button class="memory-del" title="删除">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
-        </button>
+  container.innerHTML = `<div class="mem-loading"><div class="spin"></div><br>正在从云端加载记忆...</div>`;
+
+  const threadId = getActiveThreadId();
+
+  // 并行加载所有分支
+  const [profileList, coreList, summaryList, archiveList, shortTermList] = await Promise.all([
+    window.Memory.listProfile(),
+    window.Memory.list(),
+    window.Memory.isReady() ? window.Memory.listSummary(threadId) : Promise.resolve([]),
+    window.Memory.listArchive(),
+    window.Memory.isReady() ? window.Memory.listShortTermDetail(threadId, 30) : Promise.resolve([])
+  ]);
+
+  const connected = window.Memory.isReady && window.Memory.isReady();
+
+  // 树的根
+  let html = '';
+
+  // 根节点
+  html += `<div class="mem-node expanded">
+    <div class="mem-node-row" onclick="toggleMemNode(this)">
+      <div class="mem-toggle" style="visibility:hidden;">▶</div>
+      <div class="mem-icon" style="background:linear-gradient(135deg,var(--accent),var(--accent-dim));">🧠</div>
+      <div class="mem-label">Leith 的记忆${connected ? '' : '（本地模式）'}</div>
+    </div>
+    <div class="mem-children" style="display:flex;margin-left:0;padding-left:0;border:none;">`;
+
+  // 分支定义
+  const branches = [
+    { id: "profile", icon: "👤", label: "人设档案", color: "#6B9BD2", bgColor: "rgba(107,155,210,.12)", items: profileList, canAdd: true },
+    { id: "core", icon: "💎", label: "核心记忆", color: "#DBA95A", bgColor: "rgba(219,169,90,.12)", items: coreList, canAdd: true },
+    { id: "summary", icon: "💬", label: "对话摘要", color: "#7B8EC4", bgColor: "rgba(123,142,196,.12)", items: summaryList, canAdd: false },
+    { id: "short_term", icon: "💭", label: "近期对话", color: "#D9708C", bgColor: "rgba(217,112,140,.12)", items: shortTermList, canAdd: false },
+    { id: "archive", icon: "📨", label: "归档信件", color: "#4A5A8A", bgColor: "rgba(74,90,138,.12)", items: archiveList, canAdd: true },
+  ];
+
+  branches.forEach(branch => {
+    const expanded = memoryExpandedNodes.has(branch.id);
+    const count = branch.items.length;
+    html += `<div class="mem-node${expanded ? ' expanded' : ''}" data-branch="${branch.id}">
+      <div class="mem-node-row" onclick="toggleMemNode(this)">
+        <div class="mem-toggle${count === 0 ? ' leaf' : ''}">▶</div>
+        <div class="mem-icon" style="background:${branch.bgColor};">${branch.icon}</div>
+        <div class="mem-label">${branch.label}</div>
+        ${count > 0 ? `<div class="mem-count">${count}</div>` : ''}
+        ${branch.canAdd ? `<button class="mem-add-btn" onclick="event.stopPropagation();openMemoryAddModal('${branch.id}')">+</button>` : ''}
       </div>
-      <div class="memory-content">${escapeHtml(m.content)}</div>
-    `;
-    card.querySelector(".memory-del").addEventListener("click", async () => {
-      if (memoryActiveTab === "profile") {
-        await window.Memory.removeProfile(m.id);
-      } else if (memoryActiveTab === "core") {
-        await window.Memory.remove(m.id);
-      } else if (memoryActiveTab === "archive") {
-        await window.Memory.removeArchive(m.id);
-      }
-      renderMemoryAppList();
-      showToast("已删除");
-    });
-    list.appendChild(card);
+      <div class="mem-children">`;
+
+    if (count === 0) {
+      html += `<div class="mem-empty-leaf">暂无${branch.label}</div>`;
+    } else {
+      // 对话摘要和近期对话倒序显示（最新的在上面）
+      const displayItems = branch.id === "summary" || branch.id === "short_term"
+        ? branch.items
+        : branch.items;
+      
+      displayItems.forEach(item => {
+        const timeStr = item.createdAt ? formatMemoryTime(item.createdAt) : "";
+        const roleLabel = branch.id === "short_term" && item.role
+          ? (item.role === "assistant" ? "Leith" : "我")
+          : "";
+        const contentPreview = item.content.length > 200
+          ? item.content.slice(0, 200) + "..."
+          : item.content;
+
+        html += `<div class="mem-leaf" data-leaf-id="${item.id}" data-branch="${branch.id}">
+          <div class="mem-leaf-dot" style="background:${branch.color};"></div>
+          <div style="flex:1;min-width:0;">
+            <div class="mem-leaf-content">${roleLabel ? `<span style="color:${branch.color};font-weight:600;font-family:'Noto Sans SC',sans-serif;font-size:11px;">${roleLabel}：</span>` : ""}${escapeHtml(contentPreview)}</div>
+            ${timeStr ? `<div class="mem-leaf-meta">${timeStr}</div>` : ''}
+          </div>
+          ${branch.canAdd ? `<button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+          </button>` : ''}
+        </div>`;
+      });
+    }
+
+    html += `</div></div>`;
   });
+
+  html += `</div></div>`;
+
+  container.innerHTML = html;
+}
+
+function toggleMemNode(rowEl) {
+  const node = rowEl.closest(".mem-node");
+  if (!node) return;
+  const branchId = node.dataset.branch;
+  const isExpanded = node.classList.contains("expanded");
+  if (isExpanded) {
+    node.classList.remove("expanded");
+    if (branchId) memoryExpandedNodes.delete(branchId);
+  } else {
+    node.classList.add("expanded");
+    if (branchId) memoryExpandedNodes.add(branchId);
+  }
+}
+
+async function deleteMemoryLeaf(id, branch) {
+  if (!window.Memory) return;
+  if (!confirm("删除这条记忆？")) return;
+
+  if (branch === "profile") {
+    await window.Memory.removeProfile(id);
+  } else if (branch === "core") {
+    await window.Memory.remove(id);
+  } else if (branch === "archive") {
+    await window.Memory.removeArchive(id);
+  } else {
+    // summary / short_term — 直接用 Supabase client 删
+    const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
+    if (client) {
+      const numId = parseInt(id, 10);
+      if (!isNaN(numId)) {
+        try { await client.from('memories').delete().eq('id', numId); } catch (e) {}
+      }
+    }
+  }
+  renderMemoryTree();
+  showToast("已删除");
+}
+
+function formatMemoryTime(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return "刚刚";
+  if (diff < 3600000) return Math.floor(diff / 60000) + "分钟前";
+  if (diff < 86400000) return Math.floor(diff / 3600000) + "小时前";
+  if (diff < 604800000) return Math.floor(diff / 86400000) + "天前";
+  return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
 // ============================================================
