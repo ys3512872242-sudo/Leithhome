@@ -953,12 +953,17 @@ $("#saveConfigBtn").onclick = () => {
   localStorage.setItem(LS.systemPrompt, $("#systemPromptInput").value);
   updateStatusLabel();
   showToast("配置已保存");
+  lastHealthState = null; // 换了配置，之前的健康状态不再有参考意义
+  consecutiveHealthFails = 0;
+  runHealthCheck({ silent: true });
 };
 
 $("#clearKeyBtn").onclick = () => {
   localStorage.removeItem(LS.apiKey);
   $("#apiKey").value = "";
   updateStatusLabel();
+  setHealthDot(null);
+  lastHealthState = null;
   showToast("密钥已清空，对话记录保留");
 };
 
@@ -2240,6 +2245,113 @@ function buildContentBlocksForApi(text, attachments, apiStyle) {
     }
   });
   return blocks;
+}
+
+// ============================================================
+// 模型健康检测（主动探测，不依赖被动聊天失败）
+// ============================================================
+const HEALTH_CHECK_INTERVAL = 5 * 60 * 1000; // 5 分钟
+let healthCheckTimer = null;
+let healthChecking = false;
+let lastHealthState = null; // 'ok' | 'warn' | 'bad' | null，用于只在状态变化时提示，避免反复打扰
+let consecutiveHealthFails = 0;
+
+function setHealthDot(state) {
+  const dot = $("#healthDot");
+  if (!dot) return;
+  dot.className = "health-dot" + (state ? " " + state : "");
+}
+
+async function runHealthCheck(opts = {}) {
+  if (healthChecking) return; // 避免重叠探测
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || ($("#modelSelect") ? $("#modelSelect").value : "");
+
+  if (!apiKey || !provider || !model) {
+    setHealthDot(null);
+    lastHealthState = null;
+    return;
+  }
+
+  healthChecking = true;
+  setHealthDot("checking");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000); // 探测最多等15秒，不无限挂着
+
+  try {
+    // 用最短的探测消息，尽量少花 token
+    const probeMessages = [{ role: "user", content: "ping" }];
+    let result;
+    if (provider.apiStyle === "anthropic") {
+      result = await streamAnthropic({
+        provider, apiKey, model, temp: 0, systemPrompt: "回复一个字即可。",
+        messages: probeMessages, controller, onDelta: () => {}
+      });
+    } else {
+      result = await streamOpenAICompatible({
+        provider, apiKey, model, temp: 0, systemPrompt: "回复一个字即可。",
+        messages: probeMessages, controller, onDelta: () => {}
+      });
+    }
+    clearTimeout(timeout);
+    const ok = !!(result && typeof result.text === "string");
+    if (ok) {
+      consecutiveHealthFails = 0;
+      setHealthDot("ok");
+      if (lastHealthState === "bad" && !opts.silent) showToast(`${provider.name} 恢复正常了`);
+      lastHealthState = "ok";
+    } else {
+      throw new Error("探测无有效返回");
+    }
+  } catch (err) {
+    clearTimeout(timeout);
+    consecutiveHealthFails++;
+    console.warn("模型健康探测失败:", err);
+    if (consecutiveHealthFails >= 2) {
+      setHealthDot("bad");
+      if (lastHealthState !== "bad" && !opts.silent) {
+        showToast(`⚠️ ${provider.name} · ${model} 现在好像连不上`);
+      }
+      lastHealthState = "bad";
+    } else {
+      setHealthDot("warn");
+      lastHealthState = "warn";
+    }
+  } finally {
+    healthChecking = false;
+  }
+}
+
+function scheduleHealthChecks() {
+  clearInterval(healthCheckTimer);
+  healthCheckTimer = setInterval(() => runHealthCheck(), HEALTH_CHECK_INTERVAL);
+}
+
+function initHealthCheck() {
+  // 打开 App 时先测一次
+  runHealthCheck();
+  scheduleHealthChecks();
+
+  // App 从后台切回前台时，如果距上次探测已经有一阵子了，立刻再测一次
+  let lastVisibleCheck = Date.now();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      if (Date.now() - lastVisibleCheck > 60 * 1000) {
+        runHealthCheck();
+      }
+      lastVisibleCheck = Date.now();
+      scheduleHealthChecks(); // 重置计时，避免切后台期间攒了很多次探测
+    }
+  });
+
+  // 点状态胶囊，立刻手动测一次
+  $("#statusLabel").addEventListener("click", () => {
+    showToast("正在检测...");
+    runHealthCheck();
+  });
 }
 
 async function sendChat(overrideContent) {
@@ -3551,6 +3663,7 @@ initMemoryApp();
 initWidget();
 initReading();
 initAttachments();
+initHealthCheck();
 $("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
 renderStickerManageGrid();
