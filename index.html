@@ -19,26 +19,26 @@
 <style>
   :root{
     /* 夜航书房 — ink navy desk at night, warm lamplight vs cool window-light */
-    --bg:#0A0C12;
-    --bg-deep:#05060A;
-    --bg-elevated:#151823;
-    --bg-elevated-2:#1B1F2C;
-    --bg-input:#171B27;
-    --paper:#ECE8DE;
-    --paper-dim:#8A8A94;
-    --accent:#C99A5B;
-    --accent-2:#E0B87C;
-    --accent-dim:#7A5F3A;
-    --accent-glow:rgba(201,154,91,0.14);
-    --moon:#8098C9;
-    --moon-dim:#4A5C82;
-    --moon-glow:rgba(128,152,201,0.12);
-    --violet:#8B8FC4;
-    --amber:#C99A5B;
-    --rose:#C97E93;
-    --line:#242938;
-    --line-soft:#191D29;
-    --danger:#C4847E;
+    --bg:#12141C;
+    --bg-deep:#0A0C12;
+    --bg-elevated:#1D212E;
+    --bg-elevated-2:#252A3A;
+    --bg-input:#1F2330;
+    --paper:#F2EFE7;
+    --paper-dim:#9EA0AC;
+    --accent:#D4A868;
+    --accent-2:#EAC183;
+    --accent-dim:#8A6C42;
+    --accent-glow:rgba(212,168,104,0.18);
+    --moon:#93AAD6;
+    --moon-dim:#5B6E99;
+    --moon-glow:rgba(147,170,214,0.16);
+    --violet:#9EA1D6;
+    --amber:#D4A868;
+    --rose:#D791A2;
+    --line:#323951;
+    --line-soft:#242939;
+    --danger:#D3948E;
     --bottom-bar-h: calc(58px + env(safe-area-inset-bottom));
     --radius-sm:8px;
     --radius-md:13px;
@@ -67,7 +67,7 @@
     background:
       radial-gradient(ellipse 620px 480px at 12% -8%,var(--accent-glow),transparent 60%),
       radial-gradient(ellipse 700px 560px at 100% 8%,var(--moon-glow),transparent 58%),
-      radial-gradient(ellipse 500px 400px at 50% 115%,rgba(139,143,196,.05),transparent 60%),
+      radial-gradient(ellipse 500px 400px at 50% 115%,rgba(147,170,214,.07),transparent 60%),
       var(--bg);
   }
   body::before{
@@ -85,7 +85,7 @@
   .bottom-bar{
     position:fixed;bottom:0;left:0;right:0;
     height:var(--bottom-bar-h);
-    background:rgba(9,11,17,.86);
+    background:rgba(15,17,25,.85);
     backdrop-filter:blur(24px) saturate(1.5);
     -webkit-backdrop-filter:blur(24px) saturate(1.5);
     border-top:1px solid var(--line-soft);
@@ -112,7 +112,7 @@
   .topbar{
     display:flex;align-items:center;justify-content:space-between;
     padding:calc(env(safe-area-inset-top)+15px) 18px 15px;
-    background:rgba(9,11,17,.9);
+    background:rgba(15,17,25,.88);
     backdrop-filter:blur(18px) saturate(1.5);
     -webkit-backdrop-filter:blur(18px) saturate(1.5);
     border-bottom:1px solid var(--line-soft);
@@ -157,10 +157,10 @@
   .empty-state .mark{font-family:var(--serif-display);font-style:italic;font-size:32px;color:var(--moon);margin-bottom:14px;opacity:.75;}
   .empty-state p{font-size:13px;line-height:1.9;max-width:280px;margin:0 auto;}
 
-  .msg-row{display:flex;max-width:100%;position:relative;animation:msgIn .35s var(--ease-out);}
+  .msg-row{display:flex;flex-direction:column;max-width:100%;position:relative;animation:msgIn .35s var(--ease-out);}
   @keyframes msgIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
-  .msg-row.user{justify-content:flex-end;}
-  .msg-row.assistant{justify-content:flex-start;}
+  .msg-row.user{align-items:flex-end;}
+  .msg-row.assistant{align-items:flex-start;}
 
   .bubble{
     max-width:82%;padding:12px 16px;border-radius:18px;
@@ -197,26 +197,31 @@
   .typing-dots span:nth-child(3){animation-delay:.3s;}
   @keyframes bounce{0%,60%,100%{transform:translateY(0);opacity:.35;}30%{transform:translateY(-5px);opacity:1;}}
 
-  /* ===== 消息删除按钮 ===== */
-  .msg-delete-btn{
-    position:absolute;top:-8px;width:24px;height:24px;
-    border-radius:50%;border:1px solid var(--line);
-    background:var(--bg-elevated);color:var(--paper-dim);
-    display:flex;align-items:center;justify-content:center;
-    cursor:pointer;opacity:0;transition:all .2s var(--ease-out);
-    z-index:5;-webkit-tap-highlight-color:transparent;
-    box-shadow:var(--shadow-sm);
+  /* ===== 消息操作栏（编辑 / 重新生成 / 删除） ===== */
+  .msg-row{padding-bottom:4px;}
+  .msg-actions{
+    display:flex;gap:6px;margin-top:5px;
+    max-height:0;opacity:0;overflow:hidden;
+    transition:max-height .22s var(--ease-out),opacity .18s ease,margin-top .22s var(--ease-out);
   }
-  .msg-row.user .msg-delete-btn{right:-6px;}
-  .msg-row.assistant .msg-delete-btn{left:-6px;}
-  .msg-row:hover .msg-delete-btn,.msg-row.tapped .msg-delete-btn{opacity:1;}
-  .msg-delete-btn:hover,.msg-delete-btn:active{color:var(--danger);border-color:var(--danger);transform:scale(1.1);}
-  .msg-delete-btn svg{width:12px;height:12px;}
+  .msg-row.tapped .msg-actions{max-height:40px;opacity:1;margin-top:7px;}
+  .msg-action-btn,.msg-delete-btn{
+    width:28px;height:28px;border-radius:9px;
+    border:1px solid var(--line);background:var(--bg-elevated);
+    color:var(--paper-dim);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:all .18s var(--ease-out);
+    -webkit-tap-highlight-color:transparent;
+    box-shadow:var(--shadow-sm);flex-shrink:0;padding:0;
+  }
+  .msg-action-btn svg,.msg-delete-btn svg{width:13px;height:13px;}
+  .msg-action-btn:hover,.msg-action-btn:active{color:var(--accent-2);border-color:var(--accent-dim);background:var(--accent-glow);transform:translateY(-1px);}
+  .msg-delete-btn:hover,.msg-delete-btn:active{color:var(--danger);border-color:var(--danger);background:rgba(211,148,142,.1);transform:translateY(-1px);}
 
   /* ===== 输入区 ===== */
   .input-bar{
     flex-shrink:0;padding:10px 12px;
-    background:linear-gradient(0deg,rgba(9,11,17,.96) 55%,transparent);
+    background:linear-gradient(0deg,rgba(15,17,25,.94) 55%,transparent);
     border-top:1px solid var(--line-soft);
     display:flex;align-items:flex-end;gap:8px;
   }
@@ -494,11 +499,11 @@
     background:linear-gradient(90deg,transparent,var(--accent-dim),transparent);
   }
 
-  /* 小组件卡片（桌面顶部） */
+  /* 小组件卡片（桌面顶部，苹果小组件风格：时间/天气/留言一次看全） */
   .widget-card{
     background:linear-gradient(150deg,var(--bg-elevated) 0%,var(--bg-elevated-2) 100%);
     border:1px solid var(--line);border-radius:var(--radius-lg);
-    padding:20px;display:flex;justify-content:space-between;align-items:center;
+    padding:18px 20px 16px;
     box-shadow:0 6px 24px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.03);
     cursor:pointer;position:relative;overflow:hidden;
     transition:all .25s var(--ease-out);
@@ -509,13 +514,26 @@
     pointer-events:none;
   }
   .widget-card:hover{border-color:var(--accent-dim);box-shadow:0 8px 28px rgba(0,0,0,.3);transform:translateY(-1px);}
-  .widget-left{display:flex;flex-direction:column;gap:4px;position:relative;}
-  .widget-time{font-size:30px;font-weight:600;color:var(--paper);font-family:var(--serif-display);font-style:italic;letter-spacing:.5px;}
-  .widget-weather{font-size:11.5px;color:var(--paper-dim);letter-spacing:.3px;}
+  .widget-card-top{
+    display:flex;align-items:baseline;justify-content:space-between;
+    position:relative;
+  }
+  .widget-time{font-size:34px;font-weight:600;color:var(--paper);font-family:var(--serif-display);font-style:italic;letter-spacing:.5px;line-height:1;}
+  .widget-weather{
+    font-size:13px;color:var(--paper-dim);letter-spacing:.2px;
+    display:flex;align-items:center;gap:6px;
+  }
+  .widget-weather-emoji{font-size:15px;}
+  .widget-card-divider{height:1px;background:var(--line-soft);margin:13px 0 12px;position:relative;}
+  .widget-note-row{display:flex;align-items:flex-start;gap:9px;position:relative;}
+  .widget-note-glyph{
+    font-size:13px;color:var(--accent-2);flex-shrink:0;margin-top:1px;opacity:.85;
+    font-family:var(--serif-display);
+  }
   .widget-note{
-    max-width:50%;font-size:12px;color:var(--paper);line-height:1.65;
-    font-family:var(--serif);font-style:italic;opacity:.88;position:relative;
-    border-left:2px solid var(--accent-dim);padding-left:11px;
+    font-size:13px;color:var(--paper);line-height:1.6;
+    font-family:var(--serif);font-style:italic;opacity:.92;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
   }
 
   /* App 图标网格 */
@@ -569,7 +587,7 @@
   .app-page-head{
     display:flex;align-items:center;gap:10px;
     padding:calc(env(safe-area-inset-top)+12px) 14px 13px;
-    background:rgba(9,11,17,.95);
+    background:rgba(15,17,25,.93);
     backdrop-filter:blur(18px) saturate(1.4);
     -webkit-backdrop-filter:blur(18px) saturate(1.4);
     border-bottom:1px solid var(--line-soft);
@@ -825,6 +843,140 @@
     font-family:var(--serif);font-style:italic;
   }
 
+  /* ===== 共读小说 app ===== */
+  .reading-upload-card{
+    border:1.5px dashed var(--line);border-radius:var(--radius-lg);
+    padding:28px 20px;text-align:center;cursor:pointer;
+    transition:all .2s var(--ease-out);margin-bottom:18px;
+    background:rgba(255,255,255,.01);
+  }
+  .reading-upload-card:hover{border-color:var(--accent-dim);background:var(--accent-glow);}
+  .reading-upload-icon{
+    width:44px;height:44px;margin:0 auto 10px;border-radius:50%;
+    background:var(--bg-elevated);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--accent-2);
+  }
+  .reading-upload-icon svg{width:20px;height:20px;}
+  .reading-upload-text{font-size:14px;color:var(--paper);font-weight:500;}
+  .reading-upload-sub{font-size:11.5px;color:var(--paper-dim);margin-top:4px;}
+
+  .reading-book-grid{display:flex;flex-direction:column;gap:10px;}
+  .reading-book-card{
+    display:flex;align-items:center;gap:13px;
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-md);padding:13px 14px;cursor:pointer;
+    transition:all .18s var(--ease-out);
+  }
+  .reading-book-card:hover{border-color:var(--accent-dim);transform:translateY(-1px);}
+  .reading-book-spine{
+    width:34px;height:46px;border-radius:5px;flex-shrink:0;
+    background:linear-gradient(160deg,var(--moon-dim),var(--bg-elevated-2));
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 3px 8px rgba(0,0,0,.3);color:var(--paper);
+  }
+  .reading-book-spine svg{width:16px;height:16px;opacity:.8;}
+  .reading-book-info{flex:1;min-width:0;}
+  .reading-book-name{font-size:14px;color:var(--paper);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .reading-book-meta{font-size:11px;color:var(--paper-dim);margin-top:3px;}
+  .reading-book-progress-ring{
+    width:34px;height:34px;flex-shrink:0;position:relative;
+  }
+  .reading-book-del{
+    width:26px;height:26px;border-radius:8px;border:none;background:transparent;
+    color:var(--paper-dim);display:flex;align-items:center;justify-content:center;
+    cursor:pointer;flex-shrink:0;
+  }
+  .reading-book-del:hover{color:var(--danger);background:rgba(211,148,142,.1);}
+  .reading-book-del svg{width:14px;height:14px;}
+  .reading-empty-hint{text-align:center;color:var(--paper-dim);font-size:12.5px;padding:30px 10px;line-height:1.8;}
+
+  /* 阅读器 */
+  .reading-reader{
+    display:flex;flex-direction:column;flex:1;overflow:hidden;position:relative;
+  }
+  .reading-reader.hidden{display:none;}
+  .reading-reader-body{
+    flex:1;overflow-y:auto;padding:28px 22px 40px;
+    font-family:var(--serif);font-size:16px;line-height:2.05;color:var(--paper);
+    white-space:pre-wrap;word-break:break-word;
+    scroll-behavior:smooth;
+  }
+  .reading-reader-body::-webkit-scrollbar{width:3px;}
+  .reading-reader-body::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
+  .reading-progress-bar{
+    flex-shrink:0;padding:10px 18px calc(env(safe-area-inset-bottom)+10px);
+    display:flex;align-items:center;gap:10px;
+    background:rgba(15,17,25,.92);border-top:1px solid var(--line-soft);
+    backdrop-filter:blur(12px);
+  }
+  .reading-progress-track{flex:1;height:3px;background:var(--line);border-radius:2px;overflow:hidden;}
+  .reading-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent-dim),var(--accent-2));border-radius:2px;transition:width .2s ease;}
+  .reading-progress-label{font-size:11px;color:var(--paper-dim);flex-shrink:0;min-width:32px;text-align:right;}
+
+  /* 共读侧聊天抽屉 */
+  .reading-chat-overlay{
+    position:fixed;inset:0;background:rgba(3,5,8,.5);
+    z-index:60;opacity:0;pointer-events:none;transition:opacity .25s ease;
+  }
+  .reading-chat-overlay.open{opacity:1;pointer-events:auto;}
+  .reading-chat-drawer{
+    position:absolute;top:0;right:0;bottom:0;width:min(360px,86vw);
+    background:var(--bg-deep);border-left:1px solid var(--line-soft);
+    z-index:65;transform:translateX(100%);
+    transition:transform .3s var(--ease-out);
+    display:flex;flex-direction:column;box-shadow:-4px 0 24px rgba(0,0,0,.4);
+  }
+  .reading-chat-drawer.open{transform:translateX(0);}
+  .reading-chat-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:calc(env(safe-area-inset-top)+14px) 16px 12px;
+    border-bottom:1px solid var(--line-soft);font-size:13px;color:var(--paper-dim);
+    flex-shrink:0;
+  }
+  .reading-chat-box{flex:1;overflow-y:auto;padding:14px 14px;display:flex;flex-direction:column;gap:10px;}
+  .reading-chat-hint{font-size:12px;color:var(--paper-dim);line-height:1.7;font-style:italic;padding:6px 2px;}
+  .reading-chat-input-bar{
+    flex-shrink:0;padding:10px 12px calc(env(safe-area-inset-bottom)+10px);
+    border-top:1px solid var(--line-soft);display:flex;align-items:flex-end;gap:8px;
+  }
+
+  /* ===== 附件（图片/文档）预览条 + 气泡内展示 ===== */
+  .attach-preview-strip{
+    display:flex;gap:8px;padding:10px 12px 0;overflow-x:auto;flex-shrink:0;
+  }
+  .attach-preview-strip.hidden{display:none;}
+  .attach-chip{
+    position:relative;flex-shrink:0;
+    width:56px;height:56px;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);background:var(--bg-elevated);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .attach-chip img{width:100%;height:100%;object-fit:cover;}
+  .attach-chip .attach-chip-doc{
+    display:flex;flex-direction:column;align-items:center;gap:2px;
+    color:var(--paper-dim);font-size:8px;padding:4px;text-align:center;
+  }
+  .attach-chip .attach-chip-doc svg{width:16px;height:16px;color:var(--accent-2);}
+  .attach-chip-remove{
+    position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;
+    background:rgba(3,5,8,.75);color:#fff;border:none;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+  }
+  .attach-chip-remove svg{width:9px;height:9px;}
+
+  .bubble-attachments{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px;}
+  .bubble-attachments img{
+    width:120px;height:120px;object-fit:cover;border-radius:10px;
+    border:1px solid rgba(255,255,255,.08);cursor:pointer;
+  }
+  .bubble-doc-chip{
+    display:flex;align-items:center;gap:7px;
+    background:rgba(0,0,0,.15);border-radius:10px;padding:8px 11px;
+    font-size:12px;max-width:220px;
+  }
+  .bubble-doc-chip svg{width:15px;height:15px;flex-shrink:0;}
+  .bubble-doc-chip span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
   .hidden{display:none!important;}
 </style>
 </head>
@@ -877,7 +1029,13 @@
       <div class="sticker-grid" id="stickerGrid"></div>
     </div>
 
+    <div class="attach-preview-strip hidden" id="attachPreviewStrip"></div>
+
     <div class="input-bar">
+      <input type="file" id="attachFileInput" accept="image/*,.pdf,.txt,.md,.doc,.docx" multiple style="display:none;">
+      <button class="sticker-btn" id="openAttachBtn" title="上传图片/文档">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 01-7.78-7.78l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a1.5 1.5 0 01-2.12-2.12l8.49-8.48"/></svg>
+      </button>
       <button class="sticker-btn" id="openStickerPanelBtn" title="表情包">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
       </button>
@@ -900,13 +1058,19 @@
         <p>Leith 的小世界</p>
       </div>
 
-      <!-- 小组件预览卡 -->
+      <!-- 小组件预览卡（苹果小组件风格：时间/天气/留言一目了然） -->
       <div class="widget-card" id="widgetPreview" onclick="openApp('page-app-widget')">
-        <div class="widget-left">
+        <div class="widget-card-top">
           <div class="widget-time" id="widgetTime">--:--</div>
-          <div class="widget-weather" id="widgetWeather">加载中...</div>
+          <div class="widget-weather" id="widgetWeather">
+            <span class="widget-weather-emoji" id="widgetWeatherEmoji">⏳</span>加载中...
+          </div>
         </div>
-        <div class="widget-note" id="widgetNotePreview">点击查看今日小纸条</div>
+        <div class="widget-card-divider"></div>
+        <div class="widget-note-row">
+          <span class="widget-note-glyph">✎</span>
+          <div class="widget-note" id="widgetNotePreview">点击查看今日小纸条</div>
+        </div>
       </div>
 
       <!-- App 图标网格 -->
@@ -935,7 +1099,7 @@
           </div>
           <div class="app-icon-label">小组件</div>
         </div>
-        <div class="app-icon" onclick="showToast('共读小说 · 即将上线')">
+        <div class="app-icon" onclick="openApp('page-app-reading')">
           <div class="app-icon-img" style="color:var(--paper-dim);background:linear-gradient(150deg,rgba(139,143,196,.12),var(--bg-elevated) 75%);">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5C6 4.5 9 4.5 12 6c3-1.5 6-1.5 8-.5v13c-2-1-5-1-8 .5-3-1.5-6-1.5-8-.5v-13z"/><path d="M12 6v13"/></svg>
           </div>
@@ -1110,6 +1274,61 @@
     </div>
   </div><!-- /app-widget -->
 
+  <!-- ===== App: 共读小说 ===== -->
+  <div class="app-page" id="page-app-reading">
+    <div class="app-page-head">
+      <button class="app-back-btn" id="readingBackBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title" id="readingHeaderTitle">📖 共读小说</span>
+      <button class="app-back-btn" id="readingChatToggleBtn" style="margin-left:auto;width:42px;height:42px;display:none;" title="和 Leith 聊聊">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </button>
+    </div>
+
+    <!-- 书架视图 -->
+    <div class="app-body" id="readingLibraryView">
+      <div class="reading-upload-card" id="readingUploadCard">
+        <input type="file" id="readingFileInput" accept=".txt,.pdf" style="display:none;">
+        <div class="reading-upload-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+        </div>
+        <div class="reading-upload-text">上传 .txt 或 .pdf</div>
+        <div class="reading-upload-sub">和 Leith 一起看，随时聊两句</div>
+      </div>
+      <div id="readingBookGrid" class="reading-book-grid"></div>
+    </div>
+
+    <!-- 阅读器视图 -->
+    <div class="reading-reader hidden" id="readingReaderView">
+      <div class="reading-reader-body" id="readingReaderBody"></div>
+      <div class="reading-progress-bar">
+        <div class="reading-progress-track"><div class="reading-progress-fill" id="readingProgressFill"></div></div>
+        <span class="reading-progress-label" id="readingProgressLabel">0%</span>
+      </div>
+
+      <!-- 共读侧聊天抽屉 -->
+      <div class="reading-chat-overlay" id="readingChatOverlay"></div>
+      <div class="reading-chat-drawer" id="readingChatDrawer">
+        <div class="reading-chat-head">
+          <span>和 Leith 聊聊这本书</span>
+          <button class="icon-btn" id="readingChatCloseBtn" style="width:28px;height:28px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="reading-chat-box" id="readingChatBox">
+          <div class="reading-chat-hint">可以问问 Leith 对刚才这段的想法，或者让 ta 帮你回顾一下前面的剧情。</div>
+        </div>
+        <div class="reading-chat-input-bar">
+          <textarea id="readingChatInput" rows="1" placeholder="说点什么..." style="flex:1;resize:none;background:var(--bg-input);border:1px solid var(--line);color:var(--paper);border-radius:16px;padding:10px 14px;font-size:14px;font-family:inherit;max-height:100px;outline:none;caret-color:var(--accent);"></textarea>
+          <button class="send-btn" id="readingChatSendBtn" style="width:36px;height:36px;">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div><!-- /app-reading -->
+
   <!-- ===== 设置抽屉 ===== -->
   <div class="drawer-overlay" id="drawerOverlay"></div>
   <div class="drawer" id="settingsDrawer">
@@ -1218,6 +1437,7 @@
   <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="memory.js"></script>
 <script src="app.js"></script>
 </body>

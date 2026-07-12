@@ -25,6 +25,8 @@ const LS = {
   worldAdultItems: "companion_world_adult_v1",      // [{id, name, emoji, price}] 全局成人用品区
   worldAdultBought: "companion_world_adult_bought_v1", // { [threadId]: Set of itemIds } 每个窗口已买的成人用品
   worldNightstand: "companion_world_nightstand_v1", // { [threadId]: [{id, name, emoji, price, boughtAt}] } 床头柜
+  // 共读小说
+  readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
 };
 
 const DEFAULT_PROVIDERS = [
@@ -152,6 +154,7 @@ function openApp(appPageId) {
   if (appPageId === "page-app-shop") renderShopPage();
   if (appPageId === "page-app-memory") renderMemoryTree();
   if (appPageId === "page-app-widget") refreshWidgetApp();
+  if (appPageId === "page-app-reading") showReadingLibrary();
 }
 
 // 关闭 app 页面，回到桌面
@@ -1144,39 +1147,42 @@ function renderMessage(msg, opts = {}) {
     if (msg.role === "assistant") {
       bubble.innerHTML = renderBubbleContent(msg.content);
     } else {
-      bubble.innerText = msg.content;
+      bubble.innerHTML = renderBubbleAttachments(msg.attachments) + escapeHtml(msg.content || "").replace(/\n/g, "<br>");
     }
   }
 
   row.appendChild(bubble);
 
-  // 用户消息：加编辑按钮
+  // 操作栏：编辑（用户消息）/ 重新生成（AI消息）/ 删除（全部），统一放进一个工具条
+  const actions = document.createElement("div");
+  actions.className = "msg-actions";
+
   if (msg.role === "user" && msg.type !== "sticker") {
     const editBtn = document.createElement("button");
     editBtn.className = "msg-action-btn";
     editBtn.title = "编辑";
-    editBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
-    editBtn.onclick = () => startEditMessage(row, msg);
-    row.appendChild(editBtn);
+    editBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
+    editBtn.onclick = (e) => { e.stopPropagation(); startEditMessage(row, msg); };
+    actions.appendChild(editBtn);
   }
 
-  // AI 消息：加重新生成按钮
   if (msg.role === "assistant") {
     const regenBtn = document.createElement("button");
     regenBtn.className = "msg-action-btn";
     regenBtn.title = "重新生成";
-    regenBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>`;
-    regenBtn.onclick = () => regenerateMessage(msg._id);
-    row.appendChild(regenBtn);
+    regenBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>`;
+    regenBtn.onclick = (e) => { e.stopPropagation(); regenerateMessage(msg._id); };
+    actions.appendChild(regenBtn);
   }
 
-  // 所有消息：加删除按钮（本地+云端同步删除）
   const delBtn = document.createElement("button");
   delBtn.className = "msg-delete-btn";
   delBtn.title = "删除";
   delBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>`;
   delBtn.onclick = (e) => { e.stopPropagation(); deleteMessage(msg._id, row); };
-  row.appendChild(delBtn);
+  actions.appendChild(delBtn);
+
+  row.appendChild(actions);
 
   if (selectMode) {
     applySelectableUI(row, msg._id);
@@ -1202,8 +1208,9 @@ function applySelectableUI(row, msgId) {
   row.classList.add("selectable");
   const bubble = row.querySelector(".bubble");
   if (bubble) bubble.style.pointerEvents = "none";
-  // 选取模式下隐藏编辑/重新生成/删除按钮，避免遮挡 checkbox
-  row.querySelectorAll(".msg-action-btn, .msg-delete-btn").forEach(b => b.style.display = "none");
+  // 选取模式下隐藏编辑/重新生成/删除工具条，避免遮挡 checkbox
+  const actionsBar = row.querySelector(".msg-actions");
+  if (actionsBar) actionsBar.style.display = "none";
   if (!row.querySelector(".msg-checkbox")) {
     const cb = document.createElement("div");
     cb.className = "msg-checkbox" + (selectedMessageIds.has(msgId) ? " checked" : "");
@@ -1249,8 +1256,9 @@ function exitSelectMode() {
     row.classList.remove("selectable");
     const bubble = row.querySelector(".bubble");
     if (bubble) bubble.style.pointerEvents = "";
-    // 恢复编辑/重新生成/删除按钮
-    row.querySelectorAll(".msg-action-btn, .msg-delete-btn").forEach(b => b.style.display = "");
+    // 恢复编辑/重新生成/删除工具条
+    const actionsBar = row.querySelector(".msg-actions");
+    if (actionsBar) actionsBar.style.display = "";
   });
 }
 
@@ -1327,18 +1335,18 @@ function startEditMessage(row, msg) {
   `;
   bubble.appendChild(btnRow);
 
-  row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "none");
+  row.querySelector(".msg-actions").style.display = "none";
 
   btnRow.querySelector("#cancelEditBtn").onclick = () => {
     bubble.innerText = originalText;
-    row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "");
+    row.querySelector(".msg-actions").style.display = "";
   };
 
   btnRow.querySelector("#confirmEditBtn").onclick = () => {
     const newText = textarea.value.trim();
     if (!newText || newText === originalText) {
       bubble.innerText = originalText;
-      row.querySelectorAll(".msg-action-btn").forEach(b => b.style.display = "");
+      row.querySelector(".msg-actions").style.display = "";
       return;
     }
     const threadId = getActiveThreadId();
@@ -1416,7 +1424,12 @@ async function regenerateFromMessage(userMsg) {
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
-    let messages = getThreadMessages(threadId).filter(m => m.type !== "sticker");
+    let messages = getThreadMessages(threadId).filter(m => m.type !== "sticker").map(m => {
+      if (m.attachments && m.attachments.length) {
+        return { role: m.role, content: buildContentBlocksForApi(m.content, m.attachments, provider.apiStyle) };
+      }
+      return m;
+    });
     const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
     let fullReply = "";
@@ -2114,6 +2127,121 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
   }
 }
 
+// ============================================================
+// 附件（图片 / 文档）上传
+// ============================================================
+let pendingAttachments = []; // [{id, kind:'image'|'doc', name, dataUrl?, mimeType?, text?}]
+
+function initAttachments() {
+  const fileInput = $("#attachFileInput");
+  $("#openAttachBtn").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", handleAttachFiles);
+}
+
+async function handleAttachFiles(e) {
+  const files = Array.from(e.target.files || []);
+  for (const file of files) {
+    if (file.size > 12 * 1024 * 1024) {
+      showToast(`${file.name} 超过 12MB，跳过了`);
+      continue;
+    }
+    try {
+      if (file.type.startsWith("image/")) {
+        const dataUrl = await fileToDataUrl(file);
+        pendingAttachments.push({ id: uid(), kind: "image", name: file.name, dataUrl, mimeType: file.type });
+      } else if (/\.pdf$/i.test(file.name)) {
+        showToast("正在解析 PDF...");
+        const text = await extractPdfText(file);
+        pendingAttachments.push({ id: uid(), kind: "doc", name: file.name, text: text.slice(0, 20000) });
+      } else {
+        // txt / md / doc 等按纯文本读取（doc/docx 非纯文本会读出乱码，提示用户）
+        const text = await file.text();
+        pendingAttachments.push({ id: uid(), kind: "doc", name: file.name, text: text.slice(0, 20000) });
+      }
+    } catch (err) {
+      console.error("附件读取失败:", err);
+      showToast(`${file.name} 读取失败`);
+    }
+  }
+  renderAttachPreview();
+  e.target.value = "";
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderAttachPreview() {
+  const strip = $("#attachPreviewStrip");
+  if (!pendingAttachments.length) {
+    strip.classList.add("hidden");
+    strip.innerHTML = "";
+    return;
+  }
+  strip.classList.remove("hidden");
+  strip.innerHTML = "";
+  pendingAttachments.forEach(att => {
+    const chip = document.createElement("div");
+    chip.className = "attach-chip";
+    if (att.kind === "image") {
+      chip.innerHTML = `<img src="${att.dataUrl}" alt="${escapeHtml(att.name)}">`;
+    } else {
+      chip.innerHTML = `<div class="attach-chip-doc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span>${escapeHtml(att.name.length > 10 ? att.name.slice(0, 9) + "…" : att.name)}</span></div>`;
+    }
+    const rm = document.createElement("button");
+    rm.className = "attach-chip-remove";
+    rm.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
+    rm.onclick = () => { pendingAttachments = pendingAttachments.filter(a => a.id !== att.id); renderAttachPreview(); };
+    chip.appendChild(rm);
+    strip.appendChild(chip);
+  });
+}
+
+// 把附件渲染进消息气泡（图片缩略图 + 文档 chip）
+function renderBubbleAttachments(attachments) {
+  if (!attachments || !attachments.length) return "";
+  let html = `<div class="bubble-attachments">`;
+  attachments.forEach(att => {
+    if (att.kind === "image") {
+      html += `<img src="${att.dataUrl}" alt="${escapeHtml(att.name)}" onclick="window.open('${att.dataUrl}','_blank')">`;
+    } else {
+      html += `<div class="bubble-doc-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span>${escapeHtml(att.name)}</span></div>`;
+    }
+  });
+  html += `</div>`;
+  return html;
+}
+
+// 把附件转换成发给模型 API 的 content blocks（文本 + 图片），doc 内容拼进文本
+function buildContentBlocksForApi(text, attachments, apiStyle) {
+  const docs = (attachments || []).filter(a => a.kind === "doc");
+  const images = (attachments || []).filter(a => a.kind === "image");
+
+  let combinedText = text || "";
+  docs.forEach(d => {
+    combinedText += `\n\n[附件文档：${d.name}]\n${d.text}`;
+  });
+
+  if (!images.length) return combinedText; // 没图片就还是普通字符串，兼容原逻辑
+
+  const blocks = [];
+  if (combinedText) blocks.push({ type: "text", text: combinedText });
+  images.forEach(img => {
+    if (apiStyle === "anthropic") {
+      const [, mime, base64] = img.dataUrl.match(/^data:(.+);base64,(.+)$/) || [];
+      blocks.push({ type: "image", source: { type: "base64", media_type: mime || img.mimeType, data: base64 } });
+    } else {
+      blocks.push({ type: "image_url", image_url: { url: img.dataUrl } });
+    }
+  });
+  return blocks;
+}
+
 async function sendChat(overrideContent) {
   // 防止重复发送：如果正在回复中，直接忽略
   if (currentController) return showToast("请先等当前回复结束，或点停止");
@@ -2126,19 +2254,23 @@ async function sendChat(overrideContent) {
   // 支持外部传入文本（编辑消息后重新发送用），否则读输入框
   // 注意：按钮点击时 event 会被当第一个参数传进来，要过滤掉
   const content = (typeof overrideContent === "string" ? overrideContent : userInput.value).trim();
+  const attachments = pendingAttachments.slice(); // 快照，发送后立即清空预览条
 
   if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
   if (!provider) return showModal("提示", "请先在设置里添加一个服务商。");
   if (!model) return showModal("提示", "请先选择或填写一个模型名称。");
-  if (!content) return;
+  if (!content && !attachments.length) return;
 
   const threadId = getActiveThreadId();
   const messages = getThreadMessages(threadId);
   const userMsg = { role: "user", content, _id: uid() };
+  if (attachments.length) userMsg.attachments = attachments;
   messages.push(userMsg);
   renderMessage(userMsg);
   userInput.value = "";
   userInput.style.height = "auto";
+  pendingAttachments = [];
+  renderAttachPreview();
   saveThreadMessages(threadId, messages);
   // 同步到云端短期记忆
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
@@ -2175,7 +2307,12 @@ async function sendChat(overrideContent) {
 
   try {
     const systemPrompt = await buildEffectiveSystemPrompt();
-    let textMessages = messages.filter(m => m.type !== "sticker");
+    let textMessages = messages.filter(m => m.type !== "sticker").map(m => {
+      if (m.attachments && m.attachments.length) {
+        return { role: m.role, content: buildContentBlocksForApi(m.content, m.attachments, provider.apiStyle) };
+      }
+      return m;
+    });
     // 联网开启时传入工具定义
     const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
@@ -2940,13 +3077,26 @@ function updateWidgetPreview() {
   if (!cachedNote) generateDailyNote();
 
   // 更新桌面预览卡
-  if (cachedWeather) {
-    const ww = $("#widgetWeather");
-    if (ww) ww.innerText = cachedWeather.text;
-  }
+  if (cachedWeather) setWidgetWeatherLine(cachedWeather.icon, `${cachedWeather.desc} · ${cachedWeather.temp}°C`);
   if (cachedNote) {
     const wn = $("#widgetNotePreview");
-    if (wn) wn.innerText = cachedNote.slice(0, 50) + (cachedNote.length > 50 ? "..." : "");
+    if (wn) wn.innerText = cachedNote;
+  }
+}
+
+// 更新桌面小组件卡片里的天气行（图标 span + 文字分开写，避免互相覆盖）
+function setWidgetWeatherLine(emoji, text) {
+  const emojiEl = $("#widgetWeatherEmoji");
+  if (emojiEl) emojiEl.innerText = emoji;
+  const ww = $("#widgetWeather");
+  if (ww) {
+    // 保留 emoji span，只替换后面的文字节点
+    let textNode = Array.from(ww.childNodes).find(n => n.nodeType === 3);
+    if (!textNode) {
+      textNode = document.createTextNode("");
+      ww.appendChild(textNode);
+    }
+    textNode.textContent = text;
   }
 }
 
@@ -2985,14 +3135,12 @@ async function fetchWeather() {
     if (wi) wi.innerText = icon;
     const wt = $("#widgetWeatherText");
     if (wt) wt.innerText = `${desc} · ${temp}°C`;
-    const ww = $("#widgetWeather");
-    if (ww) ww.innerText = cachedWeather.text;
+    setWidgetWeatherLine(icon, `${desc} · ${temp}°C`);
   } catch (e) {
     console.error("天气获取失败:", e);
     const wt = $("#widgetWeatherText");
     if (wt) wt.innerText = "天气获取失败";
-    const ww = $("#widgetWeather");
-    if (ww) ww.innerText = "天气获取失败";
+    setWidgetWeatherLine("⚠️", "天气获取失败");
   }
 }
 
@@ -3086,7 +3234,7 @@ function updateNoteUI() {
   const noteEl = $("#widgetNoteText");
   if (noteEl) noteEl.innerText = cachedNote;
   const preview = $("#widgetNotePreview");
-  if (preview) preview.innerText = cachedNote.slice(0, 50) + (cachedNote.length > 50 ? "..." : "");
+  if (preview) preview.innerText = cachedNote;
 }
 
 function refreshWidgetApp() {
@@ -3096,8 +3244,301 @@ function refreshWidgetApp() {
 }
 
 // ============================================================
-// 初始化
+// 共读小说 app
 // ============================================================
+let readingBooks = [];
+let readingActiveBookId = null;
+let readingChatHistory = []; // { role, content }[]，只在阅读器内使用，不进主对话线程
+
+function loadReadingBooks() {
+  try {
+    readingBooks = JSON.parse(localStorage.getItem(LS.readingBooks) || "[]");
+  } catch (e) { readingBooks = []; }
+  return readingBooks;
+}
+
+function saveReadingBooks() {
+  // content 可能很大，超出 localStorage 配额时给出提示而不是静默失败
+  try {
+    localStorage.setItem(LS.readingBooks, JSON.stringify(readingBooks));
+  } catch (e) {
+    showToast("书本太大，本机存储空间不够了");
+  }
+}
+
+function showReadingLibrary() {
+  loadReadingBooks();
+  $("#readingLibraryView").classList.remove("hidden");
+  $("#readingReaderView").classList.add("hidden");
+  $("#readingChatToggleBtn").style.display = "none";
+  $("#readingHeaderTitle").innerText = "📖 共读小说";
+  $("#readingBackBtn").onclick = closeApp;
+  renderReadingBookGrid();
+}
+
+function renderReadingBookGrid() {
+  const grid = $("#readingBookGrid");
+  if (!readingBooks.length) {
+    grid.innerHTML = `<div class="reading-empty-hint">还没有书。上传一本 txt 或 pdf，<br>就可以和 Leith 一起读了。</div>`;
+    return;
+  }
+  grid.innerHTML = "";
+  readingBooks.slice().reverse().forEach(book => {
+    const pct = book.content.length ? Math.round((book.progress || 0) / book.content.length * 100) : 0;
+    const card = document.createElement("div");
+    card.className = "reading-book-card";
+    card.innerHTML = `
+      <div class="reading-book-spine">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5.5C6 4.5 9 4.5 12 6c3-1.5 6-1.5 8-.5v13c-2-1-5-1-8 .5-3-1.5-6-1.5-8-.5v-13z"/><path d="M12 6v13"/></svg>
+      </div>
+      <div class="reading-book-info">
+        <div class="reading-book-name">${escapeHtml(book.name)}</div>
+        <div class="reading-book-meta">${pct > 0 ? `已读 ${pct}%` : "还没开始"} · ${book.type.toUpperCase()}</div>
+      </div>
+      <button class="reading-book-del" title="删除">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+      </button>
+    `;
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".reading-book-del")) return;
+      openReadingBook(book.id);
+    });
+    card.querySelector(".reading-book-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      readingBooks = readingBooks.filter(b => b.id !== book.id);
+      saveReadingBooks();
+      renderReadingBookGrid();
+    });
+    grid.appendChild(card);
+  });
+}
+
+function initReading() {
+  const fileInput = $("#readingFileInput");
+  $("#readingUploadCard").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", handleReadingFileUpload);
+
+  $("#readingChatToggleBtn").addEventListener("click", openReadingChatDrawer);
+  $("#readingChatCloseBtn").addEventListener("click", closeReadingChatDrawer);
+  $("#readingChatOverlay").addEventListener("click", closeReadingChatDrawer);
+
+  const chatInput = $("#readingChatInput");
+  chatInput.addEventListener("input", () => {
+    chatInput.style.height = "auto";
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 100) + "px";
+  });
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendReadingChat(); }
+  });
+  $("#readingChatSendBtn").addEventListener("click", sendReadingChat);
+
+  // 阅读进度：滚动时节流保存
+  let saveTimer = null;
+  $("#readingReaderBody").addEventListener("scroll", (e) => {
+    if (!readingActiveBookId) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => saveReadingProgress(e.target), 400);
+  });
+}
+
+async function handleReadingFileUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const isTxt = /\.txt$/i.test(file.name);
+  const isPdf = /\.pdf$/i.test(file.name);
+  if (!isTxt && !isPdf) {
+    showModal("格式不支持", "目前只支持 .txt 和 .pdf 文件。");
+    e.target.value = "";
+    return;
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    showModal("文件太大", "请上传 15MB 以内的文件，本机存储空间有限。");
+    e.target.value = "";
+    return;
+  }
+
+  showToast(isPdf ? "正在解析 PDF..." : "正在导入...");
+
+  try {
+    let content = "";
+    if (isTxt) {
+      content = await file.text();
+    } else {
+      content = await extractPdfText(file);
+    }
+    content = content.trim();
+    if (!content) {
+      showModal("没有读到文字", "这个文件里没有能提取出来的文字内容。");
+      e.target.value = "";
+      return;
+    }
+    const book = {
+      id: uid(), name: file.name.replace(/\.(txt|pdf)$/i, ""),
+      type: isTxt ? "txt" : "pdf",
+      addedAt: Date.now(), progress: 0, content
+    };
+    loadReadingBooks();
+    readingBooks.push(book);
+    saveReadingBooks();
+    renderReadingBookGrid();
+    showToast("导入成功");
+    openReadingBook(book.id);
+  } catch (err) {
+    console.error("读取文件失败:", err);
+    showModal("导入失败", "文件读取出错了，换一个文件试试？");
+  }
+  e.target.value = "";
+}
+
+async function extractPdfText(file) {
+  if (!window.pdfjsLib) throw new Error("PDF 解析库未加载");
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const buf = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+  let text = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map(it => it.str).join(" ");
+    text += pageText + "\n\n";
+  }
+  return text;
+}
+
+function openReadingBook(bookId) {
+  const book = readingBooks.find(b => b.id === bookId);
+  if (!book) return;
+  readingActiveBookId = bookId;
+  readingChatHistory = [];
+
+  $("#readingLibraryView").classList.add("hidden");
+  $("#readingReaderView").classList.remove("hidden");
+  $("#readingChatToggleBtn").style.display = "flex";
+  $("#readingHeaderTitle").innerText = book.name;
+  $("#readingBackBtn").onclick = () => { saveReadingProgress($("#readingReaderBody")); showReadingLibrary(); };
+
+  const body = $("#readingReaderBody");
+  body.innerText = book.content;
+
+  $("#readingChatBox").innerHTML = `<div class="reading-chat-hint">可以问问 Leith 对刚才这段的想法，或者让 ta 帮你回顾一下前面的剧情。</div>`;
+
+  // 恢复阅读位置
+  requestAnimationFrame(() => {
+    if (book.progress > 0) {
+      const ratio = book.progress / book.content.length;
+      body.scrollTop = ratio * (body.scrollHeight - body.clientHeight);
+    }
+    updateReadingProgressUI(body);
+  });
+}
+
+function saveReadingProgress(bodyEl) {
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  if (!book || !bodyEl) return;
+  const scrollable = bodyEl.scrollHeight - bodyEl.clientHeight;
+  const ratio = scrollable > 0 ? bodyEl.scrollTop / scrollable : 0;
+  book.progress = Math.round(ratio * book.content.length);
+  saveReadingBooks();
+  updateReadingProgressUI(bodyEl);
+}
+
+function updateReadingProgressUI(bodyEl) {
+  const scrollable = bodyEl.scrollHeight - bodyEl.clientHeight;
+  const ratio = scrollable > 0 ? bodyEl.scrollTop / scrollable : 0;
+  const pct = Math.round(ratio * 100);
+  $("#readingProgressFill").style.width = pct + "%";
+  $("#readingProgressLabel").innerText = pct + "%";
+}
+
+function openReadingChatDrawer() {
+  $("#readingChatOverlay").classList.add("open");
+  $("#readingChatDrawer").classList.add("open");
+}
+function closeReadingChatDrawer() {
+  $("#readingChatOverlay").classList.remove("open");
+  $("#readingChatDrawer").classList.remove("open");
+}
+
+// 取阅读器当前视野附近的文本，作为聊天的上下文片段（避免把整本书塞进 prompt）
+function getReadingContextSnippet() {
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  if (!book) return "";
+  const bodyEl = $("#readingReaderBody");
+  const scrollable = bodyEl.scrollHeight - bodyEl.clientHeight;
+  const ratio = scrollable > 0 ? bodyEl.scrollTop / scrollable : 0;
+  const center = Math.round(ratio * book.content.length);
+  const start = Math.max(0, center - 1500);
+  const end = Math.min(book.content.length, center + 500);
+  return book.content.slice(start, end);
+}
+
+async function sendReadingChat() {
+  const input = $("#readingChatInput");
+  const text = input.value.trim();
+  if (!text) return;
+
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || $("#modelSelect").value;
+  const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
+  if (!apiKey || !provider || !model) return showModal("提示", "请先在设置里配置好服务商、密钥和模型。");
+
+  const box = $("#readingChatBox");
+  const hint = box.querySelector(".reading-chat-hint");
+  if (hint) hint.remove();
+
+  const userRow = document.createElement("div");
+  userRow.className = "msg-row user";
+  userRow.innerHTML = `<div class="bubble user" style="max-width:100%;font-size:14px;">${escapeHtml(text)}</div>`;
+  box.appendChild(userRow);
+  input.value = "";
+  input.style.height = "auto";
+  box.scrollTop = box.scrollHeight;
+
+  const aiRow = document.createElement("div");
+  aiRow.className = "msg-row assistant";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble assistant";
+  bubble.style.cssText = "max-width:100%;font-size:14px;";
+  bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
+  aiRow.appendChild(bubble);
+  box.appendChild(aiRow);
+  box.scrollTop = box.scrollHeight;
+
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  const snippet = getReadingContextSnippet();
+  const systemPrompt = `你正在和用户一起读一本书，书名是《${book ? book.name : ""}》。以下是用户目前阅读位置附近的原文片段，供你参考语境（不要逐字复述这段原文，只用来理解剧情）：\n\n"""${snippet}"""\n\n请像一起读书的朋友一样，自然地聊聊剧情、人物、感受，简洁真诚，不要写成书评腔。`;
+
+  readingChatHistory.push({ role: "user", content: text });
+
+  try {
+    let result;
+    const controller = new AbortController();
+    if (provider.apiStyle === "anthropic") {
+      result = await streamAnthropic({
+        provider, apiKey, model, temp, systemPrompt,
+        messages: readingChatHistory, controller,
+        onDelta: (acc) => { bubble.innerHTML = renderBubbleContent(acc); box.scrollTop = box.scrollHeight; }
+      });
+    } else {
+      result = await streamOpenAICompatible({
+        provider, apiKey, model, temp, systemPrompt,
+        messages: readingChatHistory, controller,
+        onDelta: (acc) => { bubble.innerHTML = renderBubbleContent(acc); box.scrollTop = box.scrollHeight; }
+      });
+    }
+    const reply = result.text || "";
+    bubble.innerHTML = renderBubbleContent(reply);
+    readingChatHistory.push({ role: "assistant", content: reply });
+  } catch (err) {
+    console.error("共读聊天失败:", err);
+    bubble.innerText = "（没能回复，稍后再试试）";
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+
 initBottomBar();
 initGiveMoneyBtn();
 initToggleAllowanceBtn();
@@ -3108,6 +3549,8 @@ initConfig();
 initTheater();
 initMemoryApp();
 initWidget();
+initReading();
+initAttachments();
 $("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
 renderStickerManageGrid();
