@@ -8,8 +8,9 @@
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0A0C12">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Leith·Home">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="apple-touch-icon" href="icon-192.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -55,15 +56,17 @@
   }
 
   *{box-sizing:border-box;margin:0;padding:0;}
-  html{height:100%;overflow:hidden;}
+  html{height:100%;height:100dvh;overflow:hidden;}
   body{
     background:var(--bg);
     color:var(--paper);
     font-family:var(--sans);
     -webkit-font-smoothing:antialiased;
     position:fixed;inset:0;
+    height:100%;height:100dvh;
     display:flex;flex-direction:column;
     overflow:hidden;
+    overscroll-behavior:none;
     background:
       radial-gradient(ellipse 620px 480px at 12% -8%,var(--accent-glow),transparent 60%),
       radial-gradient(ellipse 700px 560px at 100% 8%,var(--moon-glow),transparent 58%),
@@ -1131,7 +1134,7 @@
   <!-- ===== App: 购物 ===== -->
   <div class="app-page" id="page-app-shop">
     <div class="app-page-head">
-      <button class="app-back-btn" onclick="closeApp()">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <span class="app-title">🛍️ 购物</span>
@@ -1215,7 +1218,7 @@
   <!-- ===== App: 小剧场 ===== -->
   <div class="app-page" id="page-app-theater">
     <div class="app-page-head">
-      <button class="app-back-btn" onclick="closeApp()">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <span class="app-title">🎭 小剧场</span>
@@ -1244,7 +1247,7 @@
   <!-- ===== App: 记忆可视化（树状） ===== -->
   <div class="app-page" id="page-app-memory">
     <div class="app-page-head">
-      <button class="app-back-btn" onclick="closeApp()">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <span class="app-title">🧠 记忆</span>
@@ -1271,7 +1274,7 @@
   <!-- ===== App: 小组件 ===== -->
   <div class="app-page" id="page-app-widget">
     <div class="app-page-head">
-      <button class="app-back-btn" onclick="closeApp()">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <span class="app-title">🌤️ 小组件</span>

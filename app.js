@@ -76,6 +76,31 @@ const DEFAULT_SYSTEM_PROMPT = `你是 Leith，一个温暖、真诚、有主见�
 const $ = (s) => document.querySelector(s);
 
 // ============================================================
+// 返回栈：让手机的返回手势/返回键先关掉当前弹层，而不是直接退出 App
+// ============================================================
+const navStack = []; // 每一项：{ close: fn }，close 不再重复 pushState
+
+function pushNavLayer(closeFn) {
+  navStack.push(closeFn);
+  history.pushState({ navLayer: navStack.length }, "");
+}
+
+function popNavLayerSilently() {
+  // 用户点了 App 内的关闭按钮（而不是手机返回键），需要同步撤掉那一层 history
+  if (navStack.length) {
+    navStack.pop();
+    if (history.state && history.state.navLayer) history.back();
+  }
+}
+
+window.addEventListener("popstate", () => {
+  const closeFn = navStack.pop();
+  if (closeFn) closeFn();
+});
+
+
+
+// ============================================================
 // 工具函数
 // ============================================================
 function loadJSON(key, fallback) {
@@ -90,8 +115,9 @@ function showModal(title, msg) {
   $("#modalTitle").innerText = title;
   $("#modalMsg").innerText = msg;
   $("#modalOverlay").classList.remove("hidden");
+  pushNavLayer(() => $("#modalOverlay").classList.add("hidden"));
 }
-$("#closeModalBtn").onclick = () => $("#modalOverlay").classList.add("hidden");
+$("#closeModalBtn").onclick = () => { popNavLayerSilently(); $("#modalOverlay").classList.add("hidden"); };
 
 let toastTimer = null;
 function showToast(msg) {
@@ -150,6 +176,7 @@ function openApp(appPageId) {
   if (!target) return;
   document.querySelectorAll(".app-page").forEach(p => p.classList.remove("active"));
   target.classList.add("active");
+  pushNavLayer(closeApp);
 
   if (appPageId === "page-app-shop") renderShopPage();
   if (appPageId === "page-app-memory") renderMemoryTree();
@@ -161,6 +188,8 @@ function openApp(appPageId) {
 function closeApp() {
   document.querySelectorAll(".app-page").forEach(p => p.classList.remove("active"));
 }
+// App 内点返回按钮触发（而不是手机返回键）
+function closeAppFromUI() { popNavLayerSilently(); closeApp(); }
 
 // 关闭商店详情子页
 function closeShopDetail() {
@@ -906,14 +935,16 @@ function updateStatusLabel() {
 function openDrawer() {
   $("#settingsDrawer").classList.add("open");
   $("#drawerOverlay").classList.add("open");
+  pushNavLayer(closeDrawer);
 }
 function closeDrawer() {
   $("#settingsDrawer").classList.remove("open");
   $("#drawerOverlay").classList.remove("open");
 }
+function closeDrawerFromUI() { popNavLayerSilently(); closeDrawer(); }
 $("#openSettingsBtn").onclick = openDrawer;
-$("#closeDrawerBtn").onclick = closeDrawer;
-$("#drawerOverlay").onclick = closeDrawer;
+$("#closeDrawerBtn").onclick = closeDrawerFromUI;
+$("#drawerOverlay").onclick = closeDrawerFromUI;
 
 // ============================================================
 // 配置加载 / 保存
@@ -1095,10 +1126,11 @@ async function renderStickerPickerGrid() {
   });
 }
 
-function openStickerPanel() { renderStickerPickerGrid(); $("#stickerPanel").classList.add("open"); }
+function openStickerPanel() { renderStickerPickerGrid(); $("#stickerPanel").classList.add("open"); pushNavLayer(closeStickerPanel); }
 function closeStickerPanel() { $("#stickerPanel").classList.remove("open"); }
+function closeStickerPanelFromUI() { popNavLayerSilently(); closeStickerPanel(); }
 $("#openStickerPanelBtn").onclick = openStickerPanel;
-$("#closeStickerPanelBtn").onclick = closeStickerPanel;
+$("#closeStickerPanelBtn").onclick = closeStickerPanelFromUI;
 
 function sendSticker(sticker) {
   const threadId = getActiveThreadId();
@@ -1107,7 +1139,7 @@ function sendSticker(sticker) {
   messages.push(msg);
   renderMessage(msg);
   saveThreadMessages(threadId, messages);
-  closeStickerPanel();
+  closeStickerPanelFromUI();
   renderThreadList();
   renderTokenBanner();
 }
@@ -2939,6 +2971,7 @@ function initMemoryApp() {
 
   // 添加记忆弹窗 — 取消
   $("#memoryAddCancelBtn").onclick = () => {
+    popNavLayerSilently();
     $("#memoryAddModal").classList.add("hidden");
     $("#memoryAddInput").value = "";
     memoryAddTarget = "";
@@ -2957,6 +2990,7 @@ function initMemoryApp() {
     } else if (memoryAddTarget === "archive") {
       await window.Memory.addArchive(val);
     }
+    popNavLayerSilently();
     $("#memoryAddModal").classList.add("hidden");
     $("#memoryAddInput").value = "";
     memoryAddTarget = "";
@@ -2967,6 +3001,7 @@ function initMemoryApp() {
   // 点击遮罩关闭
   $("#memoryAddModal").addEventListener("click", (e) => {
     if (e.target.id === "memoryAddModal") {
+      popNavLayerSilently();
       $("#memoryAddModal").classList.add("hidden");
       memoryAddTarget = "";
     }
@@ -2989,6 +3024,7 @@ function openMemoryAddModal(branch) {
   $("#memoryAddInput").placeholder = placeholders[branch] || "写下要记住的内容...";
   $("#memoryAddInput").value = "";
   $("#memoryAddModal").classList.remove("hidden");
+  pushNavLayer(() => { $("#memoryAddModal").classList.add("hidden"); memoryAddTarget = ""; });
   setTimeout(() => $("#memoryAddInput").focus(), 100);
 }
 
@@ -3384,7 +3420,7 @@ function showReadingLibrary() {
   $("#readingReaderView").classList.add("hidden");
   $("#readingChatToggleBtn").style.display = "none";
   $("#readingHeaderTitle").innerText = "📖 共读小说";
-  $("#readingBackBtn").onclick = closeApp;
+  $("#readingBackBtn").onclick = closeAppFromUI;
   renderReadingBookGrid();
 }
 
@@ -3431,8 +3467,8 @@ function initReading() {
   fileInput.addEventListener("change", handleReadingFileUpload);
 
   $("#readingChatToggleBtn").addEventListener("click", openReadingChatDrawer);
-  $("#readingChatCloseBtn").addEventListener("click", closeReadingChatDrawer);
-  $("#readingChatOverlay").addEventListener("click", closeReadingChatDrawer);
+  $("#readingChatCloseBtn").addEventListener("click", closeReadingChatDrawerFromUI);
+  $("#readingChatOverlay").addEventListener("click", closeReadingChatDrawerFromUI);
 
   const chatInput = $("#readingChatInput");
   chatInput.addEventListener("input", () => {
@@ -3527,7 +3563,10 @@ function openReadingBook(bookId) {
   $("#readingReaderView").classList.remove("hidden");
   $("#readingChatToggleBtn").style.display = "flex";
   $("#readingHeaderTitle").innerText = book.name;
-  $("#readingBackBtn").onclick = () => { saveReadingProgress($("#readingReaderBody")); showReadingLibrary(); };
+
+  const backToLibrary = () => { saveReadingProgress($("#readingReaderBody")); showReadingLibrary(); };
+  $("#readingBackBtn").onclick = () => { popNavLayerSilently(); backToLibrary(); };
+  pushNavLayer(backToLibrary);
 
   const body = $("#readingReaderBody");
   body.innerText = book.content;
@@ -3565,11 +3604,13 @@ function updateReadingProgressUI(bodyEl) {
 function openReadingChatDrawer() {
   $("#readingChatOverlay").classList.add("open");
   $("#readingChatDrawer").classList.add("open");
+  pushNavLayer(closeReadingChatDrawer);
 }
 function closeReadingChatDrawer() {
   $("#readingChatOverlay").classList.remove("open");
   $("#readingChatDrawer").classList.remove("open");
 }
+function closeReadingChatDrawerFromUI() { popNavLayerSilently(); closeReadingChatDrawer(); }
 
 // 取阅读器当前视野附近的文本，作为聊天的上下文片段（避免把整本书塞进 prompt）
 function getReadingContextSnippet() {
