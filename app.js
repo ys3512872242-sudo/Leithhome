@@ -98,6 +98,28 @@ window.addEventListener("popstate", () => {
   if (closeFn) closeFn();
 });
 
+// ============================================================
+// 分时段主题：白天 / 傍晚 / 深夜，跟着系统时间自动换色
+// ============================================================
+function getTimeOfDay(hour) {
+  const h = hour ?? new Date().getHours();
+  if (h >= 6 && h < 17) return "day";     // 06:00–17:00 白天
+  if (h >= 17 && h < 23) return "dusk";   // 17:00–23:00 傍晚
+  return "night";                          // 23:00–06:00 深夜
+}
+
+function applyTimeOfDayTheme() {
+  const tod = getTimeOfDay();
+  document.documentElement.setAttribute("data-tod", tod);
+  return tod;
+}
+
+function initTimeOfDayTheme() {
+  applyTimeOfDayTheme();
+  // 每 10 分钟检查一次，跨越时间段边界时自动换色，不需要用户重新打开 App
+  setInterval(applyTimeOfDayTheme, 10 * 60 * 1000);
+}
+
 
 
 // ============================================================
@@ -3397,6 +3419,9 @@ function refreshWidgetApp() {
 let readingBooks = [];
 let readingActiveBookId = null;
 let readingChatHistory = []; // { role, content }[]，只在阅读器内使用，不进主对话线程
+let readingSharedId = null;   // 当前书如果已经分享/是从分享链接打开的，这里存 shared_books 的短码
+let readingIsPartnerView = false; // true = 是通过分享链接打开、我是"对方"那一侧
+let partnerProgressTimer = null;
 
 function loadReadingBooks() {
   try {
@@ -3414,13 +3439,159 @@ function saveReadingBooks() {
   }
 }
 
+// ============================================================
+// 一起看的链接（共读同步，走 Supabase 的 shared_books 表）
+// ============================================================
+function genShareCode() {
+  return Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+}
+
+function getReadingClient() {
+  // 复用 memory.js 里已经建立好的 Supabase 客户端
+  if (typeof supabaseClient !== "undefined" && supabaseClient) return supabaseClient;
+  if (window.supabase && window.supabase.createClient) {
+    try {
+      return window.supabase.createClient(
+        "https://kiphsgskorznxjdcjsos.supabase.co",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpcGhzZ3Nrb3J6bnhqZGNqc29zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2ODQzNDAsImV4cCI6MjA5OTI2MDM0MH0.7g_nvTFSqn5Xv7BStds8ESQ6__wL027MVKIAj1azWfY"
+      );
+    } catch (e) { return null; }
+  }
+  return null;
+}
+
+// 把当前书分享出去：写入 shared_books 表，返回可以发给对方的链接
+async function shareCurrentBook() {
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  if (!book) return;
+  const client = getReadingClient();
+  if (!client) return showModal("暂时不能分享", "云端服务连不上，检查一下网络，或者稍后再试。");
+
+  showToast("正在生成链接...");
+  try {
+    const code = readingSharedId || genShareCode();
+    const { error } = await client.from("shared_books").upsert({
+      id: code,
+      name: book.name,
+      content: book.content,
+      owner_progress: book.progress || 0
+    });
+    if (error) throw error;
+    readingSharedId = code;
+    book.sharedId = code;
+    saveReadingBooks();
+
+    const url = `${location.origin}${location.pathname}?book=${code}`;
+    showShareLinkModal(url);
+  } catch (err) {
+    console.error("分享失败:", err);
+    showModal("分享失败", "云端表可能还没建好。需要先在 Supabase 里执行一次 seed_shared_reading.sql，之后就都能用了。");
+  }
+}
+
+function showShareLinkModal(url) {
+  $("#shareLinkModalUrl").value = url;
+  $("#shareLinkModalOverlay").classList.remove("hidden");
+  pushNavLayer(() => $("#shareLinkModalOverlay").classList.add("hidden"));
+}
+function closeShareLinkModalFromUI() {
+  popNavLayerSilently();
+  $("#shareLinkModalOverlay").classList.add("hidden");
+}
+function copyShareLink() {
+  const input = $("#shareLinkModalUrl");
+  input.select();
+  input.setSelectionRange(0, 99999);
+  try {
+    navigator.clipboard.writeText(input.value);
+    showToast("链接已复制，发给 TA 吧");
+  } catch (e) {
+    document.execCommand("copy");
+    showToast("链接已复制");
+  }
+}
+
+// 从分享链接打开：读取 URL 里的 ?book= 短码，拉取对应的书
+async function tryOpenSharedBookFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get("book");
+  if (!code) return false;
+
+  const client = getReadingClient();
+  if (!client) return false;
+
+  showToast("正在打开TA分享的书...");
+  try {
+    const { data, error } = await client.from("shared_books").select("*").eq("id", code).single();
+    if (error || !data) throw error || new Error("没找到这本书");
+
+    // 存一份到本地书架，方便下次直接从书架进（不用每次都带着链接）
+    loadReadingBooks();
+    let localBook = readingBooks.find(b => b.sharedId === code);
+    if (!localBook) {
+      localBook = { id: uid(), name: data.name, type: "shared", addedAt: Date.now(), progress: data.partner_progress || 0, content: data.content, sharedId: code };
+      readingBooks.push(localBook);
+      saveReadingBooks();
+    }
+
+    readingIsPartnerView = true;
+    readingSharedId = code;
+    openApp("page-app-reading");
+    openReadingBook(localBook.id);
+    return true;
+  } catch (err) {
+    console.error("打开分享的书失败:", err);
+    showModal("打开失败", "这本共读的书可能已经失效了，让 TA 重新发一个链接试试。");
+    return false;
+  }
+}
+
+// 把本地阅读进度同步一份到云端，供对方看到"我读到哪了"
+async function syncReadingProgressToCloud() {
+  if (!readingSharedId) return;
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  if (!book) return;
+  const client = getReadingClient();
+  if (!client) return;
+  const field = readingIsPartnerView ? "partner_progress" : "owner_progress";
+  try {
+    await client.from("shared_books").update({ [field]: book.progress || 0 }).eq("id", readingSharedId);
+  } catch (e) {
+    console.warn("同步阅读进度失败:", e);
+  }
+}
+
+// 拉一次对方目前读到的位置，显示在进度条上
+async function fetchPartnerProgress() {
+  if (!readingSharedId) return;
+  const client = getReadingClient();
+  if (!client) return;
+  try {
+    const { data, error } = await client.from("shared_books").select("owner_progress, partner_progress").eq("id", readingSharedId).single();
+    if (error || !data) return;
+    const partnerVal = readingIsPartnerView ? data.owner_progress : data.partner_progress;
+    const book = readingBooks.find(b => b.id === readingActiveBookId);
+    if (!book || !book.content.length) return;
+    const pct = Math.round((partnerVal / book.content.length) * 100);
+    const marker = $("#readingPartnerMarker");
+    if (marker) {
+      marker.style.left = Math.min(100, Math.max(0, pct)) + "%";
+      marker.title = `TA 读到了 ${pct}%`;
+      marker.classList.remove("hidden");
+    }
+  } catch (e) { /* 静默失败即可，不打扰阅读 */ }
+}
+
 function showReadingLibrary() {
   loadReadingBooks();
   $("#readingLibraryView").classList.remove("hidden");
   $("#readingReaderView").classList.add("hidden");
   $("#readingChatToggleBtn").style.display = "none";
+  $("#readingShareBtn").style.display = "none";
   $("#readingHeaderTitle").innerText = "📖 共读小说";
   $("#readingBackBtn").onclick = closeAppFromUI;
+  readingIsPartnerView = false;
+  readingSharedId = null;
   renderReadingBookGrid();
 }
 
@@ -3440,7 +3611,7 @@ function renderReadingBookGrid() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5.5C6 4.5 9 4.5 12 6c3-1.5 6-1.5 8-.5v13c-2-1-5-1-8 .5-3-1.5-6-1.5-8-.5v-13z"/><path d="M12 6v13"/></svg>
       </div>
       <div class="reading-book-info">
-        <div class="reading-book-name">${escapeHtml(book.name)}</div>
+        <div class="reading-book-name">${escapeHtml(book.name)}${book.sharedId ? ' <span class="reading-shared-badge">💌 共读</span>' : ""}</div>
         <div class="reading-book-meta">${pct > 0 ? `已读 ${pct}%` : "还没开始"} · ${book.type.toUpperCase()}</div>
       </div>
       <button class="reading-book-del" title="删除">
@@ -3486,6 +3657,13 @@ function initReading() {
     if (!readingActiveBookId) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => saveReadingProgress(e.target), 400);
+  });
+
+  $("#readingShareBtn").addEventListener("click", shareCurrentBook);
+  $("#shareLinkCopyBtn").addEventListener("click", copyShareLink);
+  $("#shareLinkCloseBtn").addEventListener("click", closeShareLinkModalFromUI);
+  $("#shareLinkModalOverlay").addEventListener("click", (e) => {
+    if (e.target.id === "shareLinkModalOverlay") closeShareLinkModalFromUI();
   });
 }
 
@@ -3558,13 +3736,21 @@ function openReadingBook(bookId) {
   if (!book) return;
   readingActiveBookId = bookId;
   readingChatHistory = [];
+  readingSharedId = book.sharedId || null;
+  // 只有真正从分享链接进来的那一次才算"对方视角"，否则从自己书架直接点开算"我是主人"
+  if (!readingIsPartnerView) readingIsPartnerView = false;
 
   $("#readingLibraryView").classList.add("hidden");
   $("#readingReaderView").classList.remove("hidden");
   $("#readingChatToggleBtn").style.display = "flex";
   $("#readingHeaderTitle").innerText = book.name;
+  $("#readingShareBtn").style.display = "flex";
 
-  const backToLibrary = () => { saveReadingProgress($("#readingReaderBody")); showReadingLibrary(); };
+  const backToLibrary = () => {
+    saveReadingProgress($("#readingReaderBody"));
+    clearInterval(partnerProgressTimer);
+    showReadingLibrary();
+  };
   $("#readingBackBtn").onclick = () => { popNavLayerSilently(); backToLibrary(); };
   pushNavLayer(backToLibrary);
 
@@ -3581,6 +3767,15 @@ function openReadingBook(bookId) {
     }
     updateReadingProgressUI(body);
   });
+
+  // 如果这本书是共读的，定期看看对方读到哪了
+  const partnerMarker = $("#readingPartnerMarker");
+  if (partnerMarker) partnerMarker.classList.add("hidden");
+  clearInterval(partnerProgressTimer);
+  if (readingSharedId) {
+    fetchPartnerProgress();
+    partnerProgressTimer = setInterval(fetchPartnerProgress, 20000);
+  }
 }
 
 function saveReadingProgress(bodyEl) {
@@ -3591,6 +3786,7 @@ function saveReadingProgress(bodyEl) {
   book.progress = Math.round(ratio * book.content.length);
   saveReadingBooks();
   updateReadingProgressUI(bodyEl);
+  if (readingSharedId) syncReadingProgressToCloud();
 }
 
 function updateReadingProgressUI(bodyEl) {
@@ -3692,6 +3888,7 @@ async function sendReadingChat() {
 }
 
 
+initTimeOfDayTheme();
 initBottomBar();
 initGiveMoneyBtn();
 initToggleAllowanceBtn();
@@ -3705,6 +3902,7 @@ initWidget();
 initReading();
 initAttachments();
 initHealthCheck();
+tryOpenSharedBookFromUrl();
 $("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
 renderStickerManageGrid();
