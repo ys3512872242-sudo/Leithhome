@@ -36,6 +36,7 @@
     --bg-elevated:#1D1E28;
     --bg-elevated-2:#252632;
     --bg-input:#1F2029;
+    --surface-glass:rgba(29,30,40,.7);
     --paper:#CBCCD8;
     --paper-dim:#767888;
     --accent:#B79CE8;
@@ -51,6 +52,7 @@
     --line:#2C2D3A;
     --line-soft:#1F2029;
     --danger:#C98C8C;
+    --danger-glow:rgba(201,140,140,0.12);
     --tod-topbar-bg:rgba(13,13,18,.9);
 
     --bottom-bar-h: calc(58px + env(safe-area-inset-bottom));
@@ -67,6 +69,7 @@
     --bg-elevated:#FFFFFF;
     --bg-elevated-2:#FFF8F4;
     --bg-input:#FFFFFF;
+    --surface-glass:rgba(255,255,255,.75);
     --paper:#4A3B3C;
     --paper-dim:#A98E8A;
     --accent:#EC8A6C;
@@ -82,6 +85,7 @@
     --line:rgba(74,59,60,.1);
     --line-soft:rgba(74,59,60,.06);
     --danger:#D9695F;
+    --danger-glow:rgba(217,105,95,0.1);
     --tod-topbar-bg:rgba(255,255,255,.92);
 
     --bottom-bar-h: calc(58px + env(safe-area-inset-bottom));
@@ -98,6 +102,7 @@
     --bg-elevated:#302A3D;
     --bg-elevated-2:#3A3248;
     --bg-input:#2C2637;
+    --surface-glass:rgba(48,42,61,.72);
     --paper:#EDE6F0;
     --paper-dim:#A899B5;
     --accent:#D68CB0;
@@ -113,6 +118,7 @@
     --line:#40374F;
     --line-soft:#2C2637;
     --danger:#D6928C;
+    --danger-glow:rgba(214,146,140,0.12);
     --tod-topbar-bg:rgba(26,22,34,.9);
 
     --bottom-bar-h: calc(58px + env(safe-area-inset-bottom));
@@ -211,19 +217,19 @@
   .health-pill:active{transform:scale(.96);}
   .health-dot{
     width:7px;height:7px;border-radius:50%;flex-shrink:0;
-    background:var(--paper-dim);opacity:.9;
-    box-shadow:0 0 0 2px rgba(255,255,255,.03);
+    background:var(--paper-dim);opacity:1;
+    box-shadow:0 0 0 2px var(--line);
     transition:all .25s ease;
   }
-  .health-dot.ok{background:#5FBF8F;opacity:1;box-shadow:0 0 7px rgba(95,191,143,.7);}
-  .health-dot.warn{background:var(--accent-2);opacity:1;box-shadow:0 0 7px var(--accent-glow);}
-  .health-dot.bad{background:var(--danger);opacity:1;box-shadow:0 0 7px rgba(211,148,142,.7);}
+  .health-dot.ok{background:#4FA876;opacity:1;box-shadow:0 0 0 2px var(--line),0 0 7px rgba(79,168,118,.7);}
+  .health-dot.warn{background:var(--accent-2);opacity:1;box-shadow:0 0 0 2px var(--line),0 0 7px var(--accent-glow);}
+  .health-dot.bad{background:var(--danger);opacity:1;box-shadow:0 0 0 2px var(--line),0 0 7px rgba(211,148,142,.7);}
   .health-dot.checking{background:var(--moon);opacity:1;animation:healthPulse 1s ease-in-out infinite;}
   @keyframes healthPulse{0%,100%{opacity:.4;transform:scale(.8);}50%{opacity:1;transform:scale(1.15);}}
   .topbar-actions{display:flex;gap:7px;}
   .icon-btn{
     width:37px;height:37px;border-radius:var(--radius-md);
-    border:1px solid var(--line);background:rgba(21,24,35,.65);
+    border:1px solid var(--line);background:var(--surface-glass);
     backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
     color:var(--paper-dim);
     display:flex;align-items:center;justify-content:center;cursor:pointer;
@@ -305,7 +311,7 @@
   }
   .msg-action-btn svg,.msg-delete-btn svg{width:13px;height:13px;}
   .msg-action-btn:hover,.msg-action-btn:active{color:var(--accent-2);border-color:var(--accent-dim);background:var(--accent-glow);transform:translateY(-1px);}
-  .msg-delete-btn:hover,.msg-delete-btn:active{color:var(--danger);border-color:var(--danger);background:rgba(211,148,142,.1);transform:translateY(-1px);}
+  .msg-delete-btn:hover,.msg-delete-btn:active{color:var(--danger);border-color:var(--danger);background:var(--danger-glow);transform:translateY(-1px);}
 
   /* ===== 输入区 ===== */
   .input-bar{
@@ -326,7 +332,7 @@
 
   .sticker-btn,.send-btn{
     width:38px;height:38px;border-radius:var(--radius-md);
-    border:1px solid var(--line);background:rgba(21,24,35,.75);
+    border:1px solid var(--line);background:var(--surface-glass);
     backdrop-filter:blur(8px);color:var(--paper-dim);
     display:flex;align-items:center;justify-content:center;cursor:pointer;
     flex-shrink:0;transition:all .2s var(--ease-out);
@@ -435,7 +441,7 @@
   .btn-primary{background:linear-gradient(135deg,var(--accent-2),var(--accent));color:#1A1207;border:none;font-weight:600;box-shadow:0 3px 14px rgba(201,154,91,.28);}
   .btn-primary:hover{opacity:.92;box-shadow:0 5px 20px rgba(201,154,91,.38);}
   .btn-danger{background:transparent;color:var(--danger);border:1px solid var(--danger);}
-  .btn-danger:hover{background:rgba(196,132,126,.1);box-shadow:0 0 12px rgba(196,132,126,.15);}
+  .btn-danger:hover{background:var(--danger-glow);box-shadow:0 0 12px var(--danger-glow);}
   .btn-ghost{background:transparent;border:1px solid var(--line);}
   .btn-block{width:100%;}
   .btn-sm{padding:6px 12px;font-size:12px;}
@@ -448,7 +454,7 @@
     cursor:pointer;transition:all .2s var(--ease-out);
   }
   .provider-card:hover{border-color:var(--accent-dim);}
-  .provider-card.active{border-color:var(--accent);box-shadow:0 0 14px var(--accent-glow);background:rgba(201,154,91,.06);}
+  .provider-card.active{border-color:var(--accent);box-shadow:0 0 14px var(--accent-glow);background:var(--accent-glow);}
   .provider-card-head{display:flex;justify-content:space-between;align-items:center;}
   .provider-name{font-size:14px;font-weight:500;}
   .provider-url{font-size:11px;color:var(--paper-dim);margin-top:3px;word-break:break-all;}
@@ -482,7 +488,7 @@
     padding:2px 10px;border-radius:20px;letter-spacing:.5px;font-weight:500;
   }
   .memory-del{background:none;border:none;color:var(--paper-dim);cursor:pointer;padding:3px;border-radius:6px;}
-  .memory-del:hover{color:var(--danger);background:rgba(196,132,126,.1);}
+  .memory-del:hover{color:var(--danger);background:var(--danger-glow);}
   .memory-del svg{width:13px;height:13px;}
   .memory-content{font-size:13px;line-height:1.7;color:var(--paper);white-space:pre-wrap;}
 
@@ -547,7 +553,7 @@
   /* ===== token 用量提醒条 ===== */
   .token-banner{
     margin:0 16px 12px;padding:10px 14px;
-    background:rgba(201,154,91,.06);border:1px solid var(--accent-dim);
+    background:var(--accent-glow);border:1px solid var(--accent-dim);
     border-radius:var(--radius-md);font-size:12px;color:var(--paper-dim);
     display:flex;align-items:center;justify-content:space-between;gap:10px;
     animation:fadeIn .3s var(--ease-out);
@@ -684,13 +690,13 @@
   }
   .app-back-btn{
     width:42px;height:42px;border-radius:var(--radius-md);
-    border:1px solid var(--accent-dim);background:rgba(201,154,91,.1);
+    border:1px solid var(--accent-dim);background:var(--accent-glow);
     color:var(--accent-2);display:flex;align-items:center;justify-content:center;
     cursor:pointer;flex-shrink:0;transition:all .18s ease;
     -webkit-tap-highlight-color:transparent;
     box-shadow:0 2px 8px rgba(0,0,0,.2);
   }
-  .app-back-btn:hover,.app-back-btn:active{color:var(--paper);border-color:var(--accent);background:rgba(201,154,91,.18);transform:scale(.95);}
+  .app-back-btn:hover,.app-back-btn:active{color:var(--paper);border-color:var(--accent);background:var(--accent-glow);transform:scale(.95);}
   .app-back-btn svg{width:21px;height:21px;}
   .app-title{font-size:18px;font-weight:600;font-family:var(--serif-display);font-style:italic;color:var(--paper);letter-spacing:.3px;}
   .app-body{flex:1;overflow-y:auto;padding:20px 16px;background:transparent;}
@@ -699,7 +705,7 @@
 
   /* ===== 购物 app（原小世界） ===== */
   .wallet-card{
-    background:linear-gradient(135deg,var(--bg-elevated),rgba(201,154,91,.06));
+    background:linear-gradient(135deg,var(--bg-elevated),var(--accent-glow));
     border:1px solid var(--accent-dim);border-radius:var(--radius-lg);
     padding:18px;display:flex;justify-content:space-between;align-items:center;
     box-shadow:0 2px 16px rgba(0,0,0,.2);
@@ -790,8 +796,8 @@
     transition:all .15s ease;
     -webkit-tap-highlight-color:transparent;
   }
-  .mem-node-row:hover{background:rgba(107,155,210,.06);}
-  .mem-node-row.tapped{background:rgba(107,155,210,.1);}
+  .mem-node-row:hover{background:var(--moon-glow);}
+  .mem-node-row.tapped{background:var(--moon-glow);}
   .mem-toggle{
     width:20px;height:20px;display:flex;align-items:center;justify-content:center;
     color:var(--paper-dim);flex-shrink:0;transition:transform .2s ease;
@@ -816,12 +822,12 @@
   }
   .mem-add-btn{
     width:28px;height:28px;border-radius:8px;
-    border:1px solid var(--accent-dim);background:rgba(201,154,91,.08);
+    border:1px solid var(--accent-dim);background:var(--accent-glow);
     color:var(--accent-2);display:flex;align-items:center;justify-content:center;
     cursor:pointer;flex-shrink:0;transition:all .15s ease;
     font-size:18px;line-height:1;
   }
-  .mem-add-btn:hover{background:rgba(201,154,91,.18);transform:scale(1.08);}
+  .mem-add-btn:hover{background:var(--accent-glow);transform:scale(1.08);}
   .mem-add-btn:active{transform:scale(.92);}
   .mem-children{
     display:none;flex-direction:column;gap:2px;
@@ -837,7 +843,7 @@
     padding:8px 10px;border-radius:var(--radius-sm);
     transition:all .15s ease;position:relative;
   }
-  .mem-leaf:hover{background:rgba(107,155,210,.04);}
+  .mem-leaf:hover{background:var(--moon-glow);}
   .mem-leaf-dot{
     width:6px;height:6px;border-radius:50%;
     margin-top:7px;flex-shrink:0;
@@ -858,7 +864,7 @@
     cursor:pointer;flex-shrink:0;opacity:0;transition:all .15s ease;
   }
   .mem-leaf:hover .mem-leaf-del,.mem-leaf.tapped .mem-leaf-del{opacity:1;}
-  .mem-leaf-del:hover{color:var(--danger);background:rgba(196,132,126,.1);}
+  .mem-leaf-del:hover{color:var(--danger);background:var(--danger-glow);}
   .mem-leaf-del svg{width:13px;height:13px;}
 
   /* 记忆为空提示 */
@@ -919,7 +925,7 @@
   }
   .widget-weather-icon{font-size:36px;}
   .widget-note-card{
-    background:linear-gradient(135deg,rgba(201,154,91,.08),rgba(128,152,201,.05));
+    background:linear-gradient(135deg,var(--accent-glow),rgba(128,152,201,.05));
     border:1px solid var(--accent-dim);border-radius:var(--radius-lg);
     padding:20px;margin-top:16px;
   }
@@ -933,21 +939,59 @@
   }
 
   /* ===== 共读小说 app ===== */
+  .reading-entry-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;}
   .reading-upload-card{
     border:1.5px dashed var(--line);border-radius:var(--radius-lg);
-    padding:28px 20px;text-align:center;cursor:pointer;
-    transition:all .2s var(--ease-out);margin-bottom:18px;
+    padding:22px 14px;text-align:center;cursor:pointer;
+    transition:all .2s var(--ease-out);
     background:rgba(255,255,255,.01);
   }
   .reading-upload-card:hover{border-color:var(--accent-dim);background:var(--accent-glow);}
   .reading-upload-icon{
-    width:44px;height:44px;margin:0 auto 10px;border-radius:50%;
+    width:40px;height:40px;margin:0 auto 9px;border-radius:50%;
     background:var(--bg-elevated);border:1px solid var(--line);
     display:flex;align-items:center;justify-content:center;color:var(--accent-2);
   }
-  .reading-upload-icon svg{width:20px;height:20px;}
-  .reading-upload-text{font-size:14px;color:var(--paper);font-weight:500;}
-  .reading-upload-sub{font-size:11.5px;color:var(--paper-dim);margin-top:4px;}
+  .reading-upload-icon svg{width:18px;height:18px;}
+  .reading-upload-text{font-size:13px;color:var(--paper);font-weight:500;}
+  .reading-upload-sub{font-size:10.5px;color:var(--paper-dim);margin-top:4px;line-height:1.5;}
+
+  .reading-link-form{
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-lg);padding:16px;margin-bottom:18px;
+  }
+  .reading-link-form input{
+    width:100%;background:var(--bg-input);border:1px solid var(--line);
+    color:var(--paper);border-radius:var(--radius-md);padding:10px 13px;
+    font-size:13.5px;font-family:inherit;outline:none;
+  }
+  .reading-link-form input:focus{border-color:var(--accent-dim);box-shadow:0 0 0 3px var(--accent-glow);}
+  .reading-link-form input::placeholder{color:var(--paper-dim);}
+
+  .reading-link-card{
+    display:flex;align-items:center;gap:13px;
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-md);padding:13px 14px;cursor:pointer;
+    transition:all .18s var(--ease-out);
+  }
+  .reading-link-card:hover{border-color:var(--accent-dim);transform:translateY(-1px);}
+  .reading-link-icon{
+    width:34px;height:34px;border-radius:10px;flex-shrink:0;
+    background:linear-gradient(150deg,var(--moon-dim),var(--bg-elevated-2));
+    display:flex;align-items:center;justify-content:center;color:var(--paper);
+  }
+  .reading-link-icon svg{width:16px;height:16px;}
+  .reading-link-info{flex:1;min-width:0;}
+  .reading-link-note{font-size:14px;color:var(--paper);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .reading-link-url{font-size:10.5px;color:var(--paper-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .reading-link-actions{display:flex;gap:6px;flex-shrink:0;}
+  .reading-link-action-btn{
+    width:28px;height:28px;border-radius:9px;border:none;background:transparent;
+    color:var(--paper-dim);display:flex;align-items:center;justify-content:center;cursor:pointer;
+  }
+  .reading-link-action-btn:hover{color:var(--accent-2);background:var(--accent-glow);}
+  .reading-link-action-btn svg{width:14px;height:14px;}
+  .reading-link-action-btn.danger:hover{color:var(--danger);background:rgba(211,148,142,.1);}
 
   .reading-book-grid{display:flex;flex-direction:column;gap:10px;}
   .reading-book-card{
@@ -975,7 +1019,7 @@
     color:var(--paper-dim);display:flex;align-items:center;justify-content:center;
     cursor:pointer;flex-shrink:0;
   }
-  .reading-book-del:hover{color:var(--danger);background:rgba(211,148,142,.1);}
+  .reading-book-del:hover{color:var(--danger);background:var(--danger-glow);}
   .reading-book-del svg{width:14px;height:14px;}
   .reading-empty-hint{text-align:center;color:var(--paper-dim);font-size:12.5px;padding:30px 10px;line-height:1.8;}
   .reading-shared-badge{
@@ -1393,14 +1437,35 @@
 
     <!-- 书架视图 -->
     <div class="app-body" id="readingLibraryView">
-      <div class="reading-upload-card" id="readingUploadCard">
-        <input type="file" id="readingFileInput" accept=".txt,.pdf" style="display:none;">
-        <div class="reading-upload-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+      <div class="reading-entry-row">
+        <div class="reading-upload-card" id="readingUploadCard">
+          <input type="file" id="readingFileInput" accept=".txt,.pdf" style="display:none;">
+          <div class="reading-upload-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+          </div>
+          <div class="reading-upload-text">上传 .txt / .pdf</div>
+          <div class="reading-upload-sub">整本传上来一起看</div>
         </div>
-        <div class="reading-upload-text">上传 .txt 或 .pdf</div>
-        <div class="reading-upload-sub">和 Leith 一起看，随时聊两句</div>
+        <div class="reading-upload-card" id="readingLinkCard">
+          <div class="reading-upload-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11.5 4.5"/><path d="M14 11a5 5 0 00-7.07 0L4.1 13.83a5 5 0 007.07 7.07L12.5 19.5"/></svg>
+          </div>
+          <div class="reading-upload-text">粘贴网页链接</div>
+          <div class="reading-upload-sub">贴小说网站的章节网址</div>
+        </div>
       </div>
+
+      <!-- 粘贴链接的小表单，点上面卡片展开 -->
+      <div class="reading-link-form hidden" id="readingLinkForm">
+        <input type="text" id="readingLinkUrlInput" placeholder="粘贴网页链接，比如 https://...">
+        <input type="text" id="readingLinkNoteInput" placeholder="备注一下（可选），比如“看到第12章”" style="margin-top:8px;">
+        <div class="row-flex" style="margin-top:10px;">
+          <button class="btn btn-ghost btn-block" id="readingLinkCancelBtn">取消</button>
+          <button class="btn btn-primary btn-block" id="readingLinkSaveBtn">保存并分享</button>
+        </div>
+      </div>
+
+      <div id="readingLinkGrid" class="reading-book-grid"></div>
       <div id="readingBookGrid" class="reading-book-grid"></div>
     </div>
 

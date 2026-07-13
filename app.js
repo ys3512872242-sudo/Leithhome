@@ -27,6 +27,7 @@ const LS = {
   worldNightstand: "companion_world_nightstand_v1", // { [threadId]: [{id, name, emoji, price, boughtAt}] } 床头柜
   // 共读小说
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
+  readingLinks: "companion_reading_links_v1", // [{id, url, note, addedAt}]
 };
 
 const DEFAULT_PROVIDERS = [
@@ -3489,8 +3490,10 @@ async function shareCurrentBook() {
   }
 }
 
-function showShareLinkModal(url) {
+function showShareLinkModal(url, title) {
   $("#shareLinkModalUrl").value = url;
+  const titleEl = document.querySelector("#shareLinkModalOverlay h3");
+  if (titleEl) titleEl.innerText = title || "💌 一起看这本书";
   $("#shareLinkModalOverlay").classList.remove("hidden");
   pushNavLayer(() => $("#shareLinkModalOverlay").classList.add("hidden"));
 }
@@ -3582,6 +3585,143 @@ async function fetchPartnerProgress() {
   } catch (e) { /* 静默失败即可，不打扰阅读 */ }
 }
 
+// ============================================================
+// 一起看的网页链接（比如小说网站的某一章网址，不涉及上传文件）
+// ============================================================
+let readingLinks = [];
+
+function loadReadingLinks() {
+  try {
+    readingLinks = JSON.parse(localStorage.getItem(LS.readingLinks) || "[]");
+  } catch (e) { readingLinks = []; }
+  return readingLinks;
+}
+function saveReadingLinksLocal() {
+  try { localStorage.setItem(LS.readingLinks, JSON.stringify(readingLinks)); } catch (e) {}
+}
+
+function normalizeUrl(raw) {
+  let url = (raw || "").trim();
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  return url;
+}
+
+// 保存一个网页链接：本地存一份，同时尝试同步到云端生成一个可以分享给 TA 的短链接
+async function saveReadingLink() {
+  const urlInput = $("#readingLinkUrlInput");
+  const noteInput = $("#readingLinkNoteInput");
+  const url = normalizeUrl(urlInput.value);
+  const note = noteInput.value.trim();
+
+  if (!url) return showToast("先粘贴一个链接吧");
+  try { new URL(url); } catch (e) { return showModal("链接好像不太对", "检查一下是不是完整的网址，比如要带上 https://"); }
+
+  const id = uid();
+  const link = { id, url, note, addedAt: Date.now() };
+  loadReadingLinks();
+  readingLinks.unshift(link);
+  saveReadingLinksLocal();
+  renderReadingLinkGrid();
+
+  urlInput.value = "";
+  noteInput.value = "";
+  $("#readingLinkForm").classList.add("hidden");
+
+  // 同步到云端，方便生成分享链接给 TA；就算失败，本地也已经存好了，不影响自己用
+  const client = getReadingClient();
+  if (client) {
+    try {
+      await client.from("shared_links").upsert({ id, url, note });
+      const shareUrl = `${location.origin}${location.pathname}?link=${id}`;
+      showShareLinkModal(shareUrl, "💌 一起看这个网页");
+      return;
+    } catch (err) {
+      console.warn("同步链接到云端失败:", err);
+    }
+  }
+  showToast("已保存到本机（云端暂时没连上，先自己看吧）");
+}
+
+function renderReadingLinkGrid() {
+  const grid = $("#readingLinkGrid");
+  if (!grid) return;
+  loadReadingLinks();
+  grid.innerHTML = "";
+  readingLinks.forEach(link => {
+    let host = link.url;
+    try { host = new URL(link.url).hostname.replace(/^www\./, ""); } catch (e) {}
+    const card = document.createElement("div");
+    card.className = "reading-link-card";
+    card.innerHTML = `
+      <div class="reading-link-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 13a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11.5 4.5"/><path d="M14 11a5 5 0 00-7.07 0L4.1 13.83a5 5 0 007.07 7.07L12.5 19.5"/></svg>
+      </div>
+      <div class="reading-link-info">
+        <div class="reading-link-note">${escapeHtml(link.note || host)}</div>
+        <div class="reading-link-url">${escapeHtml(host)}</div>
+      </div>
+      <div class="reading-link-actions">
+        <button class="reading-link-action-btn" title="分享给TA">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.6l6.8-3.9M8.6 13.4l6.8 3.9"/></svg>
+        </button>
+        <button class="reading-link-action-btn danger" title="删除">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+        </button>
+      </div>
+    `;
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".reading-link-action-btn")) return;
+      window.open(link.url, "_blank");
+    });
+    card.querySelectorAll(".reading-link-action-btn")[0].addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const client = getReadingClient();
+      if (client) {
+        try { await client.from("shared_links").upsert({ id: link.id, url: link.url, note: link.note }); } catch (err) {}
+      }
+      showShareLinkModal(`${location.origin}${location.pathname}?link=${link.id}`, "💌 一起看这个网页");
+    });
+    card.querySelectorAll(".reading-link-action-btn")[1].addEventListener("click", (e) => {
+      e.stopPropagation();
+      readingLinks = readingLinks.filter(l => l.id !== link.id);
+      saveReadingLinksLocal();
+      renderReadingLinkGrid();
+    });
+    grid.appendChild(card);
+  });
+}
+
+// 通过分享链接打开一个"一起看的网页"：直接跳转过去，不需要停留在 App 里
+async function tryOpenSharedLinkFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get("link");
+  if (!code) return false;
+
+  const client = getReadingClient();
+  if (!client) {
+    showModal("打不开", "云端服务连不上，晚点再试试这个链接。");
+    return false;
+  }
+  showToast("正在打开TA分享的网页...");
+  try {
+    const { data, error } = await client.from("shared_links").select("*").eq("id", code).single();
+    if (error || !data) throw error || new Error("没找到这个链接");
+    // 本地也存一份，方便下次直接从书架进
+    loadReadingLinks();
+    if (!readingLinks.find(l => l.id === code)) {
+      readingLinks.unshift({ id: code, url: data.url, note: data.note, addedAt: Date.now() });
+      saveReadingLinksLocal();
+    }
+    window.location.href = data.url;
+    return true;
+  } catch (err) {
+    console.error("打开分享的网页失败:", err);
+    showModal("打开失败", "这个链接可能已经失效了，让 TA 重新发一个试试。");
+    return false;
+  }
+}
+
 function showReadingLibrary() {
   loadReadingBooks();
   $("#readingLibraryView").classList.remove("hidden");
@@ -3593,6 +3733,7 @@ function showReadingLibrary() {
   readingIsPartnerView = false;
   readingSharedId = null;
   renderReadingBookGrid();
+  renderReadingLinkGrid();
 }
 
 function renderReadingBookGrid() {
@@ -3636,6 +3777,18 @@ function initReading() {
   const fileInput = $("#readingFileInput");
   $("#readingUploadCard").addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", handleReadingFileUpload);
+
+  // 粘贴网页链接：点卡片展开小表单
+  $("#readingLinkCard").addEventListener("click", () => {
+    $("#readingLinkForm").classList.remove("hidden");
+    $("#readingLinkUrlInput").focus();
+  });
+  $("#readingLinkCancelBtn").addEventListener("click", () => {
+    $("#readingLinkForm").classList.add("hidden");
+    $("#readingLinkUrlInput").value = "";
+    $("#readingLinkNoteInput").value = "";
+  });
+  $("#readingLinkSaveBtn").addEventListener("click", saveReadingLink);
 
   $("#readingChatToggleBtn").addEventListener("click", openReadingChatDrawer);
   $("#readingChatCloseBtn").addEventListener("click", closeReadingChatDrawerFromUI);
@@ -3903,6 +4056,7 @@ initReading();
 initAttachments();
 initHealthCheck();
 tryOpenSharedBookFromUrl();
+tryOpenSharedLinkFromUrl();
 $("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
 renderStickerManageGrid();

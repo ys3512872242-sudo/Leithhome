@@ -12,9 +12,23 @@ create table if not exists shared_books (
   partner_progress  integer default 0     -- 打开链接的另一半的阅读进度
 );
 
--- 打开这张表的匿名读写权限（和 memories 表的策略保持一致，仅限你们两人使用的私人小工具）
 alter table shared_books enable row level security;
 
 drop policy if exists "allow all for shared_books" on shared_books;
 create policy "allow all for shared_books" on shared_books
+  for all using (true) with check (true);
+
+-- 一起看的网页链接（比如小说网站某一章的网址），比 shared_books 轻量很多，
+-- 不存正文，只存网址本身，双方各自点开浏览器看同一个网页
+create table if not exists shared_links (
+  id            text primary key,        -- 短码
+  url           text not null,           -- 网页链接
+  note          text,                    -- 备注，比如"看到第12章"
+  created_at    timestamptz default now()
+);
+
+alter table shared_links enable row level security;
+
+drop policy if exists "allow all for shared_links" on shared_links;
+create policy "allow all for shared_links" on shared_links
   for all using (true) with check (true);
