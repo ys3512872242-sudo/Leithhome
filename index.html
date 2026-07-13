@@ -1079,6 +1079,14 @@
   }
   .reading-chat-box{flex:1;overflow-y:auto;padding:14px 14px;display:flex;flex-direction:column;gap:10px;}
   .reading-chat-hint{font-size:12px;color:var(--paper-dim);line-height:1.7;font-style:italic;padding:6px 2px;}
+  .reading-chat-save-btn{
+    align-self:flex-start;margin-top:-4px;
+    width:24px;height:24px;border-radius:8px;border:none;background:transparent;
+    color:var(--paper-dim);display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:all .18s ease;
+  }
+  .reading-chat-save-btn:hover{color:var(--accent-2);background:var(--accent-glow);}
+  .reading-chat-save-btn svg{width:13px;height:13px;}
   .reading-chat-input-bar{
     flex-shrink:0;padding:10px 12px calc(env(safe-area-inset-bottom)+10px);
     border-top:1px solid var(--line-soft);display:flex;align-items:flex-end;gap:8px;
@@ -1134,7 +1142,7 @@
         <div class="brand">
           <span class="brand-mark" id="brandMark">Leith</span>
           <button class="brand-sub health-pill" id="statusLabel" title="点击立即检测">
-            <span class="health-dot" id="healthDot"></span>未连接
+            <span class="health-dot" id="healthDot"></span><span id="statusLabelText">未连接</span>
           </button>
         </div>
       </div>

@@ -81,6 +81,7 @@ async function testSupabaseConnection() {
 const STICKER_LS_KEY = 'companion_stickers_v1';
 const MEMORY_LS_KEY = 'companion_memory_v2';       // 本地降级用（core）
 const PROFILE_LS_KEY = 'companion_profile_v1';      // 本地降级用（profile）
+const READING_LS_KEY = 'companion_reading_memory_v1'; // 本地降级用（共读记录）
 
 function readLS(key, fallback) {
   try {
@@ -112,6 +113,99 @@ const MEMORY_TOKEN_BUDGET = 800;
 // Supabase 记忆适配器
 // ============================================================
 const SupabaseMemoryAdapter = {
+  // ============================================================
+  // 第四层：共读记录（reading）— 和 Leith 一起读书时聊出的感想/进度
+  // 单独一层，不跟日常对话摘要混在一起，方便回顾"聊过哪些书"
+  // ============================================================
+  async listReading() {
+    if (!supabaseReady) return readLS(READING_LS_KEY, []);
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'long_term')
+        .eq('thread_id', 'reading')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data || []).map(item => ({
+        id: String(item.id),
+        content: item.content,
+        createdAt: new Date(item.created_at).getTime()
+      }));
+    } catch (e) {
+      console.error('加载共读记录失败:', e);
+      return readLS(READING_LS_KEY, []);
+    }
+  },
+
+  async addReading(content, bookName) {
+    const trimmed = content.trim();
+    const tagged = bookName ? `《${bookName}》${trimmed}` : trimmed;
+    const local = readLS(READING_LS_KEY, []);
+    const record = { id: genId(), content: tagged, createdAt: Date.now() };
+    local.push(record);
+    if (supabaseReady) {
+      try {
+        const { error } = await supabaseClient
+          .from('memories')
+          .insert([{ content: tagged, type: 'long_term', thread_id: 'reading', role: 'summary' }]);
+        if (error) throw error;
+      } catch (e) {
+        console.error('共读记录上传失败:', e);
+      }
+    }
+    writeLS(READING_LS_KEY, local);
+    return record;
+  },
+
+  async removeReading(id) {
+    const local = readLS(READING_LS_KEY, []);
+    writeLS(READING_LS_KEY, local.filter(m => m.id !== id));
+    if (supabaseReady) {
+      try {
+        const numId = parseInt(id, 10);
+        if (!isNaN(numId)) {
+          await supabaseClient.from('memories').delete().eq('id', numId);
+        }
+      } catch (e) {
+        console.error('删除共读记录失败:', e);
+      }
+    }
+  },
+
+  async clearReading() {
+    localStorage.removeItem(READING_LS_KEY);
+    if (supabaseReady) {
+      try {
+        await supabaseClient
+          .from('memories')
+          .delete()
+          .eq('type', 'long_term')
+          .eq('thread_id', 'reading');
+      } catch (e) {
+        console.error('清空共读记录失败:', e);
+      }
+    }
+  },
+
+  // 共读聊天专用的记忆块：只在共读侧聊天里用到，不会混进日常对话的 system prompt，
+  // 这样才是真的省 token —— 平时聊天完全不带这层，只有讨论某本书时才加载
+  async asReadingPromptBlock() {
+    const list = await this.listReading();
+    if (!list.length) return '';
+    const lines = list.map(m => `- ${m.content}`);
+    let tokensUsed = 0;
+    let picked = [];
+    // 只取最近的、预算内的条目（离当前最近的最相关）
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const t = estimateTokens(lines[i]);
+      if (tokensUsed + t > 500) break;
+      picked.unshift(lines[i]);
+      tokensUsed += t;
+    }
+    return `以下是你和用户之前一起读书时聊到的内容，可以自然地接续，不用重复提起：\n${picked.join('\n')}`;
+  },
+
   // ============================================================
   // 第一层：人设档案（profile）— 始终加载，精简事实
   // ============================================================
@@ -608,6 +702,28 @@ const LocalMemoryAdapter = {
   async listArchive() { return []; },
   async addArchive() {},
   async removeArchive() {},
+
+  async listReading() { return readLS(READING_LS_KEY, []); },
+  async addReading(content, bookName) {
+    const trimmed = content.trim();
+    const tagged = bookName ? `《${bookName}》${trimmed}` : trimmed;
+    const all = await this.listReading();
+    const record = { id: genId(), content: tagged, createdAt: Date.now() };
+    all.push(record);
+    writeLS(READING_LS_KEY, all);
+    return record;
+  },
+  async removeReading(id) {
+    const all = await this.listReading();
+    writeLS(READING_LS_KEY, all.filter(m => m.id !== id));
+  },
+  async clearReading() { localStorage.removeItem(READING_LS_KEY); },
+  async asReadingPromptBlock() {
+    const list = await this.listReading();
+    if (!list.length) return '';
+    const lines = list.slice(-8).map(m => `- ${m.content}`);
+    return `以下是你和用户之前一起读书时聊到的内容，可以自然地接续，不用重复提起：\n${lines.join('\n')}`;
+  },
 
   async list() {
     return readLS(MEMORY_LS_KEY, []);

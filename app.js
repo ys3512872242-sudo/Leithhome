@@ -949,7 +949,22 @@ function populateModelSelect() {
 function updateStatusLabel() {
   const active = getActiveProvider();
   const key = localStorage.getItem(LS.apiKey);
-  $("#statusLabel").innerText = active ? (key ? `已连接 · ${active.name}` : `未连接 · ${active.name}`) : "未配置服务商";
+  const text = active ? (key ? `已连接 · ${active.name}` : `未连接 · ${active.name}`) : "未配置服务商";
+  const label = $("#statusLabel");
+  // 只替换文字节点，保留里面的健康检测圆点 <span id="healthDot">。
+  // 用一个专门的 <span> 装文字，而不是依赖裸文本节点（原始 HTML 里圆点前后有多个空白文本节点，
+  // 找"第一个文本节点"很容易找错、导致文字重复），这样每次更新都精确、不会有残留。
+  let textSpan = $("#statusLabelText");
+  if (!textSpan) {
+    // 第一次运行：清掉旧的裸文本节点，只保留圆点，再补一个专门装文字的 span
+    Array.from(label.childNodes).forEach(n => {
+      if (n.nodeType === Node.TEXT_NODE) label.removeChild(n);
+    });
+    textSpan = document.createElement("span");
+    textSpan.id = "statusLabelText";
+    label.appendChild(textSpan);
+  }
+  textSpan.textContent = text;
 }
 
 // ============================================================
@@ -3010,6 +3025,8 @@ function initMemoryApp() {
       await window.Memory.addProfile(val);
     } else if (memoryAddTarget === "core") {
       await window.Memory.add(val);
+    } else if (memoryAddTarget === "reading") {
+      await window.Memory.addReading(val);
     } else if (memoryAddTarget === "archive") {
       await window.Memory.addArchive(val);
     }
@@ -3036,11 +3053,13 @@ function openMemoryAddModal(branch) {
   const titles = {
     profile: "👤 添加人设档案",
     core: "💎 添加核心记忆",
+    reading: "📖 添加共读记录",
     archive: "📨 添加归档信件"
   };
   const placeholders = {
     profile: "精简事实，如：喜欢猫、不喜欢早起...",
     core: "重要的事，如：上次聊到了XX...",
+    reading: "读书时的感想或进度，如：聊到主角决定原谅她了...",
     archive: "完整原文，不进上下文，仅可查看..."
   };
   $("#memoryAddModalTitle").innerText = titles[branch] || "添加记忆";
@@ -3065,12 +3084,13 @@ async function renderMemoryTree() {
   const threadId = getActiveThreadId();
 
   // 并行加载所有分支
-  const [profileList, coreList, summaryList, archiveList, shortTermList] = await Promise.all([
+  const [profileList, coreList, summaryList, archiveList, shortTermList, readingList] = await Promise.all([
     window.Memory.listProfile(),
     window.Memory.list(),
     window.Memory.isReady() ? window.Memory.listSummary(threadId) : Promise.resolve([]),
     window.Memory.listArchive(),
-    window.Memory.isReady() ? window.Memory.listShortTermDetail(threadId, 30) : Promise.resolve([])
+    window.Memory.isReady() ? window.Memory.listShortTermDetail(threadId, 30) : Promise.resolve([]),
+    window.Memory.listReading ? window.Memory.listReading() : Promise.resolve([])
   ]);
 
   const connected = window.Memory.isReady && window.Memory.isReady();
@@ -3091,6 +3111,7 @@ async function renderMemoryTree() {
   const branches = [
     { id: "profile", icon: "👤", label: "人设档案", color: "#6B9BD2", bgColor: "rgba(107,155,210,.12)", items: profileList, canAdd: true },
     { id: "core", icon: "💎", label: "核心记忆", color: "#DBA95A", bgColor: "rgba(219,169,90,.12)", items: coreList, canAdd: true },
+    { id: "reading", icon: "📖", label: "共读记录", color: "#7FA97F", bgColor: "rgba(127,169,127,.12)", items: readingList, canAdd: true },
     { id: "summary", icon: "💬", label: "对话摘要", color: "#7B8EC4", bgColor: "rgba(123,142,196,.12)", items: summaryList, canAdd: false },
     { id: "short_term", icon: "💭", label: "近期对话", color: "#D9708C", bgColor: "rgba(217,112,140,.12)", items: shortTermList, canAdd: false },
     { id: "archive", icon: "📨", label: "归档信件", color: "#4A5A8A", bgColor: "rgba(74,90,138,.12)", items: archiveList, canAdd: true },
@@ -3169,6 +3190,8 @@ async function deleteMemoryLeaf(id, branch) {
     await window.Memory.removeProfile(id);
   } else if (branch === "core") {
     await window.Memory.remove(id);
+  } else if (branch === "reading") {
+    await window.Memory.removeReading(id);
   } else if (branch === "archive") {
     await window.Memory.removeArchive(id);
   } else {
@@ -3950,18 +3973,28 @@ function updateReadingProgressUI(bodyEl) {
   $("#readingProgressLabel").innerText = pct + "%";
 }
 
+let readingMemoryBlock = "";  // 本次打开共读聊天时，先加载一次已有的"共读记录"，聊天过程中复用，不用每条消息都重新查
+let readingChatTurnsSinceLastSave = 0; // 距离上次自动存记忆过了几轮对话
+
 function openReadingChatDrawer() {
   $("#readingChatOverlay").classList.add("open");
   $("#readingChatDrawer").classList.add("open");
   pushNavLayer(closeReadingChatDrawer);
+  // 提前把已有的共读记忆查出来缓存着，聊天时直接用，不用每次都查
+  if (window.Memory) {
+    window.Memory.asReadingPromptBlock().then(block => { readingMemoryBlock = block; });
+  }
 }
 function closeReadingChatDrawer() {
   $("#readingChatOverlay").classList.remove("open");
   $("#readingChatDrawer").classList.remove("open");
+  // 关闭时，如果聊了点什么还没存过，自动总结存一条记忆，下次接着聊不用从头讲
+  autoSaveReadingMemoryIfNeeded();
 }
 function closeReadingChatDrawerFromUI() { popNavLayerSilently(); closeReadingChatDrawer(); }
 
-// 取阅读器当前视野附近的文本，作为聊天的上下文片段（避免把整本书塞进 prompt）
+// 取阅读器当前视野附近的文本，只在"这次共读会话的第一条消息"里带一小段，
+// 帮 AI 知道具体读到哪一段，后续消息就不再重复带原文，靠记忆和聊天上下文接着聊
 function getReadingContextSnippet() {
   const book = readingBooks.find(b => b.id === readingActiveBookId);
   if (!book) return "";
@@ -3969,8 +4002,8 @@ function getReadingContextSnippet() {
   const scrollable = bodyEl.scrollHeight - bodyEl.clientHeight;
   const ratio = scrollable > 0 ? bodyEl.scrollTop / scrollable : 0;
   const center = Math.round(ratio * book.content.length);
-  const start = Math.max(0, center - 1500);
-  const end = Math.min(book.content.length, center + 500);
+  const start = Math.max(0, center - 800);
+  const end = Math.min(book.content.length, center + 300);
   return book.content.slice(start, end);
 }
 
@@ -4009,8 +4042,18 @@ async function sendReadingChat() {
   box.scrollTop = box.scrollHeight;
 
   const book = readingBooks.find(b => b.id === readingActiveBookId);
-  const snippet = getReadingContextSnippet();
-  const systemPrompt = `你正在和用户一起读一本书，书名是《${book ? book.name : ""}》。以下是用户目前阅读位置附近的原文片段，供你参考语境（不要逐字复述这段原文，只用来理解剧情）：\n\n"""${snippet}"""\n\n请像一起读书的朋友一样，自然地聊聊剧情、人物、感受，简洁真诚，不要写成书评腔。`;
+  const isFirstMessage = readingChatHistory.length === 0;
+
+  // 只在这次会话的第一条消息里带一小段原文帮AI定位剧情；
+  // 已经有共读记忆的话优先用记忆（更省token，且是提炼过的重点，不是大段原文）
+  let contextPart = "";
+  if (readingMemoryBlock) {
+    contextPart = readingMemoryBlock;
+  } else if (isFirstMessage) {
+    const snippet = getReadingContextSnippet();
+    contextPart = `以下是用户目前阅读位置附近的原文片段，供你参考语境（不要逐字复述，只用来理解剧情）：\n\n"""${snippet}"""`;
+  }
+  const systemPrompt = `你正在和用户一起读一本书，书名是《${book ? book.name : ""}》。${contextPart}\n\n请像一起读书的朋友一样，自然地聊聊剧情、人物、感受，简洁真诚，不要写成书评腔。`;
 
   readingChatHistory.push({ role: "user", content: text });
 
@@ -4033,11 +4076,68 @@ async function sendReadingChat() {
     const reply = result.text || "";
     bubble.innerHTML = renderBubbleContent(reply);
     readingChatHistory.push({ role: "assistant", content: reply });
+
+    // 每条回复旁边加一个小按钮，想手动存进共读记忆随时可以点
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "reading-chat-save-btn";
+    saveBtn.title = "存进共读记忆";
+    saveBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>`;
+    saveBtn.onclick = () => manualSaveReadingReply(reply);
+    aiRow.appendChild(saveBtn);
+    readingChatTurnsSinceLastSave++;
+    // 每聊够几轮就自动存一次记忆，不用等到关闭才存，防止中途退出App漏掉
+    if (readingChatTurnsSinceLastSave >= 4) {
+      autoSaveReadingMemoryIfNeeded();
+    }
   } catch (err) {
     console.error("共读聊天失败:", err);
     bubble.innerText = "（没能回复，稍后再试试）";
   }
   box.scrollTop = box.scrollHeight;
+}
+
+// 把最近聊的内容自动提炼成一条"共读记录"存进记忆，不需要用户手动操作
+async function autoSaveReadingMemoryIfNeeded() {
+  if (!readingChatHistory.length || readingChatTurnsSinceLastSave === 0) return;
+  if (!window.Memory) return;
+
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || $("#modelSelect").value;
+  if (!apiKey || !provider || !model) return; // 没配置好就不勉强总结
+
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  const recentTurns = readingChatHistory.slice(-8); // 只总结最近几轮，避免越总结越贵
+  const summaryPrompt = `请把下面这段关于共读一本书的对话总结成一句话（60字以内），提炼出讨论的重点、感想或进度，不要写"用户说""AI说"这种格式：\n${recentTurns.map(m => `${m.role}: ${m.content}`).join("\n")}`;
+
+  try {
+    const controller = new AbortController();
+    let result;
+    if (provider.apiStyle === "anthropic") {
+      result = await streamAnthropic({ provider, apiKey, model, temp: 0.3, systemPrompt: "", messages: [{ role: "user", content: summaryPrompt }], controller, onDelta: () => {} });
+    } else {
+      result = await streamOpenAICompatible({ provider, apiKey, model, temp: 0.3, systemPrompt: "", messages: [{ role: "user", content: summaryPrompt }], controller, onDelta: () => {} });
+    }
+    const summary = (result.text || "").trim();
+    if (summary) {
+      await window.Memory.addReading(summary, book ? book.name : "");
+      readingMemoryBlock = await window.Memory.asReadingPromptBlock(); // 更新缓存，让接下来的聊天能接上
+    }
+  } catch (e) {
+    console.warn("共读记忆自动总结失败:", e);
+  } finally {
+    readingChatTurnsSinceLastSave = 0;
+  }
+}
+
+// 手动把当前 AI 的某句回复存进共读记忆
+async function manualSaveReadingReply(content) {
+  if (!window.Memory) return;
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  await window.Memory.addReading(content, book ? book.name : "");
+  readingMemoryBlock = await window.Memory.asReadingPromptBlock();
+  showToast("已存进共读记忆");
 }
 
 
