@@ -2380,16 +2380,11 @@ async function runHealthCheck(opts = {}) {
     clearTimeout(timeout);
     consecutiveHealthFails++;
     console.warn("模型健康探测失败:", err);
-    if (consecutiveHealthFails >= 2) {
-      setHealthDot("bad");
-      if (lastHealthState !== "bad" && !opts.silent) {
-        showToast(`⚠️ ${provider.name} · ${model} 现在好像连不上`);
-      }
-      lastHealthState = "bad";
-    } else {
-      setHealthDot("warn");
-      lastHealthState = "warn";
+    setHealthDot("bad");
+    if (lastHealthState !== "bad" && !opts.silent) {
+      showToast(`⚠️ ${provider.name} · ${model} 现在好像连不上`);
     }
+    lastHealthState = "bad";
   } finally {
     healthChecking = false;
   }
@@ -2694,12 +2689,16 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
   const decoder = new TextDecoder("utf-8");
   let fullReply = "";
   let buffer = "";
+  let rawBytesReceived = false;
+  let parseFailCount = 0;
+  let lastParseError = null;
   // 累积 tool_calls（按 index 聚合，流式 delta 会分片到达）
   const toolCallAcc = {};
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    if (value && value.length) rawBytesReceived = true;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop();
@@ -2709,6 +2708,10 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
       if (jsonStr === "[DONE]") continue;
       try {
         const chunkJson = JSON.parse(jsonStr);
+        // 有些中转服务会把错误信息也用 200 状态码 + SSE 格式包起来返回，而不是走 HTTP 错误状态码
+        if (chunkJson.error) {
+          throw new Error(chunkJson.error.message || JSON.stringify(chunkJson.error));
+        }
         const delta = chunkJson.choices?.[0]?.delta;
         if (!delta) continue;
         if (delta.content) {
@@ -2725,12 +2728,27 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
             if (tc.function?.arguments) toolCallAcc[idx].function.arguments += tc.function.arguments;
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        // 中转服务返回的内容格式不对（不是标准 OpenAI SSE 格式）时，记下来但不中断整个流的读取，
+        // 读完之后如果发现完全没拿到有效回复，再统一报错，而不是每一行都直接崩掉
+        parseFailCount++;
+        lastParseError = e;
+      }
     }
   }
   const toolCalls = Object.keys(toolCallAcc).length
     ? Object.values(toolCallAcc).filter(tc => tc.function.name)
     : null;
+
+  // 关键修复：以前这里即使一个字都没解析出来，也会正常返回空字符串，
+  // 导致界面上"发出去之后完全没反应"——现在明确抛错，让用户能看到"请求失败"的提示
+  if (!fullReply && !toolCalls && rawBytesReceived && parseFailCount > 0) {
+    throw new Error(`服务商返回的内容无法解析（可能是中转站不兼容当前请求格式，比如图片/文档附件）：${lastParseError?.message || "未知错误"}`);
+  }
+  if (!fullReply && !toolCalls && !rawBytesReceived) {
+    throw new Error("服务商没有返回任何内容，请检查服务商地址、密钥或模型名称是否正确。");
+  }
+
   return { text: fullReply, toolCalls };
 }
 
@@ -2772,6 +2790,9 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   const decoder = new TextDecoder("utf-8");
   let fullReply = "";
   let buffer = "";
+  let rawBytesReceived = false;
+  let parseFailCount = 0;
+  let lastParseError = null;
   // 当前 content block 的累积
   let currentBlock = null; // { type, text, toolUse: {id, name, input} }
   const toolUses = [];
@@ -2779,6 +2800,7 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    if (value && value.length) rawBytesReceived = true;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop();
@@ -2788,6 +2810,10 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
       if (!jsonStr) continue;
       try {
         const evt = JSON.parse(jsonStr);
+        // 有些中转服务会把错误信息也用 200 状态码 + SSE 格式包起来返回，而不是走 HTTP 错误状态码
+        if (evt.type === "error") {
+          throw new Error(evt.error?.message || JSON.stringify(evt.error || evt));
+        }
         if (evt.type === "content_block_start" && evt.index != null) {
           const block = evt.content_block;
           currentBlock = { type: block.type, text: "", toolUse: block.type === "tool_use" ? { id: block.id, name: block.name, input: "" } : null };
@@ -2809,7 +2835,12 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
           }
           currentBlock = null;
         }
-      } catch (e) {}
+      } catch (e) {
+        // 内容格式不对时记下来，读完整个流之后再统一判断要不要报错，
+        // 不要一行解析失败就直接吞掉，否则界面会看起来"发送了但毫无反应"
+        parseFailCount++;
+        lastParseError = e;
+      }
     }
   }
   // 转换成统一的 toolCalls 格式（兼容 OpenAI 风格的处理逻辑）
@@ -2817,6 +2848,16 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
     id: tu.id,
     function: { name: tu.name, arguments: JSON.stringify(tu.input) }
   })) : null;
+
+  // 关键修复：以前这里即使一个字都没解析出来，也会正常返回空字符串，
+  // 导致界面上"发出去之后完全没反应"——现在明确抛错，让用户能看到"请求失败"的提示
+  if (!fullReply && !toolCalls && rawBytesReceived && parseFailCount > 0) {
+    throw new Error(`服务商返回的内容无法解析（可能是中转站不兼容当前请求格式，比如图片/文档附件）：${lastParseError?.message || "未知错误"}`);
+  }
+  if (!fullReply && !toolCalls && !rawBytesReceived) {
+    throw new Error("服务商没有返回任何内容，请检查服务商地址、密钥或模型名称是否正确。");
+  }
+
   return { text: fullReply, toolCalls };
 }
 
