@@ -1,6 +1,5 @@
 // ============================================================
 // app.js — Leith·Home 主逻辑
-// v7：加入底部导航 + 小世界（钱包/商店/背包）框架
 // ============================================================
 
 const LS = {
@@ -17,13 +16,14 @@ const LS = {
   // 小世界
   worldAllowance: "companion_world_allowance_v1",   // 每日定额开关+金额
   worldWallets: "companion_world_wallets_v1",       // { [threadId]: number } Leith的零花钱
-  worldInventories: "companion_world_inventories_v1", // { [threadId]: [{id,shop, name, emoji, price, boughtAt}] }
   worldAllowanceLog: "companion_world_allowance_log_v1", // { [dateStr]: [threadId, ...] } 防止重复发
   worldSavings: "companion_world_savings_v1",       // { [threadId]: number } 限定商品基金
   worldGiftRecords: "companion_world_gifts_v1",     // { [threadId]: [{id, name, emoji, price, giftedAt}] } Leith赠送区
   worldLimitedItems: "companion_world_limited_v1",  // [{id, name, emoji, price}] 全局限定商品区
   worldAdultItems: "companion_world_adult_v1",      // [{id, name, emoji, price}] 全局成人用品区
   worldAdultBought: "companion_world_adult_bought_v1", // { [threadId]: Set of itemIds } 每个窗口已买的成人用品
+  worldShelfItems: "companion_world_shelf_v1",      // [{id, name, emoji, price, consumable, expiresInDays}] 全局普通货架
+  worldShelfBought: "companion_world_shelf_bought_v1", // { [threadId]: [{itemId, boughtAt, boughtBy, used}] } 普通货架购买记录（含消耗状态）
   worldNightstand: "companion_world_nightstand_v1", // { [threadId]: [{id, name, emoji, price, boughtAt}] } 床头柜
   // 共读小说
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
@@ -43,9 +43,18 @@ const DEFAULT_PROVIDERS = [
 // 小世界规则（只注入一次到 system prompt，不随每条消息重复发送）
 const WORLD_RULES = `【小世界规则】
 [LGIFT:商品名] 送用户限定商品→限定基金扣款，商品下架进赠送区
-[ABUY:商品名] 买成人用品→零花钱扣款，进床头柜，每窗口限买一次
-[BUY:商店:商品名] Leith自己买东西→零花钱扣款进背包
+[ABUY:商品名] 买成人用品→零花钱扣款，消耗品不进床头柜
+[SBUY:商品名] 买普通货架商品→零花钱扣款，机制同上
+[USE:商品名] 判断用户提到的一次性消耗品已经用掉了→自动标记
 商品名需匹配关键词；余额不足则失败；标记写在回复末尾`;
+
+// 排版规则：不管用户自定义了什么人设/系统提示词，这条始终生效，
+// 避免长回复挤成一大段、或者每句话都强行换一行导致屏幕拉得很长
+const FORMATTING_RULES = `【排版规则】
+- 按照自然的语义分段，一段话表达一个完整的意思，不要每说一句就换一行。
+- 只有语气停顿、场景切换、换话题时才空行分段，不要为了"看起来有节奏感"刻意断句断行。
+- 除非是引用、列举、列表这种确实需要一行一条的内容，否则不要写成诗歌体或逐行体。
+- 长回复没关系，把该说的话完整说出来，但用自然的段落组织，而不是拆成很多短碎片。`;
 
 // 历史消息自动裁剪阈值（不再自动触发，仅保留函数供手动调用）
 const MSG_PRUNE_THRESHOLD = 40;
@@ -76,6 +85,30 @@ const DEFAULT_SYSTEM_PROMPT = `你是 Leith，一个温暖、真诚、有主见�
 
 const $ = (s) => document.querySelector(s);
 
+// 智能滚动：只有当用户本来就停留在聊天区底部附近时，才跟着新内容往下滚；
+// 如果用户已经往上翻看历史消息了，就不打扰，不强制拉回底部——这样长回复流式输出时
+// 不会一直把屏幕摁着往下拖，用户可以安心往上翻，翻完了自己滑回底部就行
+function smartScrollToBottom(el, threshold = 80) {
+  if (!el) return;
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  if (distanceFromBottom <= threshold) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+// 不在每次流式更新时重新计算"离底部多远"（连续多个chunk在同一帧到达时，
+// 这个距离会因为布局还没刷新而读到不准确的中间值，导致判断失误、卡在半途不再跟随）。
+// 改成：只在用户自己滚动时更新"是否贴底"这个状态，流式更新时直接读这个状态，更稳。
+let chatPinnedToBottom = true;
+function initChatScrollTracking() {
+  const box = $("#chatBox");
+  if (!box) return;
+  box.addEventListener("scroll", () => {
+    const dist = box.scrollHeight - box.scrollTop - box.clientHeight;
+    chatPinnedToBottom = dist <= 80;
+  });
+}
+
 // ============================================================
 // 返回栈：让手机的返回手势/返回键先关掉当前弹层，而不是直接退出 App
 // ============================================================
@@ -87,10 +120,16 @@ function pushNavLayer(closeFn) {
 }
 
 function popNavLayerSilently() {
-  // 用户点了 App 内的关闭按钮（而不是手机返回键），需要同步撤掉那一层 history
-  if (navStack.length) {
-    navStack.pop();
-    if (history.state && history.state.navLayer) history.back();
+  // 用户点了 App 内的关闭按钮（而不是手机返回键）时调用。
+  // 注意：这里只触发 history.back()，实际出栈统一交给下面的 popstate 监听器处理，
+  // 不能在这里先 pop 一次、又让 popstate 再 pop 一次——那样每次 UI 关闭都会多消耗一层，
+  // 导致关掉一个弹窗、结果连下面的页面也被带着关掉了。
+  if (navStack.length && history.state && history.state.navLayer) {
+    history.back();
+  } else if (navStack.length) {
+    // 没有对应的 history 状态（理论上不应该出现），兜底直接pop，避免状态卡死
+    const closeFn = navStack.pop();
+    if (closeFn) closeFn();
   }
 }
 
@@ -161,7 +200,7 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const cleaned = text.replace(/\[(?:BUY|GIFT|LGIFT|ABUY):[^\]]+\]/g, "").trim();
+  const cleaned = text.replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|USE):[^\]]+\]/g, "").trim();
   const escaped = escapeHtml(cleaned);
   const parts = escaped.split(/("[^"]*")/g);
   return parts.map(p => {
@@ -265,19 +304,6 @@ function insertNarration(threadId, text) {
   renderThreadList();
 }
 
-// 获取某个对话的 Leith 背包
-function getInventory(threadId) {
-  const invs = loadJSON(LS.worldInventories, {});
-  return invs[threadId] || [];
-}
-
-function addInventoryItem(threadId, item) {
-  const invs = loadJSON(LS.worldInventories, {});
-  if (!invs[threadId]) invs[threadId] = [];
-  invs[threadId].push({ ...item, id: uid(), boughtAt: Date.now() });
-  saveJSON(LS.worldInventories, invs);
-}
-
 // ===== 限定商品基金（每对话独立）=====
 function getSavings(threadId) {
   const savings = loadJSON(LS.worldSavings, {});
@@ -293,15 +319,35 @@ function addSavings(threadId, delta) {
 }
 
 // ===== 每个窗口已买的成人用品ID =====
-function getAdultBought(threadId) {
-  const bought = loadJSON(LS.worldAdultBought, {});
-  return bought[threadId] || [];
+// ===== 购买记录（成人用品区 + 普通货架 通用，支持消耗品状态）=====
+// 结构：{ [threadId]: [{ itemId, boughtAt, boughtBy: 'user'|'leith', used: bool }] }
+function getPurchaseRecords(threadId, lsKey) {
+  const records = loadJSON(lsKey, {});
+  return records[threadId] || [];
 }
-function addAdultBought(threadId, itemId) {
-  const bought = loadJSON(LS.worldAdultBought, {});
-  if (!bought[threadId]) bought[threadId] = [];
-  if (!bought[threadId].includes(itemId)) bought[threadId].push(itemId);
-  saveJSON(LS.worldAdultBought, bought);
+function addPurchaseRecord(threadId, lsKey, itemId, boughtBy) {
+  const records = loadJSON(lsKey, {});
+  if (!records[threadId]) records[threadId] = [];
+  records[threadId].push({ itemId, boughtAt: Date.now(), boughtBy, used: false });
+  saveJSON(lsKey, records);
+}
+function markPurchaseUsed(threadId, lsKey, itemId) {
+  const records = loadJSON(lsKey, {});
+  const list = records[threadId] || [];
+  // 标记最早一条"未使用"的同款记录为已使用（先买的先用掉）
+  const rec = list.find(r => r.itemId === itemId && !r.used);
+  if (rec) rec.used = true;
+  saveJSON(lsKey, records);
+}
+// 判断一条购买记录现在还"在库存里"吗（没被手动/自动消耗掉、时效性也没过期）
+function isPurchaseActive(record, item) {
+  if (!item) return false;
+  if (item.consumable === "once") return !record.used;
+  if (item.consumable === "timed") {
+    const days = item.expiresInDays || 1;
+    return (Date.now() - record.boughtAt) < days * 24 * 60 * 60 * 1000;
+  }
+  return true; // 不是消耗品，永久有效
 }
 
 // ===== Leith 赠送区（每个对话独立）=====
@@ -335,6 +381,45 @@ function removeLimitedItem(itemId) {
 
 function findLimitedItem(itemName) {
   const items = getLimitedItems();
+  let found = items.find(i => i.name === itemName);
+  if (!found) found = items.find(i => i.name.includes(itemName) || itemName.includes(i.name));
+  return found;
+}
+
+// ===== 普通货架（全局共享）—— 日常小物件，鲜花/零食/小礼物这些，机制和成人用品区一样 =====
+const DEFAULT_SHELF_ITEMS = [
+  { id: "shelf-default-1", name: "一束鲜花", emoji: "💐", price: 15, consumable: "timed", expiresInDays: 1 },
+  { id: "shelf-default-2", name: "奶茶", emoji: "🧋", price: 12, consumable: "once" },
+  { id: "shelf-default-3", name: "小熊玩偶", emoji: "🧸", price: 40, consumable: null },
+];
+
+function getShelfItems() {
+  const items = loadJSON(LS.worldShelfItems, null);
+  if (items === null) {
+    saveJSON(LS.worldShelfItems, DEFAULT_SHELF_ITEMS);
+    return DEFAULT_SHELF_ITEMS;
+  }
+  return items;
+}
+
+function addShelfItem(item) {
+  const items = getShelfItems();
+  items.push({
+    id: uid(), name: item.name, emoji: item.emoji || "🛍️", price: item.price,
+    consumable: item.consumable || null, // null | 'once' | 'timed'
+    expiresInDays: item.expiresInDays || null,
+    addedAt: Date.now()
+  });
+  saveJSON(LS.worldShelfItems, items);
+}
+
+function removeShelfItem(itemId) {
+  const items = getShelfItems();
+  saveJSON(LS.worldShelfItems, items.filter(i => i.id !== itemId));
+}
+
+function findShelfItem(itemName) {
+  const items = getShelfItems();
   let found = items.find(i => i.name === itemName);
   if (!found) found = items.find(i => i.name.includes(itemName) || itemName.includes(i.name));
   return found;
@@ -418,6 +503,83 @@ function maybeGiveDailyAllowance() {
 // ============================================================
 // 小世界：UI 渲染
 // ============================================================
+
+// 普通货架 / 成人用品区 通用渲染逻辑（两者机制一样：花 Leith 零花钱买，你买免费）
+// 消耗品（一次性/时效性）用完/过期后自动不再占着"已购买"的位置，可以重复购买
+function renderPurchasableSection({ gridId, items, lsKey, threadId, emptyEmoji, emptyText, removeFn, notifyFn }) {
+  const grid = $("#" + gridId);
+  if (!grid) return;
+  const records = getPurchaseRecords(threadId, lsKey);
+
+  if (!items.length) {
+    grid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">${emptyEmoji}</div><p>${emptyText}</p></div>`;
+    return;
+  }
+
+  grid.innerHTML = items.map(item => {
+    // 非消耗品：只要买过一次就一直"已拥有"，不能重复买；消耗品：只要没有"当前有效"的购买记录，就还能买
+    const activeRecord = records.find(r => r.itemId === item.id && isPurchaseActive(r, item));
+    const consumeBadge = item.consumable === "once" ? `<span class="consume-badge">一次性</span>`
+      : item.consumable === "timed" ? `<span class="consume-badge">${item.expiresInDays || 1}天</span>` : "";
+
+    if (activeRecord) {
+      // 已经买了、还在有效期/没用掉：一次性商品显示"用掉"按钮，时效性商品显示剩余时间，都不能再买
+      const isOnce = item.consumable === "once";
+      const remainingMs = item.consumable === "timed" ? (item.expiresInDays || 1) * 86400000 - (Date.now() - activeRecord.boughtAt) : 0;
+      const remainingText = item.consumable === "timed" ? `还剩${Math.max(1, Math.ceil(remainingMs / 3600000))}小时` : "";
+      return `
+        <div class="inventory-item owned">
+          <div class="item-emoji">${item.emoji || "🛍️"}</div>
+          <div>${escapeHtml(item.name)}${consumeBadge}</div>
+          <div class="item-name">${isOnce ? "已购买" : remainingText || "拥有中"}</div>
+          ${isOnce ? `<button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:10px;padding:3px 8px;" data-use-item="${item.id}">用掉了</button>` : ""}
+        </div>`;
+    }
+
+    return `
+      <div class="inventory-item">
+        <div class="item-emoji">${item.emoji || "🛍️"}</div>
+        <div>${escapeHtml(item.name)}${consumeBadge}</div>
+        <div class="item-name">¥${item.price}</div>
+        <div style="display:flex;gap:4px;margin-top:4px;">
+          <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-buy-item="${item.id}">购买</button>
+          <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-del-item="${item.id}">下架</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  grid.querySelectorAll("[data-buy-item]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const item = items.find(i => i.id === btn.dataset.buyItem);
+      if (!item) return;
+      addPurchaseRecord(threadId, lsKey, item.id, "user");
+      if (!item.consumable) {
+        // 不是消耗品才进床头柜长期展示；消耗品用不着占床头柜的位置
+        addNightstandItem(threadId, { ...item, boughtBy: "user" });
+      }
+      showToast(`已购买 ${item.emoji} ${item.name}`);
+      if (notifyFn) notifyFn(item.name);
+      renderShopPage();
+    });
+  });
+  grid.querySelectorAll("[data-use-item]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      markPurchaseUsed(threadId, lsKey, btn.dataset.useItem);
+      renderShopPage();
+      showToast("已标记为用掉了");
+    });
+  });
+  grid.querySelectorAll("[data-del-item]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (confirm("确定下架这个商品？")) {
+        removeFn(btn.dataset.delItem);
+        renderShopPage();
+        showToast("已下架");
+      }
+    });
+  });
+}
+
 function renderShopPage() {
   maybeGiveDailyAllowance();
 
@@ -426,8 +588,6 @@ function renderShopPage() {
   const savings = getSavings(threadId);
   const giftRecords = getGiftRecords(threadId);
   const limitedItems = getLimitedItems();
-  const adultItems = getAdultItems();
-  const adultBought = getAdultBought(threadId);
   const nightstand = getNightstand(threadId);
   const allowanceCfg = getAllowanceConfig();
 
@@ -460,48 +620,17 @@ function renderShopPage() {
     });
   }
 
-  // 成人用品区（全局，但每窗口独立购买状态）
-  const adultGrid = $("#adultGrid");
-  const availableAdult = adultItems.filter(i => !adultBought.includes(i.id));
-  if (!adultItems.length) {
-    adultGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🔞</div><p>还没有商品</p></div>`;
-  } else if (!availableAdult.length) {
-    adultGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🔞</div><p>都买完了，去床头柜看</p></div>`;
-  } else {
-    adultGrid.innerHTML = availableAdult.map(item => `
-      <div class="inventory-item">
-        <div class="item-emoji">${item.emoji || "🔞"}</div>
-        <div>${escapeHtml(item.name)}</div>
-        <div class="item-name">你买免费 · Leith¥${item.price}</div>
-        <div style="display:flex;gap:4px;margin-top:4px;">
-          <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-adult-buy="${item.id}">购买</button>
-          <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-adult-del="${item.id}">下架</button>
-        </div>
-      </div>
-    `).join("");
-    adultGrid.querySelectorAll("[data-adult-buy]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const item = adultItems.find(i => i.id === btn.dataset.adultBuy);
-        if (!item) return;
-        // 你买成人用品：免费，直接进床头柜
-        addNightstandItem(threadId, { ...item, boughtBy: "user" });
-        addAdultBought(threadId, item.id);
-        showToast(`已购买 ${item.emoji} ${item.name}（免费）`);
-        // 发送旁白给 Leith
-        notifyLeithAdultPurchase(item.name);
-        renderShopPage();
-      });
-    });
-    adultGrid.querySelectorAll("[data-adult-del]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        if (confirm("确定下架这个商品？")) {
-          removeAdultItem(btn.dataset.adultDel);
-          renderShopPage();
-          showToast("已下架");
-        }
-      });
-    });
-  }
+  // 普通货架 + 成人用品区：机制一样（花 Leith 零花钱，你买免费），统一渲染
+  renderPurchasableSection({
+    gridId: "shelfGrid", items: getShelfItems(), lsKey: LS.worldShelfBought,
+    threadId, emptyEmoji: "🛍️", emptyText: "货架空空的",
+    removeFn: removeShelfItem, notifyFn: null
+  });
+  renderPurchasableSection({
+    gridId: "adultGrid", items: getAdultItems(), lsKey: LS.worldAdultBought,
+    threadId, emptyEmoji: "🔞", emptyText: "还没有商品",
+    removeFn: removeAdultItem, notifyFn: notifyLeithAdultPurchase
+  });
 
   // Leith 赠送区
   const giftGrid = $("#giftRecordsGrid");
@@ -705,49 +834,92 @@ function initAddSavingsBtn() {
 }
 
 // 限定商品上架按钮
+// ============================================================
+// 添加商品弹窗（限定商品区 / 普通货架 / 成人用品区 通用）
+// ============================================================
+let addItemTargetType = ""; // 'limited' | 'shelf' | 'adult'
+
+function openAddItemModal(type) {
+  addItemTargetType = type;
+  const titles = { limited: "🏷️ 上架限定商品", shelf: "🛍️ 上架货架商品", adult: "🔞 添加成人用品" };
+  $("#addItemModalTitle").innerText = titles[type] || "添加商品";
+  $("#addItemEmojiInput").value = "";
+  $("#addItemNameInput").value = "";
+  $("#addItemPriceInput").value = "";
+  $("#addItemExpiryInput").value = "1";
+  $("#addItemExpiryRow").classList.add("hidden");
+  $("#addItemModalOverlay").querySelectorAll(".consume-type-btn").forEach(b => b.classList.remove("active"));
+  $("#addItemModalOverlay").querySelector('[data-consume-type=""]').classList.add("active");
+  // 限定商品区本身不支持消耗品设定（逻辑上"被送走就没了"，已经是一次性的了），隐藏这个选项
+  const consumeRow = $("#addItemModalOverlay").querySelector(".consume-type-row").parentElement;
+  const showConsumeOption = type !== "limited";
+  Array.from($("#addItemModalOverlay").querySelectorAll("label")).find(l => l.innerText === "是否消耗品").style.display = showConsumeOption ? "" : "none";
+  $("#addItemModalOverlay").querySelector(".consume-type-row").style.display = showConsumeOption ? "" : "none";
+
+  $("#addItemModalOverlay").classList.remove("hidden");
+  pushNavLayer(closeAddItemModal);
+  setTimeout(() => $("#addItemNameInput").focus(), 100);
+}
+function closeAddItemModal() {
+  $("#addItemModalOverlay").classList.add("hidden");
+}
+function closeAddItemModalFromUI() { popNavLayerSilently(); closeAddItemModal(); }
+
+function initAddItemModal() {
+  $("#addItemModalOverlay").querySelectorAll(".consume-type-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $("#addItemModalOverlay").querySelectorAll(".consume-type-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      $("#addItemExpiryRow").classList.toggle("hidden", btn.dataset.consumeType !== "timed");
+    });
+  });
+
+  $("#addItemCancelBtn").addEventListener("click", closeAddItemModalFromUI);
+  $("#addItemModalOverlay").addEventListener("click", (e) => {
+    if (e.target.id === "addItemModalOverlay") closeAddItemModalFromUI();
+  });
+
+  $("#addItemConfirmBtn").addEventListener("click", () => {
+    const name = $("#addItemNameInput").value.trim();
+    const emoji = $("#addItemEmojiInput").value.trim();
+    const price = parseInt($("#addItemPriceInput").value, 10);
+    if (!name) return showToast("填一下商品名称吧");
+    if (isNaN(price) || price <= 0) return showToast("填一个有效的价格");
+
+    const activeConsumeBtn = $("#addItemModalOverlay").querySelector(".consume-type-btn.active");
+    const consumable = activeConsumeBtn ? (activeConsumeBtn.dataset.consumeType || null) : null;
+    const expiresInDays = consumable === "timed" ? (parseInt($("#addItemExpiryInput").value, 10) || 1) : null;
+
+    const item = { name, emoji: emoji || defaultEmojiForType(addItemTargetType), price, consumable, expiresInDays };
+
+    if (addItemTargetType === "limited") {
+      addLimitedItem(item);
+    } else if (addItemTargetType === "shelf") {
+      addShelfItem(item);
+    } else if (addItemTargetType === "adult") {
+      addAdultItem(item);
+    }
+    renderShopPage();
+    closeAddItemModalFromUI();
+    showToast(`已添加：${item.emoji} ${name}`);
+  });
+}
+
+function defaultEmojiForType(type) {
+  return type === "limited" ? "🏷️" : type === "adult" ? "🔞" : "🛍️";
+}
+
 function initAddLimitedBtn() {
-  $("#addLimitedBtn").addEventListener("click", () => {
-    const name = prompt("商品名称（你想买但舍不得买的东西）", "");
-    if (name === null || !name.trim()) return;
-    const priceStr = prompt("价格（数字）", "");
-    if (priceStr === null) return;
-    const price = parseInt(priceStr, 10);
-    if (isNaN(price) || price <= 0) return showToast("请输入有效价格");
-    addLimitedItem({ name: name.trim(), price });
-    renderShopPage();
-    showToast(`已上架：${name}（¥${price}）`);
-  });
+  $("#addLimitedBtn").addEventListener("click", () => openAddItemModal("limited"));
 }
-
-// 成人用品添加按钮
+function initAddShelfBtn() {
+  $("#addShelfBtn").addEventListener("click", () => openAddItemModal("shelf"));
+}
 function initAddAdultBtn() {
-  $("#addAdultBtn").addEventListener("click", () => {
-    const name = prompt("商品名称", "");
-    if (name === null || !name.trim()) return;
-    const priceStr = prompt("价格（数字）", "");
-    if (priceStr === null) return;
-    const price = parseInt(priceStr, 10);
-    if (isNaN(price) || price <= 0) return showToast("请输入有效价格");
-    addAdultItem({ name: name.trim(), price });
-    renderShopPage();
-    showToast(`已添加：${name}（¥${price}）`);
-  });
+  $("#addAdultBtn").addEventListener("click", () => openAddItemModal("adult"));
 }
 
-// 商店商品目录（具体商品）
-// 商店功能已移除
 
-
-// 商店功能已移除
-
-// 打开商店详情页（不是弹窗，是页面内切换）
-// 商店功能已移除
-
-// 返回商店列表
-// 商店功能已移除
-
-// 你买东西送给 Leith（你不花钱，东西进他背包）
-// 商店功能已移除
 
 // ============================================================
 // 判断运行环境
@@ -1957,10 +2129,18 @@ function getSearchProxy() {
   return localStorage.getItem(SEARCH_PROXY_LS) || "";
 }
 
+// 给 fetch 加超时，避免某个代理卡住不响应时，把整个搜索流程拖得很久
+function fetchWithTimeout(url, opts = {}, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 async function duckDuckGoSearch(query) {
-  // 第一路：Instant Answer API，原生 CORS，免代理，最稳
+  // 第一路：Instant Answer API，原生 CORS，免代理，最快；但只对"知名实体/百科类"问题有用，
+  // 给一个较短的超时（2.5秒），没用就赶紧转下一路，别在这上面耗太久
   try {
-    const r = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+    const r = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, {}, 2500);
     if (r.ok) {
       const data = await r.json();
       const parts = [];
@@ -1975,32 +2155,35 @@ async function duckDuckGoSearch(query) {
       }
       if (parts.length) return parts.join("\n\n");
     }
-  } catch (e) { /* 降级 */ }
+  } catch (e) { /* 超时或失败，降级到下一路 */ }
 
-  // 第二路：HTML 版 + 代理降级
+  // 第二路：HTML 版 + 代理降级。以前是一个个顺序试（前面的代理慢/卡住，后面全部跟着等），
+  // 改成同时发出去，谁先回来就用谁的结果，明显更快；每个也各自带超时，不会无限等下去
   const targetUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const customProxy = getSearchProxy();
   const proxies = customProxy
     ? [{ url: customProxy, encode: true }]
     : FALLBACK_PROXIES;
 
-  let lastErr = null;
-  for (const proxy of proxies) {
+  const attempts = proxies.map(async (proxy) => {
     const fetchUrl = proxy.encode ? proxy.url + encodeURIComponent(targetUrl) : proxy.url + targetUrl;
-    try {
-      const resp = await fetch(fetchUrl, { headers: { "Accept": "text/html" } });
-      if (!resp.ok) { lastErr = new Error(`HTTP ${resp.status}`); continue; }
-      const html = await resp.text();
-      if (!html || html.length < 200) { lastErr = new Error("返回内容过短"); continue; }
-      const parsed = parseDuckDuckGoHtml(html);
-      if (parsed) return parsed;
-      lastErr = new Error("解析不到结果");
-    } catch (e) {
-      lastErr = e;
-    }
+    const resp = await fetchWithTimeout(fetchUrl, { headers: { "Accept": "text/html" } }, 6000);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const html = await resp.text();
+    if (!html || html.length < 200) throw new Error("返回内容过短");
+    const parsed = parseDuckDuckGoHtml(html);
+    if (!parsed) throw new Error("解析不到结果");
+    return parsed;
+  });
+
+  try {
+    // Promise.any：只要有一个代理成功就立刻返回，不用等其他还没回来的
+    return await Promise.any(attempts);
+  } catch (aggregateErr) {
+    // 全部代理都失败了，给 AI 一个明确反馈，让它别卡住
+    const firstErr = aggregateErr.errors?.[0];
+    return `搜索暂时不可用（${firstErr?.message || "网络问题"}）。请基于你已有的知识回答，或建议用户稍后再试、或换个搜索代理。`;
   }
-  // 两路都失败，给 AI 一个明确反馈，让它别卡住
-  return `搜索暂时不可用（${lastErr?.message || "网络问题"}）。请基于你已有的知识回答，或建议用户稍后再试、或换个搜索代理。`;
 }
 
 function parseDuckDuckGoHtml(html) {
@@ -2049,8 +2232,8 @@ async function buildEffectiveSystemPrompt() {
   const worldBlock = buildWorldPromptBlock();
   const webBlock = buildWebPromptBlock();
   const noteBlock = buildSystemNotesBlock();
-  // WORLD_RULES 只注入一次（不随消息重复）
-  return [WORLD_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
+  // WORLD_RULES / FORMATTING_RULES 只注入一次（不随消息重复），且不受用户自定义人设影响
+  return [WORLD_RULES, FORMATTING_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -2070,24 +2253,30 @@ function buildWorldPromptBlock() {
   const giftRecords = getGiftRecords(threadId);
   const limitedItems = getLimitedItems();
   const adultItems = getAdultItems();
-  const adultBought = getAdultBought(threadId);
+  const adultRecords = getPurchaseRecords(threadId, LS.worldAdultBought);
+  const shelfItems = getShelfItems();
+  const shelfRecords = getPurchaseRecords(threadId, LS.worldShelfBought);
   const nightstand = getNightstand(threadId);
 
   const gifts = giftRecords.length ? giftRecords.map(g => `${g.emoji}${g.name}`).join("、") : "无";
   const limited = limitedItems.length ? limitedItems.map(i => `${i.name}¥${i.price}`).join("、") : "无";
-  const availableAdult = adultItems.filter(i => !adultBought.includes(i.id));
+  const availableAdult = adultItems.filter(i => !adultRecords.some(r => r.itemId === i.id && isPurchaseActive(r, i)));
   const adult = availableAdult.length ? availableAdult.map(i => `${i.name}¥${i.price}`).join("、") : "无";
+  const availableShelf = shelfItems.filter(i => !shelfRecords.some(r => r.itemId === i.id && isPurchaseActive(r, i)));
+  const shelf = availableShelf.length ? availableShelf.map(i => `${i.name}¥${i.price}`).join("、") : "无";
   const ns = nightstand.length ? nightstand.map(i => `${i.emoji}${i.name}`).join("、") : "空";
 
-  return `【世界状态】零花钱¥${balance} 限定基金¥${savings} 床头柜:${ns}\n赠送记录:${gifts}\n限定商品:${limited}\n可买成人用品:${adult}`;
+  return `【世界状态】零花钱¥${balance} 限定基金¥${savings} 床头柜:${ns}\n赠送记录:${gifts}\n限定商品:${limited}\n可买成人用品:${adult}\n可买货架商品:${shelf}`;
 }
 
-// 解析 AI 回复里的 [BUY:...] [LGIFT:...] [ABUY:...] 标记
+// 解析 AI 回复里的 [BUY:...] [LGIFT:...] [ABUY:...] [SBUY:...] [USE:...] 标记
 function parseAIActions(text) {
   const actions = [];
   const buyRegex = /\[BUY:(\w+):([^\]]+)\]/g;
   const lgiftRegex = /\[LGIFT:([^\]]+)\]/g;
   const abuyRegex = /\[ABUY:([^\]]+)\]/g;
+  const sbuyRegex = /\[SBUY:([^\]]+)\]/g;
+  const useRegex = /\[USE:([^\]]+)\]/g;
 
   let match;
   while ((match = buyRegex.exec(text)) !== null) {
@@ -2098,6 +2287,12 @@ function parseAIActions(text) {
   }
   while ((match = abuyRegex.exec(text)) !== null) {
     actions.push({ type: "abuy", itemName: match[1].trim() });
+  }
+  while ((match = sbuyRegex.exec(text)) !== null) {
+    actions.push({ type: "sbuy", itemName: match[1].trim() });
+  }
+  while ((match = useRegex.exec(text)) !== null) {
+    actions.push({ type: "use", itemName: match[1].trim() });
   }
   return actions;
 }
@@ -2128,10 +2323,15 @@ function handleAIActions(actions) {
       showGiftModal(limitedItem);
       needRefresh = true;
     } else if (action.type === "abuy") {
-      // Leith 买���人用品：从钱包扣，进床头柜
+      // Leith 买成人用品：从钱包扣，消耗品不进床头柜，只留购买记录
       const adultItem = findAdultItem(action.itemName);
       if (!adultItem) {
         showToast(`Leith 想买"${action.itemName}"但成人用品区没有`);
+        return;
+      }
+      const adultRecords = getPurchaseRecords(threadId, LS.worldAdultBought);
+      if (adultRecords.some(r => r.itemId === adultItem.id && isPurchaseActive(r, adultItem))) {
+        showToast(`Leith 想买 ${adultItem.name} 但你们已经有了`);
         return;
       }
       const balance = getWallet(threadId);
@@ -2140,10 +2340,47 @@ function handleAIActions(actions) {
         return;
       }
       setWallet(threadId, balance - adultItem.price);
-      removeAdultItem(adultItem.id);
-      addNightstandItem(threadId, adultItem);
+      addPurchaseRecord(threadId, LS.worldAdultBought, adultItem.id, "leith");
+      if (!adultItem.consumable) addNightstandItem(threadId, { ...adultItem, boughtBy: "leith" });
       insertNarration(threadId, `🔞 Leith买了成人用品 ${adultItem.emoji} ${adultItem.name}，花费¥${adultItem.price}。零钱包：¥${balance} → ¥${balance - adultItem.price}`);
       showToast(`Leith 买了 ${adultItem.emoji} ${adultItem.name}（¥${adultItem.price}）`);
+      needRefresh = true;
+    } else if (action.type === "sbuy") {
+      // Leith 买普通货架商品：机制和成人用品一样
+      const shelfItem = findShelfItem(action.itemName);
+      if (!shelfItem) {
+        showToast(`Leith 想买"${action.itemName}"但货架上没有`);
+        return;
+      }
+      const shelfRecords = getPurchaseRecords(threadId, LS.worldShelfBought);
+      if (shelfRecords.some(r => r.itemId === shelfItem.id && isPurchaseActive(r, shelfItem))) {
+        showToast(`Leith 想买 ${shelfItem.name} 但你们已经有了`);
+        return;
+      }
+      const balance2 = getWallet(threadId);
+      if (balance2 < shelfItem.price) {
+        showToast(`Leith 想买 ${shelfItem.name} 但钱包余额不足`);
+        return;
+      }
+      setWallet(threadId, balance2 - shelfItem.price);
+      addPurchaseRecord(threadId, LS.worldShelfBought, shelfItem.id, "leith");
+      if (!shelfItem.consumable) addNightstandItem(threadId, { ...shelfItem, boughtBy: "leith" });
+      insertNarration(threadId, `🛍️ Leith买了 ${shelfItem.emoji} ${shelfItem.name}，花费¥${shelfItem.price}。零钱包：¥${balance2} → ¥${balance2 - shelfItem.price}`);
+      showToast(`Leith 买了 ${shelfItem.emoji} ${shelfItem.name}（¥${shelfItem.price}）`);
+      needRefresh = true;
+    } else if (action.type === "use") {
+      // AI 在对话里判断某个一次性消耗品"用掉了"，自动标记（先查货架，再查成人用品）
+      let item = findShelfItem(action.itemName);
+      let lsKey = LS.worldShelfBought;
+      if (!item) { item = findAdultItem(action.itemName); lsKey = LS.worldAdultBought; }
+      if (!item || item.consumable !== "once") return; // 不是一次性消耗品就不处理，避免误消耗
+
+      const records = getPurchaseRecords(threadId, lsKey);
+      const activeRecord = records.find(r => r.itemId === item.id && isPurchaseActive(r, item));
+      if (!activeRecord) return; // 没有可用的库存，没什么好标记的
+
+      markPurchaseUsed(threadId, lsKey, item.id);
+      insertNarration(threadId, `${item.emoji} ${item.name} 用掉了`);
       needRefresh = true;
     }
   });
@@ -2444,6 +2681,7 @@ async function sendChat(overrideContent) {
   if (attachments.length) userMsg.attachments = attachments;
   messages.push(userMsg);
   renderMessage(userMsg);
+  chatPinnedToBottom = true; // 用户刚发了消息，视为回到了"贴底"状态，接下来的回复会跟着滚
   userInput.value = "";
   userInput.style.height = "auto";
   pendingAttachments = [];
@@ -2505,7 +2743,7 @@ async function sendChat(overrideContent) {
           hasReceivedContent = true;
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
           bubble.innerHTML = renderBubbleContent(acc);
-          box.scrollTop = box.scrollHeight;
+          if (chatPinnedToBottom) box.scrollTop = box.scrollHeight;
         }, tools });
       } else {
         result = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
@@ -2513,7 +2751,7 @@ async function sendChat(overrideContent) {
           hasReceivedContent = true;
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
           bubble.innerHTML = renderBubbleContent(acc);
-          box.scrollTop = box.scrollHeight;
+          if (chatPinnedToBottom) box.scrollTop = box.scrollHeight;
         }, tools });
       }
 
@@ -4183,12 +4421,15 @@ async function manualSaveReadingReply(content) {
 
 
 initTimeOfDayTheme();
+initChatScrollTracking();
 initBottomBar();
 initGiveMoneyBtn();
 initToggleAllowanceBtn();
 initAddSavingsBtn();
 initAddLimitedBtn();
+initAddShelfBtn();
 initAddAdultBtn();
+initAddItemModal();
 initConfig();
 initTheater();
 initMemoryApp();
