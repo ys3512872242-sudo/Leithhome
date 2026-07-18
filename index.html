@@ -810,6 +810,19 @@
     border-top:1px solid var(--line-soft);
     display:flex;align-items:flex-end;gap:8px;
   }
+  .theater-room-grid{display:flex;flex-direction:column;gap:10px;}
+  .theater-room-card{
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-lg);padding:14px 16px;cursor:pointer;
+    transition:all .2s var(--ease-out);
+  }
+  .theater-room-card:active{transform:scale(.98);}
+  .theater-room-card-title{font-size:14.5px;font-weight:600;color:var(--paper);margin-bottom:4px;font-family:var(--serif);}
+  .theater-room-card-preview{font-size:12.5px;color:var(--paper-dim);line-height:1.6;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .theater-room-card-meta{font-size:11px;color:var(--paper-dim);opacity:.7;margin-top:8px;}
+  .theater-room-empty{text-align:center;padding:60px 20px;color:var(--paper-dim);}
+  .theater-room-empty .mark{font-size:34px;margin-bottom:10px;}
 
   /* ===== 记忆树状可视化 ===== */
   .memory-tree{
@@ -1085,6 +1098,45 @@
   .reading-partner-marker.hidden{display:none;}
   .reading-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent-dim),var(--accent-2));border-radius:2px;transition:width .2s ease;}
   .reading-progress-label{font-size:11px;color:var(--paper-dim);flex-shrink:0;min-width:32px;text-align:right;}
+
+  /* 划线高亮 & 笔记标记 */
+  .reading-reader-body mark.reading-hl{
+    background:var(--accent-glow);color:inherit;border-radius:2px;padding:0 1px;
+    box-shadow:0 1px 0 var(--accent-dim);cursor:pointer;
+  }
+  .reading-reader-body mark.reading-hl.has-note::after{
+    content:'📝';font-size:11px;margin-left:2px;vertical-align:super;
+  }
+
+  /* 选中文字后的悬浮操作条 */
+  .reading-select-popup{
+    position:fixed;z-index:250;display:flex;gap:2px;
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-md);box-shadow:var(--shadow-lg);
+    padding:5px;transform:translate(-50%,-100%);
+  }
+  .reading-select-popup.hidden{display:none;}
+  .reading-select-popup button{
+    background:none;border:none;color:var(--paper);font-size:13px;
+    padding:7px 10px;border-radius:8px;cursor:pointer;white-space:nowrap;
+    font-family:var(--sans);
+  }
+  .reading-select-popup button:active{background:var(--bg-elevated-2);}
+
+  /* 笔记列表项 */
+  .reading-note-item{
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-md);padding:12px 14px;margin-bottom:10px;cursor:pointer;
+  }
+  .reading-note-item-quote{
+    font-size:12.5px;color:var(--paper-dim);line-height:1.6;
+    border-left:2px solid var(--accent-dim);padding-left:9px;margin-bottom:6px;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .reading-note-item-text{font-size:13.5px;color:var(--paper);line-height:1.6;}
+  .reading-note-item-meta{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
+  .reading-note-item-time{font-size:10.5px;color:var(--paper-dim);opacity:.7;}
+  .reading-note-item-del{background:none;border:none;color:var(--paper-dim);cursor:pointer;padding:2px;}
 
   /* 共读侧聊天抽屉 */
   .reading-chat-overlay{
@@ -1389,16 +1441,30 @@
   <!-- ===== App: 小剧场 ===== -->
   <div class="app-page" id="page-app-theater">
     <div class="app-page-head">
-      <button class="app-back-btn" onclick="closeAppFromUI()">
+      <button class="app-back-btn" id="theaterBackBtn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
-      <span class="app-title">🎭 小剧场</span>
+      <span class="app-title" id="theaterHeaderTitle">🎭 小剧场</span>
+      <button class="app-back-btn" id="theaterRenameBtn" style="margin-left:auto;width:38px;height:38px;display:none;" title="重命名这个世界线">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      </button>
+      <button class="app-back-btn" id="theaterDeleteBtn" style="width:38px;height:38px;display:none;" title="删除这个世界线">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+      </button>
     </div>
-    <div class="app-body" style="display:flex;flex-direction:column;">
+
+    <!-- 房间列表视图：可以同时开很多个世界线，随意新增/切换/删除 -->
+    <div class="app-body" id="theaterRoomListView">
+      <button class="btn btn-primary btn-block" id="theaterNewRoomBtn" style="margin-bottom:14px;">+ 开一个新世界线</button>
+      <div id="theaterRoomGrid" class="theater-room-grid"></div>
+    </div>
+
+    <!-- 单个世界线的设定 + 聊天视图 -->
+    <div class="app-body hidden" id="theaterRoomView" style="display:flex;flex-direction:column;">
       <div class="theater-setup">
         <label class="field-label">故事背景 / 世界线设定</label>
         <textarea id="theaterSetting" placeholder="设定一个故事背景，比如：我们是大学同学，你暗恋我很久了。这个世界线里的角色扮演不会影响主对话的记忆。"></textarea>
-        <button class="btn btn-primary btn-sm" id="theaterStartBtn" style="margin-top:8px;">开始角色扮演</button>
+        <button class="btn btn-primary btn-sm" id="theaterStartBtn" style="margin-top:8px;">保存设定</button>
       </div>
       <div class="theater-chat" id="theaterChatBox">
         <div class="empty-state">
@@ -1462,7 +1528,11 @@
       <div class="widget-note-card">
         <div class="widget-note-label">💌 Leith 的今日小纸条</div>
         <div class="widget-note-text" id="widgetNoteText">正在生成今日小纸条...</div>
-        <button class="btn btn-ghost btn-sm btn-block" id="refreshNoteBtn" style="margin-top:12px;">重新生成</button>
+        <div class="row-flex" style="margin-top:12px;">
+          <button class="btn btn-ghost btn-sm btn-block" id="refreshNoteBtn">重新生成</button>
+          <button class="btn btn-ghost btn-sm btn-block" id="archiveNoteBtn">💌 存进归档信件</button>
+        </div>
+        <p class="helper-text" style="text-align:center;margin-top:8px;">小纸条只是随手一句话，不会自动存进记忆——喜欢的话可以自己点上面这个按钮留下它。</p>
       </div>
     </div>
   </div><!-- /app-widget -->
@@ -1479,6 +1549,9 @@
       </button>
       <button class="app-back-btn" id="readingChatToggleBtn" style="width:42px;height:42px;display:none;" title="和 Leith 聊聊">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </button>
+      <button class="app-back-btn" id="readingNotesToggleBtn" style="width:42px;height:42px;display:none;" title="我的笔记">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
       </button>
     </div>
 
@@ -1519,12 +1592,46 @@
     <!-- 阅读器视图 -->
     <div class="reading-reader hidden" id="readingReaderView">
       <div class="reading-reader-body" id="readingReaderBody"></div>
+
+      <!-- 选中文字后弹出的"划线/写笔记"小气泡 -->
+      <div class="reading-select-popup hidden" id="readingSelectPopup">
+        <button id="readingHighlightBtn">✨ 划线</button>
+        <button id="readingNoteBtn">📝 写笔记</button>
+      </div>
+
       <div class="reading-progress-bar">
         <div class="reading-progress-track">
           <div class="reading-progress-fill" id="readingProgressFill"></div>
           <div class="reading-partner-marker hidden" id="readingPartnerMarker"></div>
         </div>
         <span class="reading-progress-label" id="readingProgressLabel">0%</span>
+      </div>
+
+      <!-- 笔记输入弹窗 -->
+      <div class="modal-overlay hidden" id="readingNoteModalOverlay">
+        <div class="modal-box">
+          <h3>写点想法</h3>
+          <p id="readingNoteQuotePreview" style="font-size:12.5px;color:var(--paper-dim);line-height:1.6;margin-bottom:10px;border-left:2px solid var(--accent-dim);padding-left:10px;"></p>
+          <textarea id="readingNoteTextInput" rows="3" placeholder="写下这段让你想到的事..." style="width:100%;background:var(--bg-input);border:1px solid var(--line);color:var(--paper);border-radius:var(--radius-md);padding:10px 14px;font-size:14px;font-family:inherit;outline:none;resize:vertical;caret-color:var(--accent);"></textarea>
+          <div class="row-flex" style="margin-top:14px;">
+            <button class="btn btn-ghost btn-block" id="readingNoteCancelBtn">取消</button>
+            <button class="btn btn-primary btn-block" id="readingNoteSaveBtn">保存笔记</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 笔记列表抽屉 -->
+      <div class="reading-chat-overlay" id="readingNotesOverlay"></div>
+      <div class="reading-chat-drawer" id="readingNotesDrawer">
+        <div class="reading-chat-head">
+          <span>我的笔记与划线</span>
+          <button class="icon-btn" id="readingNotesCloseBtn" style="width:28px;height:28px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="reading-chat-box" id="readingNotesList">
+          <div class="reading-chat-hint">选中正文里的一段文字，可以划线或写下笔记，都会出现在这里。</div>
+        </div>
       </div>
 
       <!-- 共读侧聊天抽屉 -->

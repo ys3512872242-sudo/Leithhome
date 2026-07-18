@@ -244,6 +244,7 @@ function openApp(appPageId) {
   if (appPageId === "page-app-memory") renderMemoryTree();
   if (appPageId === "page-app-widget") refreshWidgetApp();
   if (appPageId === "page-app-reading") showReadingLibrary();
+  if (appPageId === "page-app-theater") renderTheaterRoomList();
 }
 
 // 关闭 app 页面，回到桌面
@@ -2450,17 +2451,33 @@ function initAttachments() {
   fileInput.addEventListener("change", handleAttachFiles);
 }
 
+// 判断是否是图片：不能只信 file.type —— iPhone 相册的 HEIC/HEIF 照片在很多浏览器里
+// file.type 会是空字符串或不规范的值，单靠 MIME 类型判断会把图片误判成"文档"，
+// 然后走 file.text() 把图片二进制硬读成乱码文字发出去，界面上完全看不出哪里错了。
+// 这里加一层扩展名兜底，图片格式尽量不要漏判。
+const IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|avif)$/i;
+function isImageFile(file) {
+  if (file.type && file.type.startsWith("image/")) return true;
+  return IMAGE_EXT_RE.test(file.name);
+}
+
 async function handleAttachFiles(e) {
   const files = Array.from(e.target.files || []);
+  const oversized = [];
   for (const file of files) {
     if (file.size > 12 * 1024 * 1024) {
-      showToast(`${file.name} 超过 12MB，跳过了`);
+      oversized.push(file.name);
       continue;
     }
     try {
-      if (file.type.startsWith("image/")) {
+      if (isImageFile(file)) {
         const dataUrl = await fileToDataUrl(file);
-        pendingAttachments.push({ id: uid(), kind: "image", name: file.name, dataUrl, mimeType: file.type });
+        // HEIC/HEIF 大多数浏览器无法直接渲染预览、也不是模型能直接识别的格式，
+        // 提前提示用户，而不是让它悄悄发出去之后收到奇怪的回复才发现有问题
+        if (/\.(heic|heif)$/i.test(file.name) && !(file.type && /jpe?g|png|webp/i.test(file.type))) {
+          showToast(`${file.name} 是 HEIC 格式，部分服务商可能无法识别，建议先转成 JPG/PNG`);
+        }
+        pendingAttachments.push({ id: uid(), kind: "image", name: file.name, dataUrl, mimeType: file.type || "image/jpeg" });
       } else if (/\.pdf$/i.test(file.name)) {
         showToast("正在解析 PDF...");
         const text = await extractPdfText(file);
@@ -2472,8 +2489,11 @@ async function handleAttachFiles(e) {
       }
     } catch (err) {
       console.error("附件读取失败:", err);
-      showToast(`${file.name} 读取失败`);
+      showModal("附件读取失败", `${file.name} 读取时出错了，换一个文件试试？`);
     }
+  }
+  if (oversized.length) {
+    showModal("文件太大了", `${oversized.join("、")} 超过了 12MB 的限制，没有加入发送列表。可以先压缩一下再试。`);
   }
   renderAttachPreview();
   e.target.value = "";
@@ -2673,7 +2693,7 @@ async function sendChat(overrideContent) {
   if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
   if (!provider) return showModal("提示", "请先在设置里添加一个服务商。");
   if (!model) return showModal("提示", "请先选择或填写一个模型名称。");
-  if (!content && !attachments.length) return;
+  if (!content && !attachments.length) return showToast("写点什么或加个附件再发送吧");
 
   const threadId = getActiveThreadId();
   const messages = getThreadMessages(threadId);
@@ -3109,30 +3129,62 @@ if ("serviceWorker" in navigator) {
 }
 
 // ============================================================
-// 小剧场 app（角色扮演独立空间）
+// 小剧场 app（角色扮演独立空间 —— 支持同时开多个世界线，各自独立存档）
 // ============================================================
-const THEATER_LS = "companion_theater_v1"; // { messages: [], setting: "" }
+const THEATER_ROOMS_LS = "companion_theater_rooms_v1"; // [{id, title, setting, messages, createdAt, updatedAt}]
+const THEATER_OLD_LS = "companion_theater_v1"; // 旧版单房间数据，仅用于一次性迁移
 
-function getTheaterData() {
-  return loadJSON(THEATER_LS, { messages: [], setting: "" });
-}
-function saveTheaterData(data) { saveJSON(THEATER_LS, data); }
-
+let theaterActiveRoomId = null;
 let theaterCurrentController = null;
 
-function initTheater() {
-  const data = getTheaterData();
-  if (data.setting) $("#theaterSetting").value = data.setting;
-  renderTheaterMessages();
+function getTheaterRooms() {
+  let rooms = loadJSON(THEATER_ROOMS_LS, null);
+  if (rooms) return rooms;
+  // 首次进入：把旧版单世界线数据迁移成"第一个房间"，不丢用户已有的剧情
+  const old = loadJSON(THEATER_OLD_LS, null);
+  if (old && (old.setting || (old.messages && old.messages.length))) {
+    rooms = [{
+      id: uid(),
+      title: old.setting ? old.setting.slice(0, 16) : "第一个世界线",
+      setting: old.setting || "",
+      messages: old.messages || [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }];
+  } else {
+    rooms = [];
+  }
+  saveJSON(THEATER_ROOMS_LS, rooms);
+  return rooms;
+}
+function saveTheaterRooms(rooms) { saveJSON(THEATER_ROOMS_LS, rooms); }
+function getTheaterRoom(id) { return getTheaterRooms().find(r => r.id === id) || null; }
 
-  // 开始角色扮演
+function initTheater() {
+  $("#theaterNewRoomBtn").onclick = createTheaterRoom;
+  $("#theaterBackBtn").onclick = () => {
+    if (theaterActiveRoomId) {
+      leaveTheaterRoom();
+    } else {
+      popNavLayerSilently();
+      closeApp();
+    }
+  };
+  $("#theaterRenameBtn").onclick = renameTheaterRoom;
+  $("#theaterDeleteBtn").onclick = deleteTheaterRoom;
+
+  // 保存设定
   $("#theaterStartBtn").onclick = () => {
     const setting = $("#theaterSetting").value.trim();
     if (!setting) return showToast("请先设定故事背景");
-    const d = getTheaterData();
-    d.setting = setting;
-    saveTheaterData(d);
-    showToast("世界线已设定，开始角色扮演吧");
+    const room = getTheaterRoom(theaterActiveRoomId);
+    if (!room) return;
+    room.setting = setting;
+    room.updatedAt = Date.now();
+    if (!room.title || room.title === "新的世界线") room.title = setting.slice(0, 16);
+    saveTheaterRooms(getTheaterRooms().map(r => r.id === room.id ? room : r));
+    $("#theaterHeaderTitle").innerText = "🎭 " + room.title;
+    showToast("设定已保存，开始角色扮演吧");
     $("#theaterInput").focus();
   };
 
@@ -3148,17 +3200,108 @@ function initTheater() {
 
   // 发送按钮
   $("#theaterSendBtn").onclick = () => sendTheaterMessage();
+
+  renderTheaterRoomList();
+}
+
+function renderTheaterRoomList() {
+  $("#theaterRoomListView").classList.remove("hidden");
+  $("#theaterRoomView").classList.add("hidden");
+  $("#theaterRenameBtn").style.display = "none";
+  $("#theaterDeleteBtn").style.display = "none";
+  $("#theaterHeaderTitle").innerText = "🎭 小剧场";
+  theaterActiveRoomId = null;
+
+  const rooms = getTheaterRooms().slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const grid = $("#theaterRoomGrid");
+  if (!rooms.length) {
+    grid.innerHTML = `<div class="theater-room-empty"><div class="mark">🎭</div><p>还没有开始任何世界线。<br>点上面的按钮，开一个新的角色扮演吧。</p></div>`;
+    return;
+  }
+  grid.innerHTML = "";
+  rooms.forEach(room => {
+    const card = document.createElement("div");
+    card.className = "theater-room-card";
+    const lastMsg = room.messages && room.messages.length ? room.messages[room.messages.length - 1] : null;
+    const preview = lastMsg ? lastMsg.content : (room.setting || "还没有设定故事背景");
+    const msgCount = room.messages ? room.messages.length : 0;
+    card.innerHTML = `
+      <div class="theater-room-card-title">${escapeHtml(room.title || "未命名世界线")}</div>
+      <div class="theater-room-card-preview">${escapeHtml(preview || "")}</div>
+      <div class="theater-room-card-meta">${msgCount} 条对话</div>
+    `;
+    card.onclick = () => enterTheaterRoom(room.id);
+    grid.appendChild(card);
+  });
+}
+
+function createTheaterRoom() {
+  const rooms = getTheaterRooms();
+  const room = {
+    id: uid(), title: "新的世界线", setting: "", messages: [],
+    createdAt: Date.now(), updatedAt: Date.now()
+  };
+  rooms.push(room);
+  saveTheaterRooms(rooms);
+  enterTheaterRoom(room.id);
+}
+
+function enterTheaterRoom(id) {
+  const room = getTheaterRoom(id);
+  if (!room) return;
+  theaterActiveRoomId = id;
+  $("#theaterRoomListView").classList.add("hidden");
+  $("#theaterRoomView").classList.remove("hidden");
+  $("#theaterRenameBtn").style.display = "flex";
+  $("#theaterDeleteBtn").style.display = "flex";
+  $("#theaterHeaderTitle").innerText = "🎭 " + (room.title || "未命名世界线");
+  $("#theaterSetting").value = room.setting || "";
+  renderTheaterMessages();
+  pushNavLayer(leaveTheaterRoomSilently);
+}
+
+function leaveTheaterRoomSilently() {
+  theaterActiveRoomId = null;
+  $("#theaterRoomListView").classList.remove("hidden");
+  $("#theaterRoomView").classList.add("hidden");
+  $("#theaterRenameBtn").style.display = "none";
+  $("#theaterDeleteBtn").style.display = "none";
+  $("#theaterHeaderTitle").innerText = "🎭 小剧场";
+  renderTheaterRoomList();
+}
+function leaveTheaterRoom() { popNavLayerSilently(); leaveTheaterRoomSilently(); }
+
+function renameTheaterRoom() {
+  const room = getTheaterRoom(theaterActiveRoomId);
+  if (!room) return;
+  const name = prompt("给这个世界线起个名字：", room.title || "");
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  room.title = trimmed;
+  saveTheaterRooms(getTheaterRooms().map(r => r.id === room.id ? room : r));
+  $("#theaterHeaderTitle").innerText = "🎭 " + room.title;
+}
+
+function deleteTheaterRoom() {
+  const room = getTheaterRoom(theaterActiveRoomId);
+  if (!room) return;
+  if (!confirm(`确定要删除「${room.title}」这个世界线吗？里面的剧情不会保留。`)) return;
+  const rooms = getTheaterRooms().filter(r => r.id !== room.id);
+  saveTheaterRooms(rooms);
+  leaveTheaterRoom();
+  showToast("已删除");
 }
 
 function renderTheaterMessages() {
   const box = $("#theaterChatBox");
-  const data = getTheaterData();
+  const room = getTheaterRoom(theaterActiveRoomId);
   box.innerHTML = "";
-  if (!data.messages.length) {
+  if (!room || !room.messages.length) {
     box.innerHTML = `<div class="empty-state"><div class="mark">🎭</div><p>设定一个故事背景，<br>和 Leith 开始一场不设限的角色扮演。</p></div>`;
     return;
   }
-  data.messages.forEach(msg => {
+  room.messages.forEach(msg => {
     const row = document.createElement("div");
     row.className = `msg-row ${msg.role === "user" ? "user" : "assistant"}`;
     const bubble = document.createElement("div");
@@ -3176,6 +3319,7 @@ function renderTheaterMessages() {
 
 async function sendTheaterMessage() {
   if (theaterCurrentController) return showToast("请等当前回复结束");
+  if (!theaterActiveRoomId) return;
 
   const input = $("#theaterInput");
   const content = input.value.trim();
@@ -3191,12 +3335,15 @@ async function sendTheaterMessage() {
     return showToast("请先在设置里配置好服务商和密钥");
   }
 
-  const data = getTheaterData();
-  if (!data.setting) return showToast("请先设定故事背景");
+  const roomId = theaterActiveRoomId;
+  const room = getTheaterRoom(roomId);
+  if (!room) return;
+  if (!room.setting) return showToast("请先设定故事背景");
 
   const userMsg = { role: "user", content, _id: uid() };
-  data.messages.push(userMsg);
-  saveTheaterData(data);
+  room.messages.push(userMsg);
+  room.updatedAt = Date.now();
+  saveTheaterRooms(getTheaterRooms().map(r => r.id === roomId ? room : r));
   input.value = "";
   input.style.height = "auto";
   renderTheaterMessages();
@@ -3216,10 +3363,10 @@ async function sendTheaterMessage() {
   theaterCurrentController = controller;
 
   // 剧场专用系统提示
-  const theaterPrompt = `你现在在小剧场模式中。请完全按照以下世界线设定进行角色扮演，不要跳出角色，不要提及你是 AI。如果有不适合的内容，你可以委婉引导话题，但不要打破角色设定。\n\n【世界线设定】\n${data.setting}`;
+  const theaterPrompt = `你现在在小剧场模式中。请完全按照以下世界线设定进行角色扮演，不要跳出角色，不要提及你是 AI。如果有不适合的内容，你可以委婉引导话题，但不要打破角色设定。\n\n【世界线设定】\n${room.setting}`;
 
   try {
-    const messages = data.messages.map(m => ({ role: m.role, content: m.content }));
+    const messages = room.messages.map(m => ({ role: m.role, content: m.content }));
     let fullReply = "";
     if (provider.apiStyle === "anthropic") {
       const result = await streamAnthropic({
@@ -3245,18 +3392,24 @@ async function sendTheaterMessage() {
       fullReply = result.text;
     }
 
-    const freshData = getTheaterData();
-    freshData.messages.push({ role: "assistant", content: fullReply, _id: uid() });
-    saveTheaterData(freshData);
-    renderTheaterMessages();
+    // 只更新目标房间的数据，即使用户在等待期间切去了别的房间，也不会串数据
+    const freshRoom = getTheaterRoom(roomId);
+    if (freshRoom) {
+      freshRoom.messages.push({ role: "assistant", content: fullReply, _id: uid() });
+      freshRoom.updatedAt = Date.now();
+      saveTheaterRooms(getTheaterRooms().map(r => r.id === roomId ? freshRoom : r));
+      if (theaterActiveRoomId === roomId) renderTheaterMessages();
+    }
   } catch (err) {
     if (err.name === "AbortError") {
       const partial = bubble.innerText;
       if (partial.trim()) {
-        const freshData = getTheaterData();
-        freshData.messages.push({ role: "assistant", content: partial, _id: uid() });
-        saveTheaterData(freshData);
-        renderTheaterMessages();
+        const freshRoom = getTheaterRoom(roomId);
+        if (freshRoom) {
+          freshRoom.messages.push({ role: "assistant", content: partial, _id: uid() });
+          saveTheaterRooms(getTheaterRooms().map(r => r.id === roomId ? freshRoom : r));
+          if (theaterActiveRoomId === roomId) renderTheaterMessages();
+        }
       } else {
         row.remove();
       }
@@ -3522,6 +3675,10 @@ function initWidget() {
     };
   }
 
+  // 手动存进归档信件
+  const archiveBtn = $("#archiveNoteBtn");
+  if (archiveBtn) archiveBtn.onclick = archiveCurrentDailyNote;
+
   // 异步获取天气和小纸条
   fetchWeather();
 }
@@ -3672,7 +3829,30 @@ async function generateDailyNote() {
   const dateStr = now.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
   const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
-  const prompt = `今天是${dateStr}，现在${timeStr}。${weatherInfo}。请给 Susie 写一句简短温暖的小纸条（30字以内），像朋友随手写的便签一样自然。只写纸条内容，不要加引号或其他格式。`;
+  // 小纸条只"读"记忆和最近聊天，不会往里写任何东西——
+  // 读完就是读完了，除非用户自己点了"存进归档信件"，否则不会留下任何痕迹。
+  let contextBlock = "";
+  try {
+    if (window.Memory) {
+      const memBlock = window.Memory.asPromptBlock ? await window.Memory.asPromptBlock() : "";
+      if (memBlock) contextBlock += `【关于 Susie，你一直记得的事】\n${memBlock}\n\n`;
+
+      const threadId = getActiveThreadId();
+      if (window.Memory.isReady && window.Memory.isReady() && threadId) {
+        const recent = await window.Memory.listShortTermDetail(threadId, 8);
+        if (recent && recent.length) {
+          const lines = recent.slice().reverse().map(m => `${m.role === "assistant" ? "Leith" : "Susie"}：${m.content}`);
+          contextBlock += `【最近聊到的】\n${lines.join("\n")}\n\n`;
+        }
+      }
+    }
+  } catch (e) {
+    console.error("小纸条读取记忆失败（不影响生成，只是拿不到上下文）:", e);
+  }
+
+  const prompt = `今天是${dateStr}，现在${timeStr}。${weatherInfo}。
+
+${contextBlock}请给 Susie 写一句简短温暖的小纸条（30字以内），像朋友随手写的便签一样自然。如果上面有最近聊天或者记忆里的内容，可以自然地呼应一下当下的情绪或者话题，但不要生硬提起"我记得你说过"这种话，要让它读起来就是随手一句话。只写纸条内容，不要加引号或其他格式。`;
 
   try {
     const messages = [{ role: "user", content: prompt }];
@@ -3700,6 +3880,16 @@ async function generateDailyNote() {
     console.error("小纸条生成失败:", e);
     if (noteEl) noteEl.innerText = "（小纸条生成失败，稍后再试）";
   }
+}
+
+// 手动把当前这条小纸条存进归档信件——小纸条本身默认不会自动进记忆，
+// 只有用户主动点这个按钮，才会把它变成一条正式记忆
+async function archiveCurrentDailyNote() {
+  if (!cachedNote) return showToast("还没有小纸条可以存");
+  if (!window.Memory || !window.Memory.addArchive) return showToast("记忆系统未加载");
+  const dateLabel = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
+  await window.Memory.addArchive(`【${dateLabel}的小纸条】${cachedNote}`);
+  showToast("已存进归档信件");
 }
 
 function updateNoteUI() {
@@ -4029,6 +4219,7 @@ function showReadingLibrary() {
   $("#readingLibraryView").classList.remove("hidden");
   $("#readingReaderView").classList.add("hidden");
   $("#readingChatToggleBtn").style.display = "none";
+  $("#readingNotesToggleBtn").style.display = "none";
   $("#readingShareBtn").style.display = "none";
   $("#readingHeaderTitle").innerText = "📖 共读小说";
   $("#readingBackBtn").onclick = closeAppFromUI;
@@ -4120,6 +4311,38 @@ function initReading() {
   $("#shareLinkModalOverlay").addEventListener("click", (e) => {
     if (e.target.id === "shareLinkModalOverlay") closeShareLinkModalFromUI();
   });
+
+  // ---- 划线 / 笔记 ----
+  const readerBody = $("#readingReaderBody");
+  readerBody.addEventListener("mouseup", handleReadingSelection);
+  readerBody.addEventListener("touchend", () => setTimeout(handleReadingSelection, 10));
+  document.addEventListener("mousedown", (e) => {
+    if (!$("#readingSelectPopup").contains(e.target)) hideReadingSelectPopup();
+  });
+
+  $("#readingHighlightBtn").addEventListener("click", () => saveReadingSelectionAsNote(""));
+  $("#readingNoteBtn").addEventListener("click", openReadingNoteModal);
+  $("#readingNoteCancelBtn").addEventListener("click", closeReadingNoteModal);
+  $("#readingNoteSaveBtn").addEventListener("click", () => {
+    const text = $("#readingNoteTextInput").value.trim();
+    saveReadingSelectionAsNote(text);
+    closeReadingNoteModal();
+  });
+  $("#readingNoteModalOverlay").addEventListener("click", (e) => {
+    if (e.target.id === "readingNoteModalOverlay") closeReadingNoteModal();
+  });
+
+  $("#readingNotesToggleBtn").addEventListener("click", openReadingNotesDrawer);
+  $("#readingNotesCloseBtn").addEventListener("click", closeReadingNotesDrawerFromUI);
+  $("#readingNotesOverlay").addEventListener("click", closeReadingNotesDrawerFromUI);
+
+  // 正文里点已经划线的部分，直接跳到笔记列表定位它
+  readerBody.addEventListener("click", (e) => {
+    const mark = e.target.closest("mark.reading-hl");
+    if (mark && mark.dataset.noteId) {
+      openReadingNotesDrawer(mark.dataset.noteId);
+    }
+  });
 }
 
 async function handleReadingFileUpload(e) {
@@ -4198,6 +4421,7 @@ function openReadingBook(bookId) {
   $("#readingLibraryView").classList.add("hidden");
   $("#readingReaderView").classList.remove("hidden");
   $("#readingChatToggleBtn").style.display = "flex";
+  $("#readingNotesToggleBtn").style.display = "flex";
   $("#readingHeaderTitle").innerText = book.name;
   $("#readingShareBtn").style.display = "flex";
 
@@ -4210,7 +4434,7 @@ function openReadingBook(bookId) {
   pushNavLayer(backToLibrary);
 
   const body = $("#readingReaderBody");
-  body.innerText = book.content;
+  renderReadingBodyWithHighlights(book, body);
 
   $("#readingChatBox").innerHTML = `<div class="reading-chat-hint">可以问问 Leith 对刚才这段的想法，或者让 ta 帮你回顾一下前面的剧情。</div>`;
 
@@ -4250,6 +4474,170 @@ function updateReadingProgressUI(bodyEl) {
   const pct = Math.round(ratio * 100);
   $("#readingProgressFill").style.width = pct + "%";
   $("#readingProgressLabel").innerText = pct + "%";
+}
+
+// ============================================================
+// 共读小说 —— 划线 & 笔记
+// 笔记按书本独立存储：book.notes = [{id, start, end, quote, note, createdAt}]
+// start/end 是在 book.content 里的字符偏移量，用来定位这段文字和恢复高亮
+// ============================================================
+let readingPendingSelection = null; // { start, end, quote } 当前选中但还没保存的文字
+
+function renderReadingBodyWithHighlights(book, bodyEl) {
+  const notes = (book.notes || []).slice().sort((a, b) => a.start - b.start);
+  if (!notes.length) {
+    bodyEl.innerText = book.content;
+    return;
+  }
+  // 按笔记位置把正文切成片段，被划线的片段包一层 <mark>
+  let html = "";
+  let cursor = 0;
+  notes.forEach(n => {
+    if (n.start < cursor) return; // 防止笔记范围重叠导致乱码
+    html += escapeHtml(book.content.slice(cursor, n.start));
+    const noteClass = n.note ? " has-note" : "";
+    html += `<mark class="reading-hl${noteClass}" data-note-id="${n.id}">${escapeHtml(book.content.slice(n.start, n.end))}</mark>`;
+    cursor = n.end;
+  });
+  html += escapeHtml(book.content.slice(cursor));
+  bodyEl.innerHTML = html;
+}
+
+function handleReadingSelection() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) { hideReadingSelectPopup(); return; }
+  const text = sel.toString().trim();
+  if (!text) { hideReadingSelectPopup(); return; }
+
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  const bodyEl = $("#readingReaderBody");
+  if (!book || !bodyEl.contains(sel.anchorNode)) { hideReadingSelectPopup(); return; }
+
+  // 把选区换算成在 book.content 里的字符偏移量：累加选区之前所有文本节点的长度
+  const range = sel.getRangeAt(0);
+  const preRange = document.createRange();
+  preRange.selectNodeContents(bodyEl);
+  preRange.setEnd(range.startContainer, range.startOffset);
+  const start = preRange.toString().length;
+  const end = start + text.length;
+
+  readingPendingSelection = { start, end, quote: text };
+
+  const rect = range.getBoundingClientRect();
+  const popup = $("#readingSelectPopup");
+  popup.style.left = (rect.left + rect.width / 2) + "px";
+  popup.style.top = (rect.top - 8) + "px";
+  popup.classList.remove("hidden");
+}
+
+function hideReadingSelectPopup() {
+  $("#readingSelectPopup").classList.add("hidden");
+}
+
+function openReadingNoteModal() {
+  if (!readingPendingSelection) return;
+  $("#readingNoteQuotePreview").innerText = readingPendingSelection.quote.length > 120
+    ? readingPendingSelection.quote.slice(0, 120) + "…" : readingPendingSelection.quote;
+  $("#readingNoteTextInput").value = "";
+  $("#readingNoteModalOverlay").classList.remove("hidden");
+  hideReadingSelectPopup();
+  pushNavLayer(closeReadingNoteModal);
+  setTimeout(() => $("#readingNoteTextInput").focus(), 100);
+}
+function closeReadingNoteModal() {
+  $("#readingNoteModalOverlay").classList.add("hidden");
+  popNavLayerSilently();
+}
+
+function saveReadingSelectionAsNote(noteText) {
+  if (!readingPendingSelection) return;
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  if (!book) return;
+  if (!book.notes) book.notes = [];
+
+  // 避免和已有划线区间重叠——重叠了就不重复加，提示用户
+  const { start, end, quote } = readingPendingSelection;
+  const overlaps = book.notes.some(n => start < n.end && end > n.start);
+  if (overlaps) {
+    showToast("这段已经划过线了");
+    readingPendingSelection = null;
+    hideReadingSelectPopup();
+    window.getSelection().removeAllRanges();
+    return;
+  }
+
+  book.notes.push({ id: uid(), start, end, quote, note: noteText || "", createdAt: Date.now() });
+  saveReadingBooks();
+  renderReadingBodyWithHighlights(book, $("#readingReaderBody"));
+  readingPendingSelection = null;
+  hideReadingSelectPopup();
+  window.getSelection().removeAllRanges();
+  showToast(noteText ? "笔记已保存" : "已划线");
+}
+
+function openReadingNotesDrawer(scrollToNoteId) {
+  $("#readingNotesOverlay").classList.add("open");
+  $("#readingNotesDrawer").classList.add("open");
+  pushNavLayer(closeReadingNotesDrawer);
+  renderReadingNotesList(typeof scrollToNoteId === "string" ? scrollToNoteId : null);
+}
+function closeReadingNotesDrawer() {
+  $("#readingNotesOverlay").classList.remove("open");
+  $("#readingNotesDrawer").classList.remove("open");
+}
+function closeReadingNotesDrawerFromUI() { popNavLayerSilently(); closeReadingNotesDrawer(); }
+
+function renderReadingNotesList(highlightNoteId) {
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  const list = $("#readingNotesList");
+  const notes = (book && book.notes ? book.notes.slice() : []).sort((a, b) => a.start - b.start);
+  if (!notes.length) {
+    list.innerHTML = `<div class="reading-chat-hint">选中正文里的一段文字，可以划线或写下笔记，都会出现在这里。</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  notes.forEach(n => {
+    const item = document.createElement("div");
+    item.className = "reading-note-item";
+    if (n.id === highlightNoteId) item.style.borderColor = "var(--accent-dim)";
+    item.innerHTML = `
+      <div class="reading-note-item-quote">${escapeHtml(n.quote)}</div>
+      ${n.note ? `<div class="reading-note-item-text">${escapeHtml(n.note)}</div>` : ""}
+      <div class="reading-note-item-meta">
+        <span class="reading-note-item-time">${formatMemoryTime(n.createdAt)}</span>
+        <button class="reading-note-item-del" title="删除">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+        </button>
+      </div>`;
+    item.querySelector(".reading-note-item-del").onclick = (e) => {
+      e.stopPropagation();
+      deleteReadingNote(n.id);
+    };
+    item.addEventListener("click", () => jumpToReadingNote(n.id));
+    list.appendChild(item);
+  });
+}
+
+function deleteReadingNote(noteId) {
+  const book = readingBooks.find(b => b.id === readingActiveBookId);
+  if (!book || !book.notes) return;
+  book.notes = book.notes.filter(n => n.id !== noteId);
+  saveReadingBooks();
+  renderReadingBodyWithHighlights(book, $("#readingReaderBody"));
+  renderReadingNotesList();
+  showToast("已删除");
+}
+
+function jumpToReadingNote(noteId) {
+  closeReadingNotesDrawerFromUI();
+  requestAnimationFrame(() => {
+    const mark = $("#readingReaderBody").querySelector(`mark[data-note-id="${noteId}"]`);
+    if (mark) {
+      mark.scrollIntoView({ block: "center", behavior: "smooth" });
+      mark.style.boxShadow = "0 0 0 2px var(--accent)";
+      setTimeout(() => { mark.style.boxShadow = ""; }, 1200);
+    }
+  });
 }
 
 let readingMemoryBlock = "";  // 本次打开共读聊天时，先加载一次已有的"共读记录"，聊天过程中复用，不用每条消息都重新查
