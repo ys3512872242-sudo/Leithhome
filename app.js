@@ -321,7 +321,9 @@ function addSavings(threadId, delta) {
 
 // ===== 每个窗口已买的成人用品ID =====
 // ===== 购买记录（成人用品区 + 普通货架 通用，支持消耗品状态）=====
-// 结构：{ [threadId]: [{ itemId, boughtAt, boughtBy: 'user'|'leith', used: bool }] }
+// 结构：{ [threadId]: [{ id, itemId, boughtAt, boughtBy: 'user'|'leith', used: bool, damaged: bool }] }
+// 消耗品：每次购买都是独立一条记录，可以同时存在多条"未使用"的记录（比如买了3朵花）
+// 非消耗品：只要有一条记录存在，就算"已拥有"，不能重复购买
 function getPurchaseRecords(threadId, lsKey) {
   const records = loadJSON(lsKey, {});
   return records[threadId] || [];
@@ -329,26 +331,45 @@ function getPurchaseRecords(threadId, lsKey) {
 function addPurchaseRecord(threadId, lsKey, itemId, boughtBy) {
   const records = loadJSON(lsKey, {});
   if (!records[threadId]) records[threadId] = [];
-  records[threadId].push({ itemId, boughtAt: Date.now(), boughtBy, used: false });
+  const record = { id: uid(), itemId, boughtAt: Date.now(), boughtBy, used: false, damaged: false };
+  records[threadId].push(record);
   saveJSON(lsKey, records);
+  return record;
 }
-function markPurchaseUsed(threadId, lsKey, itemId) {
+// 标记某一条具体的购买记录为"用掉了"（按记录id操作，而不是按商品id——
+// 这样同一件消耗品买了好几份时，可以精确知道用掉的是哪一份）
+function markPurchaseRecordUsed(threadId, lsKey, recordId) {
   const records = loadJSON(lsKey, {});
   const list = records[threadId] || [];
-  // 标记最早一条"未使用"的同款记录为已使用（先买的先用掉）
-  const rec = list.find(r => r.itemId === itemId && !r.used);
+  const rec = list.find(r => r.id === recordId);
   if (rec) rec.used = true;
   saveJSON(lsKey, records);
 }
-// 判断一条购买记录现在还"在库存里"吗（没被手动/自动消耗掉、时效性也没过期）
+// 标记非消耗品"损坏"了——清出床头柜，但保留购买记录本身
+// （非消耗品的"已拥有、不能重复买"状态，不应该因为东西坏了就被重置）
+function markPurchaseDamaged(threadId, lsKey, recordId) {
+  const records = loadJSON(lsKey, {});
+  const list = records[threadId] || [];
+  const rec = list.find(r => r.id === recordId);
+  if (rec) rec.damaged = true;
+  saveJSON(lsKey, records);
+}
+// 判断"这件商品是否已经拥有过"（用于非消耗品判断能不能再买——只要买过、没被反复允许的机制，就一直算拥有）
+function hasEverPurchased(threadId, lsKey, itemId) {
+  const records = getPurchaseRecords(threadId, lsKey);
+  return records.some(r => r.itemId === itemId);
+}
+// 判断一条购买记录现在还"在库存里、没被消耗掉"吗（用掉了/损坏了/时效过了 都算不在库存里了）
 function isPurchaseActive(record, item) {
-  if (!item) return false;
+  if (!item || !record) return false;
+  if (record.damaged) return false;
   if (item.consumable === "once") return !record.used;
   if (item.consumable === "timed") {
+    if (record.used) return false;
     const days = item.expiresInDays || 1;
     return (Date.now() - record.boughtAt) < days * 24 * 60 * 60 * 1000;
   }
-  return true; // 不是消耗品，永久有效
+  return true; // 不是消耗品，永久有效（除非被标记为损坏）
 }
 
 // ===== Leith 赠送区（每个对话独立）=====
@@ -462,16 +483,59 @@ function findAdultItem(itemName) {
 }
 
 // ===== 床头柜（每个对话独立）=====
+// 现在货架/成人用品区的每一次购买，不管是不是消耗品，都会摆进床头柜；
+// 结构：{ [threadId]: [{ id, recordId, lsKey, itemId, name, emoji, price, consumable, expiresInDays, boughtBy, boughtAt }] }
 function getNightstand(threadId) {
   const ns = loadJSON(LS.worldNightstand, {});
   return ns[threadId] || [];
 }
 
-function addNightstandItem(threadId, item) {
+function addNightstandItem(threadId, item, recordId, lsKey) {
   const ns = loadJSON(LS.worldNightstand, {});
   if (!ns[threadId]) ns[threadId] = [];
-  ns[threadId].push({ id: uid(), name: item.name, emoji: item.emoji, price: item.price, boughtAt: Date.now() });
+  ns[threadId].push({
+    id: uid(), recordId, lsKey, itemId: item.id,
+    name: item.name, emoji: item.emoji, price: item.price,
+    consumable: item.consumable || null, expiresInDays: item.expiresInDays || null,
+    boughtBy: item.boughtBy, boughtAt: Date.now()
+  });
   saveJSON(LS.worldNightstand, ns);
+}
+
+// 把床头柜里指定的一件挪走（用掉了 / 损坏了 / 过期自动清理，都走这个）
+function removeNightstandItem(threadId, nightstandItemId) {
+  const ns = loadJSON(LS.worldNightstand, {});
+  if (!ns[threadId]) return;
+  ns[threadId] = ns[threadId].filter(i => i.id !== nightstandItemId);
+  saveJSON(LS.worldNightstand, ns);
+}
+
+// 每次打开商店页面时，顺手把床头柜里"已经用掉/已经过期"的消耗品清出去，
+// 这样床头柜看起来才是"当下真实拥有的东西"，而不是一直堆着空壳
+function cleanupNightstand(threadId) {
+  const ns = loadJSON(LS.worldNightstand, {});
+  const list = ns[threadId] || [];
+  if (!list.length) return;
+
+  const shelfItems = getShelfItems();
+  const adultItems = getAdultItems();
+  const shelfRecords = getPurchaseRecords(threadId, LS.worldShelfBought);
+  const adultRecords = getPurchaseRecords(threadId, LS.worldAdultBought);
+
+  const stillValid = list.filter(ni => {
+    if (!ni.consumable) return true; // 非消耗品只靠"损坏"按钮手动清出，这里不自动动它
+    const records = ni.lsKey === LS.worldAdultBought ? adultRecords : shelfRecords;
+    const items = ni.lsKey === LS.worldAdultBought ? adultItems : shelfItems;
+    const item = items.find(i => i.id === ni.itemId);
+    const record = records.find(r => r.id === ni.recordId);
+    if (!item || !record) return false;
+    return isPurchaseActive(record, item);
+  });
+
+  if (stillValid.length !== list.length) {
+    ns[threadId] = stillValid;
+    saveJSON(LS.worldNightstand, ns);
+  }
 }
 
 // 每日定额逻辑
@@ -506,11 +570,11 @@ function maybeGiveDailyAllowance() {
 // ============================================================
 
 // 普通货架 / 成人用品区 通用渲染逻辑（两者机制一样：花 Leith 零花钱买，你买免费）
-// 消耗品（一次性/时效性）用完/过期后自动不再占着"已购买"的位置，可以重复购买
+// 消耗品：可以随时重复购买，每次购买都是独立一份，摆进床头柜各自计时/消耗
+// 非消耗品：买过一次就一直"已拥有"，不能重复买，床头柜里可以标记"损坏"来清出
 function renderPurchasableSection({ gridId, items, lsKey, threadId, emptyEmoji, emptyText, removeFn, notifyFn }) {
   const grid = $("#" + gridId);
   if (!grid) return;
-  const records = getPurchaseRecords(threadId, lsKey);
 
   if (!items.length) {
     grid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">${emptyEmoji}</div><p>${emptyText}</p></div>`;
@@ -518,22 +582,32 @@ function renderPurchasableSection({ gridId, items, lsKey, threadId, emptyEmoji, 
   }
 
   grid.innerHTML = items.map(item => {
-    // 非消耗品：只要买过一次就一直"已拥有"，不能重复买；消耗品：只要没有"当前有效"的购买记录，就还能买
-    const activeRecord = records.find(r => r.itemId === item.id && isPurchaseActive(r, item));
     const consumeBadge = item.consumable === "once" ? `<span class="consume-badge">一次性</span>`
       : item.consumable === "timed" ? `<span class="consume-badge">${item.expiresInDays || 1}天</span>` : "";
 
-    if (activeRecord) {
-      // 已经买了、还在有效期/没用掉：一次性商品显示"用掉"按钮，时效性商品显示剩余时间，都不能再买
-      const isOnce = item.consumable === "once";
-      const remainingMs = item.consumable === "timed" ? (item.expiresInDays || 1) * 86400000 - (Date.now() - activeRecord.boughtAt) : 0;
-      const remainingText = item.consumable === "timed" ? `还剩${Math.max(1, Math.ceil(remainingMs / 3600000))}小时` : "";
+    if (item.consumable) {
+      // 消耗品：不管买过多少次，货架这边永远可以再买——每次都是新的一份，去床头柜看有几份
+      const ownedCount = getNightstand(threadId).filter(ni => ni.itemId === item.id && ni.lsKey === lsKey).length;
+      return `
+        <div class="inventory-item">
+          <div class="item-emoji">${item.emoji || "🛍️"}</div>
+          <div>${escapeHtml(item.name)}${consumeBadge}</div>
+          <div class="item-name">¥${item.price}${ownedCount ? ` · 床头柜有${ownedCount}份` : ""}</div>
+          <div style="display:flex;gap:4px;margin-top:4px;">
+            <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-buy-item="${item.id}">购买</button>
+            <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-del-item="${item.id}">下架</button>
+          </div>
+        </div>`;
+    }
+
+    // 非消耗品：买过一次就不能再买了（哪怕已经在床头柜里被标记"损坏"清出去了，也不重新允许购买）
+    const owned = hasEverPurchased(threadId, lsKey, item.id);
+    if (owned) {
       return `
         <div class="inventory-item owned">
           <div class="item-emoji">${item.emoji || "🛍️"}</div>
           <div>${escapeHtml(item.name)}${consumeBadge}</div>
-          <div class="item-name">${isOnce ? "已购买" : remainingText || "拥有中"}</div>
-          ${isOnce ? `<button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:10px;padding:3px 8px;" data-use-item="${item.id}">用掉了</button>` : ""}
+          <div class="item-name">已拥有</div>
         </div>`;
     }
 
@@ -553,21 +627,17 @@ function renderPurchasableSection({ gridId, items, lsKey, threadId, emptyEmoji, 
     btn.addEventListener("click", () => {
       const item = items.find(i => i.id === btn.dataset.buyItem);
       if (!item) return;
-      addPurchaseRecord(threadId, lsKey, item.id, "user");
-      if (!item.consumable) {
-        // 不是消耗品才进床头柜长期展示；消耗品用不着占床头柜的位置
-        addNightstandItem(threadId, { ...item, boughtBy: "user" });
+      // 非消耗品已经买过就不再重复购买（按钮理论上不会出现在这种状态，这里是双重保险）
+      if (!item.consumable && hasEverPurchased(threadId, lsKey, item.id)) {
+        showToast("已经拥有这件了");
+        return;
       }
+      const record = addPurchaseRecord(threadId, lsKey, item.id, "user");
+      // 消耗品和非消耗品现在都会进床头柜——消耗品用完/过期会自动清出，非消耗品要手动点"损坏"才清出
+      addNightstandItem(threadId, { ...item, boughtBy: "user" }, record.id, lsKey);
       showToast(`已购买 ${item.emoji} ${item.name}`);
       if (notifyFn) notifyFn(item.name);
       renderShopPage();
-    });
-  });
-  grid.querySelectorAll("[data-use-item]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      markPurchaseUsed(threadId, lsKey, btn.dataset.useItem);
-      renderShopPage();
-      showToast("已标记为用掉了");
     });
   });
   grid.querySelectorAll("[data-del-item]").forEach(btn => {
@@ -585,6 +655,7 @@ function renderShopPage() {
   maybeGiveDailyAllowance();
 
   const threadId = getActiveThreadId();
+  cleanupNightstand(threadId); // 先清掉已用完/已过期的消耗品，床头柜才是"当下真实拥有的东西"
   const balance = getWallet(threadId);
   const savings = getSavings(threadId);
   const giftRecords = getGiftRecords(threadId);
@@ -647,18 +718,67 @@ function renderShopPage() {
     `).join("");
   }
 
-  // 床头柜
+  // 床头柜——现在消耗品和非消耗品都会摆在这里；
+  // 消耗品显示剩余时间/一份还是好几份，可以点"用掉了"；非消耗品可以点"损坏"清出去
   const nsGrid = $("#nightstandGrid");
   if (!nightstand.length) {
     nsGrid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">🛏️</div><p>还没有东西</p></div>`;
   } else {
-    nsGrid.innerHTML = nightstand.map(item => `
-      <div class="inventory-item">
-        <div class="item-emoji">${item.emoji || "📦"}</div>
-        <div>${escapeHtml(item.name)}</div>
-        <div class="item-name">${item.boughtBy === "leith" ? "Leith买的" : "你买的"}</div>
-      </div>
-    `).join("");
+    nsGrid.innerHTML = nightstand.map(item => {
+      const byLabel = item.boughtBy === "leith" ? "Leith买的" : "你买的";
+      if (item.consumable === "timed") {
+        const remainingMs = (item.expiresInDays || 1) * 86400000 - (Date.now() - item.boughtAt);
+        const remainingText = remainingMs > 0 ? `还剩${Math.max(1, Math.ceil(remainingMs / 3600000))}小时` : "已经过期";
+        return `
+          <div class="inventory-item">
+            <div class="item-emoji">${item.emoji || "📦"}</div>
+            <div>${escapeHtml(item.name)}</div>
+            <div class="item-name">${byLabel} · ${remainingText}</div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:10px;padding:3px 8px;" data-ns-use="${item.id}">用掉了</button>
+          </div>`;
+      }
+      if (item.consumable === "once") {
+        return `
+          <div class="inventory-item">
+            <div class="item-emoji">${item.emoji || "📦"}</div>
+            <div>${escapeHtml(item.name)}</div>
+            <div class="item-name">${byLabel}</div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:4px;font-size:10px;padding:3px 8px;" data-ns-use="${item.id}">用掉了</button>
+          </div>`;
+      }
+      // 非消耗品：没有"用掉"这回事，只有"损坏"清出床头柜
+      return `
+        <div class="inventory-item">
+          <div class="item-emoji">${item.emoji || "📦"}</div>
+          <div>${escapeHtml(item.name)}</div>
+          <div class="item-name">${byLabel}</div>
+          <button class="btn btn-danger btn-sm" style="margin-top:4px;font-size:10px;padding:3px 8px;" data-ns-damage="${item.id}">损坏</button>
+        </div>`;
+    }).join("");
+
+    nsGrid.querySelectorAll("[data-ns-use]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const ni = nightstand.find(i => i.id === btn.dataset.nsUse);
+        if (!ni) return;
+        markPurchaseRecordUsed(threadId, ni.lsKey, ni.recordId);
+        removeNightstandItem(threadId, ni.id);
+        insertNarration(threadId, `${ni.emoji} ${ni.name} 用掉了`);
+        showToast("已标记为用掉了");
+        renderShopPage();
+      });
+    });
+    nsGrid.querySelectorAll("[data-ns-damage]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const ni = nightstand.find(i => i.id === btn.dataset.nsDamage);
+        if (!ni) return;
+        if (!confirm(`确定「${ni.name}」损坏了吗？会从床头柜清出去。`)) return;
+        markPurchaseDamaged(threadId, ni.lsKey, ni.recordId);
+        removeNightstandItem(threadId, ni.id);
+        insertNarration(threadId, `${ni.emoji} ${ni.name} 损坏了`);
+        showToast("已清出床头柜");
+        renderShopPage();
+      });
+    });
   }
 }
 
@@ -2023,36 +2143,21 @@ function renderTokenBanner() {
   const banner = document.createElement("div");
   banner.className = "token-banner";
   banner.innerHTML = `
-    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。继续聊没问题，只是提醒一下——如果有想保留的片段，可以先选取导出，然后清理旧消息，读取会更轻快。</div>
+    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。不用担心记忆会丢——Leith 每天深夜都会把当天聊过的内容写成一篇日记，长期记得住。如果想让今天的日记提前写好，可以点下面这个按钮。</div>
     <div class="token-banner-actions">
-      <button id="tokenBannerCompress">压缩记忆</button>
+      <button id="tokenBannerCompress">现在就写今天的日记</button>
       <button id="tokenBannerDismiss">知道了</button>
     </div>
   `;
   slot.appendChild(banner);
 
   banner.querySelector("#tokenBannerCompress").onclick = async () => {
-    showToast("正在压缩记忆...");
-    const messages = getThreadMessages(threadId).filter(m => !m._isNarration && m.type !== "sticker");
-    if (messages.length < 10) { showToast("消息不够多，无需压缩"); return; }
-    const provider = getActiveProvider();
-    const apiKey = localStorage.getItem(LS.apiKey);
-    const customModel = ($("#customModelInput").value || "").trim();
-    const model = customModel || $("#modelSelect").value;
-    const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
-    if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-      const result = await window.Memory.compressMemory(threadId, messages, async (prompt) => {
-        return await callLLMForSummary({ provider, apiKey, model, temp, prompt });
-      });
-      if (result && result.keptMessages) {
-        const freshMsgs = getThreadMessages(threadId);
-        const narrations = freshMsgs.filter(m => m._isNarration);
-        saveThreadMessages(threadId, [...narrations, ...result.keptMessages]);
-        loadActiveThreadIntoChat();
-        showToast("记忆已压缩，旧消息已整理为摘要");
-      }
+    showToast("正在写今天的日记...");
+    const ok = await tryGenerateDiaryNow();
+    if (ok) {
+      showToast("今天的日记写好了，Leith 记住了");
     } else {
-      showToast("云端记忆未连接，无法压缩");
+      showToast("今天的日记已经写过了，或者暂时没有云端记忆连接");
     }
   };
   banner.querySelector("#tokenBannerDismiss").onclick = () => {
@@ -2254,16 +2359,15 @@ function buildWorldPromptBlock() {
   const giftRecords = getGiftRecords(threadId);
   const limitedItems = getLimitedItems();
   const adultItems = getAdultItems();
-  const adultRecords = getPurchaseRecords(threadId, LS.worldAdultBought);
   const shelfItems = getShelfItems();
-  const shelfRecords = getPurchaseRecords(threadId, LS.worldShelfBought);
   const nightstand = getNightstand(threadId);
 
   const gifts = giftRecords.length ? giftRecords.map(g => `${g.emoji}${g.name}`).join("、") : "无";
   const limited = limitedItems.length ? limitedItems.map(i => `${i.name}¥${i.price}`).join("、") : "无";
-  const availableAdult = adultItems.filter(i => !adultRecords.some(r => r.itemId === i.id && isPurchaseActive(r, i)));
+  // 消耗品永远可以再买；非消耗品买过就不再列为"可买"
+  const availableAdult = adultItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldAdultBought, i.id));
   const adult = availableAdult.length ? availableAdult.map(i => `${i.name}¥${i.price}`).join("、") : "无";
-  const availableShelf = shelfItems.filter(i => !shelfRecords.some(r => r.itemId === i.id && isPurchaseActive(r, i)));
+  const availableShelf = shelfItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldShelfBought, i.id));
   const shelf = availableShelf.length ? availableShelf.map(i => `${i.name}¥${i.price}`).join("、") : "无";
   const ns = nightstand.length ? nightstand.map(i => `${i.emoji}${i.name}`).join("、") : "空";
 
@@ -2324,14 +2428,13 @@ function handleAIActions(actions) {
       showGiftModal(limitedItem);
       needRefresh = true;
     } else if (action.type === "abuy") {
-      // Leith 买成人用品：从钱包扣，消耗品不进床头柜，只留购买记录
+      // Leith 买成人用品：从钱包扣。消耗品随时可以再买；非消耗品买过就不重复买
       const adultItem = findAdultItem(action.itemName);
       if (!adultItem) {
         showToast(`Leith 想买"${action.itemName}"但成人用品区没有`);
         return;
       }
-      const adultRecords = getPurchaseRecords(threadId, LS.worldAdultBought);
-      if (adultRecords.some(r => r.itemId === adultItem.id && isPurchaseActive(r, adultItem))) {
+      if (!adultItem.consumable && hasEverPurchased(threadId, LS.worldAdultBought, adultItem.id)) {
         showToast(`Leith 想买 ${adultItem.name} 但你们已经有了`);
         return;
       }
@@ -2341,8 +2444,8 @@ function handleAIActions(actions) {
         return;
       }
       setWallet(threadId, balance - adultItem.price);
-      addPurchaseRecord(threadId, LS.worldAdultBought, adultItem.id, "leith");
-      if (!adultItem.consumable) addNightstandItem(threadId, { ...adultItem, boughtBy: "leith" });
+      const adultRecord = addPurchaseRecord(threadId, LS.worldAdultBought, adultItem.id, "leith");
+      addNightstandItem(threadId, { ...adultItem, boughtBy: "leith" }, adultRecord.id, LS.worldAdultBought);
       insertNarration(threadId, `🔞 Leith买了成人用品 ${adultItem.emoji} ${adultItem.name}，花费¥${adultItem.price}。零钱包：¥${balance} → ¥${balance - adultItem.price}`);
       showToast(`Leith 买了 ${adultItem.emoji} ${adultItem.name}（¥${adultItem.price}）`);
       needRefresh = true;
@@ -2353,8 +2456,7 @@ function handleAIActions(actions) {
         showToast(`Leith 想买"${action.itemName}"但货架上没有`);
         return;
       }
-      const shelfRecords = getPurchaseRecords(threadId, LS.worldShelfBought);
-      if (shelfRecords.some(r => r.itemId === shelfItem.id && isPurchaseActive(r, shelfItem))) {
+      if (!shelfItem.consumable && hasEverPurchased(threadId, LS.worldShelfBought, shelfItem.id)) {
         showToast(`Leith 想买 ${shelfItem.name} 但你们已经有了`);
         return;
       }
@@ -2364,23 +2466,26 @@ function handleAIActions(actions) {
         return;
       }
       setWallet(threadId, balance2 - shelfItem.price);
-      addPurchaseRecord(threadId, LS.worldShelfBought, shelfItem.id, "leith");
-      if (!shelfItem.consumable) addNightstandItem(threadId, { ...shelfItem, boughtBy: "leith" });
+      const shelfRecord = addPurchaseRecord(threadId, LS.worldShelfBought, shelfItem.id, "leith");
+      addNightstandItem(threadId, { ...shelfItem, boughtBy: "leith" }, shelfRecord.id, LS.worldShelfBought);
       insertNarration(threadId, `🛍️ Leith买了 ${shelfItem.emoji} ${shelfItem.name}，花费¥${shelfItem.price}。零钱包：¥${balance2} → ¥${balance2 - shelfItem.price}`);
       showToast(`Leith 买了 ${shelfItem.emoji} ${shelfItem.name}（¥${shelfItem.price}）`);
       needRefresh = true;
     } else if (action.type === "use") {
-      // AI 在对话里判断某个一次性消耗品"用掉了"，自动标记（先查货架，再查成人用品）
+      // AI 在对话里判断某件消耗品"用掉了"，自动消耗床头柜里最早的一份（先买的先用）
       let item = findShelfItem(action.itemName);
       let lsKey = LS.worldShelfBought;
       if (!item) { item = findAdultItem(action.itemName); lsKey = LS.worldAdultBought; }
-      if (!item || item.consumable !== "once") return; // 不是一次性消耗品就不处理，避免误消耗
+      if (!item || !item.consumable) return; // 不是消耗品就不处理，避免误消耗
 
-      const records = getPurchaseRecords(threadId, lsKey);
-      const activeRecord = records.find(r => r.itemId === item.id && isPurchaseActive(r, item));
-      if (!activeRecord) return; // 没有可用的库存，没什么好标记的
+      const ns = getNightstand(threadId)
+        .filter(ni => ni.itemId === item.id && ni.lsKey === lsKey)
+        .sort((a, b) => a.boughtAt - b.boughtAt);
+      const target = ns[0];
+      if (!target) return; // 床头柜里没有可用的了，没什么好消耗的
 
-      markPurchaseUsed(threadId, lsKey, item.id);
+      markPurchaseRecordUsed(threadId, lsKey, target.recordId);
+      removeNightstandItem(threadId, target.id);
       insertNarration(threadId, `${item.emoji} ${item.name} 用掉了`);
       needRefresh = true;
     }
@@ -2418,7 +2523,7 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
   if (!provider || !apiKey || !model) return '';
   try {
     const messages = [{ role: 'user', content: prompt }];
-    const systemPrompt = '你是一个记忆压缩助手。请把对话总结成简短的事实描述。';
+    const systemPrompt = '你是Leith，正在以自己的视角回顾和记录。不要跳出角色，不要提及自己是AI。';
     let result;
     if (provider.apiStyle === 'anthropic') {
       result = await streamAnthropic({
@@ -2438,6 +2543,71 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
     console.error('记忆压缩 LLM 调用失败:', e);
     return '';
   }
+}
+
+// ============================================================
+// 每日日记：不再按消息数触发，改成每天固定生成一次，
+// Leith 以第一人称视角记下这一天，更像"他自己在记东西"
+// ============================================================
+const DIARY_LAST_DATE_LS = "companion_diary_last_date_v1";
+
+function getLastDiaryDate() {
+  return localStorage.getItem(DIARY_LAST_DATE_LS) || "";
+}
+function setLastDiaryDate(dateStr) {
+  localStorage.setItem(DIARY_LAST_DATE_LS, dateStr);
+}
+
+// 手动触发：把"今天"写成日记（供 token 提示条里的按钮使用）
+async function tryGenerateDiaryNow() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return await tryGenerateDiaryNowFor(todayStr);
+}
+
+// 每天该写日记的时候自动检查一次：昨天的日记如果还没写（比如昨晚没打开App），
+// 会在今天打开App时补写一次；今天的日记则等到"今天真的过完了"（本地深夜之后）再写，
+// 不会在下午聊到一半就把当天记录提前写掉
+async function checkAndGenerateDiary() {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const lastDone = getLastDiaryDate();
+  if (lastDone === todayStr) return; // 今天已经处理过，不用重复检查
+
+  // 补写：如果上次记录的日期比今天早不止一天，说明中间有断档，把最近没写的那天补上
+  // （这里只补写"昨天"，避免应用长期没打开时一次性发起过多请求）
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  if (lastDone && lastDone < yesterday) {
+    await tryGenerateDiaryNowFor(yesterday);
+  }
+
+  // 深夜（0点-4点）打开或停留在App里时，把"昨天"这一整天写成日记
+  // 用本地时间判断，符合"深夜写今天发生的事"的直觉
+  if (now.getHours() < 4) {
+    const targetDate = yesterday;
+    if (getLastDiaryDate() !== targetDate) {
+      await tryGenerateDiaryNowFor(targetDate);
+    }
+  }
+}
+
+async function tryGenerateDiaryNowFor(dateStr) {
+  if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return false;
+  const provider = getActiveProvider();
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const customModel = ($("#customModelInput").value || "").trim();
+  const model = customModel || $("#modelSelect").value;
+  const temp = 0.8;
+  if (!provider || !apiKey || !model) return false;
+
+  const result = await window.Memory.generateDiary(async (prompt) => {
+    return await callLLMForSummary({ provider, apiKey, model, temp, prompt });
+  }, dateStr);
+
+  if (result && result.dateStr) {
+    setLastDiaryDate(result.dateStr);
+    return true;
+  }
+  return false;
 }
 
 // ============================================================
@@ -2837,22 +3007,10 @@ async function sendChat(overrideContent) {
     const freshMessages = getThreadMessages(threadId);
     freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
     saveThreadMessages(threadId, freshMessages);
-    // 同步到云端短期记忆
+    // 同步到云端短期记忆——长期记忆现在改由每天深夜的日记生成负责，
+    // 这里不再按消息数机械压缩
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
       window.Memory.saveShortTerm(threadId, "assistant", fullReply);
-      // 短期记忆超阈值时自动压缩（滑动窗口：压缩旧消息，保留最近消息）
-      const cloudShortTermCount = freshMessages.filter(m => !m._isNarration && m.type !== "sticker").length;
-      if (cloudShortTermCount >= 20) {
-        const result = await window.Memory.compressMemory(threadId, freshMessages.filter(m => !m._isNarration), async (prompt) => {
-          return await callLLMForSummary({ provider, apiKey, model, temp, prompt });
-        });
-        // 压缩后更新本地消息（只保留最近的一半）
-        if (result && result.keptMessages) {
-          const narrations = freshMessages.filter(m => m._isNarration);
-          saveThreadMessages(threadId, [...narrations, ...result.keptMessages]);
-          loadActiveThreadIntoChat();
-        }
-      }
     }
     renderThreadList();
     renderTokenBanner();
@@ -3516,9 +3674,10 @@ async function renderMemoryTree() {
   const threadId = getActiveThreadId();
 
   // 并行加载所有分支
-  const [profileList, coreList, summaryList, archiveList, shortTermList, readingList] = await Promise.all([
+  const [profileList, coreList, diaryList, summaryList, archiveList, shortTermList, readingList] = await Promise.all([
     window.Memory.listProfile(),
     window.Memory.list(),
+    window.Memory.listDiaries ? window.Memory.listDiaries(60) : Promise.resolve([]),
     window.Memory.isReady() ? window.Memory.listSummary(threadId) : Promise.resolve([]),
     window.Memory.listArchive(),
     window.Memory.isReady() ? window.Memory.listShortTermDetail(threadId, 30) : Promise.resolve([]),
@@ -3542,9 +3701,10 @@ async function renderMemoryTree() {
   // 分支定义
   const branches = [
     { id: "profile", icon: "👤", label: "人设档案", color: "#6B9BD2", bgColor: "rgba(107,155,210,.12)", items: profileList, canAdd: true },
+    { id: "diary", icon: "📔", label: "日记（每日自动生成）", color: "#C98A5E", bgColor: "rgba(201,138,94,.12)", items: diaryList, canAdd: false },
     { id: "core", icon: "💎", label: "核心记忆", color: "#DBA95A", bgColor: "rgba(219,169,90,.12)", items: coreList, canAdd: true },
     { id: "reading", icon: "📖", label: "共读记录", color: "#7FA97F", bgColor: "rgba(127,169,127,.12)", items: readingList, canAdd: true },
-    { id: "summary", icon: "💬", label: "对话摘要", color: "#7B8EC4", bgColor: "rgba(123,142,196,.12)", items: summaryList, canAdd: false },
+    { id: "summary", icon: "💬", label: "对话摘要（旧版）", color: "#7B8EC4", bgColor: "rgba(123,142,196,.12)", items: summaryList, canAdd: false },
     { id: "short_term", icon: "💭", label: "近期对话", color: "#D9708C", bgColor: "rgba(217,112,140,.12)", items: shortTermList, canAdd: false },
     { id: "archive", icon: "📨", label: "归档信件", color: "#4A5A8A", bgColor: "rgba(74,90,138,.12)", items: archiveList, canAdd: true },
   ];
@@ -4870,3 +5030,8 @@ if ($("#testSupabaseBtn")) {
 // Supabase 连接是异步的（DOMContentLoaded 触发），延迟刷新状态
 setTimeout(updateSupabaseStatus, 2000);
 setTimeout(updateSupabaseStatus, 5000);
+
+// 每日日记：等云端记忆连接稳定后检查一次是否需要补写/生成，
+// 之后每 30 分钟再检查一次，覆盖"App 一直开着跨过了深夜"的情况
+setTimeout(() => { checkAndGenerateDiary().catch(e => console.error("日记检查失败:", e)); }, 6000);
+setInterval(() => { checkAndGenerateDiary().catch(e => console.error("日记检查失败:", e)); }, 30 * 60 * 1000);

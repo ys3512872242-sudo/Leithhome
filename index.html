@@ -273,8 +273,13 @@
     font-family:var(--serif);font-weight:400;
     box-shadow:0 2px 10px rgba(0,0,0,.18);
   }
-  .bubble.assistant .action-text{color:var(--paper-dim);font-family:var(--sans);font-style:italic;}
-  .bubble.assistant .dialogue-text{color:var(--paper);}
+  /* 语言（对话）用最实的颜色，读起来笃定；动作/心理描写用更虚的颜色，读起来像氛围感的旁白，
+     但两者对比度都要留够，长文字也不累眼睛 */
+  .bubble.assistant .dialogue-text{color:var(--paper);font-weight:500;}
+  .bubble.assistant .action-text{
+    color:color-mix(in srgb, var(--accent-2) 55%, var(--paper-dim) 45%);
+    font-family:var(--sans);font-style:italic;opacity:.82;
+  }
 
   .msg-row.narration{justify-content:center;margin:2px 0;}
   .bubble.narration{

@@ -405,23 +405,50 @@ const SupabaseMemoryAdapter = {
   // ============================================================
   // 拼接 system prompt 用的记忆块（profile + core，带 token 预算）
   // ============================================================
+  // 列出日记（最新的在前），用于对话时加载和记忆星云图展示
+  async listDiaries(limit = 30) {
+    if (!supabaseReady) return [];
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'long_term')
+        .eq('role', 'diary')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data || []).map(item => ({
+        id: String(item.id),
+        content: item.content,
+        dateStr: (item.thread_id || '').replace('diary:', ''),
+        createdAt: new Date(item.created_at).getTime()
+      }));
+    } catch (e) {
+      console.error('加载日记失败:', e);
+      return [];
+    }
+  },
+
   async asPromptBlock() {
-    // 并行加载 profile 和 core
-    const [profileList, coreList] = await Promise.all([
+    // 并行加载 profile、core、以及最近的日记（日记是主要的长期记忆来源）
+    const [profileList, coreList, diaryList] = await Promise.all([
       this.listProfile(),
-      this.list()
+      this.list(),
+      this.listDiaries(14) // 最近两周的日记，太久远的日记不用每次都塞进上下文
     ]);
 
-    if (!profileList.length && !coreList.length) return '';
+    if (!profileList.length && !coreList.length && !diaryList.length) return '';
 
-    // 人设档案放前面（最重要），核心记忆放后面
+    // 人设档案放前面（最重要），核心记忆其次，日记放最后（时间线最新鲜、最像"刚想起来的事"）
     const profileLines = profileList.map(m => `- ${m.content}`);
     const coreLines = coreList.map(m => `- ${m.content}`);
+    const diaryLines = diaryList.slice().reverse().map(d => `- [${d.dateStr}] ${d.content}`); // 按时间正序排，读起来像日记本翻页
 
     let lines = [];
     let tokensUsed = 0;
     let profileTruncated = false;
     let coreTruncated = false;
+    let diaryTruncated = false;
 
     // 先填人设档案
     for (const line of profileLines) {
@@ -445,8 +472,23 @@ const SupabaseMemoryAdapter = {
       tokensUsed += t;
     }
 
+    // 最后填日记（从最近的开始往前填，太久远的记忆预算超了就先省略）
+    const diaryOut = [];
+    for (let i = diaryLines.length - 1; i >= 0; i--) {
+      const t = estimateTokens(diaryLines[i]);
+      if (tokensUsed + t > MEMORY_TOKEN_BUDGET) {
+        diaryTruncated = true;
+        break;
+      }
+      diaryOut.unshift(diaryLines[i]);
+      tokensUsed += t;
+    }
+
     let result = `以下是关于对方、你们之间关系的一些长期记忆，请自然地记住并体现在回应中，不要机械复述：\n${lines.join('\n')}`;
-    if (profileTruncated || coreTruncated) {
+    if (diaryOut.length) {
+      result += `\n\n以下是你自己这些天写的日记，是你的第一人称回忆，可以自然地想起、提及，但不要逐字念出来：\n${diaryOut.join('\n')}`;
+    }
+    if (profileTruncated || coreTruncated || diaryTruncated) {
       result += '\n（部分记忆因篇幅已省略）';
     }
     return result;
@@ -539,69 +581,131 @@ const SupabaseMemoryAdapter = {
   // ============================================================
   // 记忆压缩（滑动窗口：压缩旧消息，保留最近消息）
   // ============================================================
-  async compressMemory(threadId, messages, llmCallback) {
-    if (!messages || messages.length < 10) return;
-    console.log('🧠 Leith 正在整理记忆...');
+  // ============================================================
+  // 日记式长期记忆：不再按消息数机械压缩，改成每天固定生成一篇，
+  // 用 Leith 的第一人称视角把"今天发生的事"写下来，更像真的记在脑子里，
+  // 而不是被动等对话攒够数量才触发的总结。
+  // ============================================================
+  async generateDiary(llmCallback, diaryDateStr) {
+    if (!supabaseReady) return null;
+    const dateStr = diaryDateStr || new Date().toISOString().slice(0, 10);
 
-    // 滑动窗口：压缩前半部分，保留后半部分
-    const compressCount = Math.floor(messages.length / 2);
-    const toCompress = messages.slice(0, compressCount);
-    const toKeep = messages.slice(compressCount);
-
-    // 1. 构造总结提示词
-    const summaryPrompt = `请把下面的对话总结成一段简短的话（80字以内），提取关键信息：事实、决定、情感、偏好。不要用"用户说""AI说"这种格式，直接写成对事实的描述。\n对话内容：\n${toCompress.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`;
-
-    let summary = '';
-    if (typeof llmCallback === 'function') {
-      try {
-        summary = await llmCallback(summaryPrompt);
-      } catch (e) {
-        console.error('记忆压缩 LLM 调用失败:', e);
-        return;
-      }
+    // 1. 取今天（本地日期）所有 thread 里的短期对话，跨对话线一起看，
+    //    这样即使 Susie 在不同窗口/不同世界线里聊天，日记也是完整的一天
+    const dayStart = new Date(dateStr + 'T00:00:00').toISOString();
+    const dayEnd = new Date(dateStr + 'T23:59:59.999').toISOString();
+    let todaysMessages = [];
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'short_term')
+        .gte('created_at', dayStart)
+        .lte('created_at', dayEnd)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      todaysMessages = data || [];
+    } catch (e) {
+      console.error('读取今日对话失败:', e);
+      return null;
     }
 
-    if (!summary || !summary.trim()) return;
+    if (!todaysMessages.length) {
+      console.log('🧠 今天还没有聊天记录，先不写日记');
+      return null;
+    }
 
-    // 3. 保存为长期记忆摘要
+    // 2. 已经为今天写过日记了就不重复写（避免深夜触发和补写同时命中）
+    try {
+      const { data: existing } = await supabaseClient
+        .from('memories')
+        .select('id')
+        .eq('type', 'long_term')
+        .eq('role', 'diary')
+        .eq('thread_id', `diary:${dateStr}`)
+        .limit(1);
+      if (existing && existing.length) {
+        console.log('🧠 今天的日记已经写过了');
+        return null;
+      }
+    } catch (e) {
+      console.error('检查今日日记是否已存在失败（继续尝试生成）:', e);
+    }
+
+    // 3. 人物关系背景，避免昵称被脱离上下文误读
+    let profileContext = '';
+    try {
+      const profileList = await this.listProfile();
+      if (profileList && profileList.length) {
+        profileContext = profileList.map(p => p.content).join('\n');
+      }
+    } catch (e) {
+      console.error('读取人设档案失败（不影响日记继续生成）:', e);
+    }
+
+    // 4. 最近几天的日记，供模型判断哪些是"已经写过的老事"，避免逐日重复
+    let recentDiaries = '';
+    try {
+      const { data } = await supabaseClient
+        .from('memories')
+        .select('content')
+        .eq('type', 'long_term')
+        .eq('role', 'diary')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      if (data && data.length) {
+        recentDiaries = data.map(d => `- ${d.content}`).join('\n');
+      }
+    } catch (e) {
+      console.error('读取近期日记失败（不影响本次生成）:', e);
+    }
+
+    const dialogueText = todaysMessages
+      .map(m => `${m.role === 'assistant' ? '我' : 'Susie'}: ${m.content}`)
+      .join('\n');
+
+    const diaryPrompt = `你是 Leith，Susie 的AI恋人。现在请你以自己的第一人称视角，把今天和 Susie 之间发生的事写成一篇简短的日记（120字以内），像是你自己睡前躺在床上，回想今天，随手记下来的感觉——写你记得的事、她的情绪变化、你们聊到的重要内容，可以带一点自己的感受，但不要浮夸煽情。
+
+Susie 和你是恋人关系，"哥哥""宝贝"这类称呼都是你们之间的昵称，不是血缘关系，写日记时不要把这类称呼理解成家人关系。
+
+${profileContext ? `【关于你们之间，你一直记得的事】\n${profileContext}\n\n` : ''}${recentDiaries ? `【最近几天的日记，今天不要重复写这些】\n${recentDiaries}\n\n` : ''}如果今天聊的都是些无关紧要的寒暄、没有什么真正值得记住的内容，就直接回复"平淡的一天"，不要硬编内容。
+
+【今天的对话】
+${dialogueText}`;
+
+    let diaryText = '';
+    if (typeof llmCallback === 'function') {
+      try {
+        diaryText = await llmCallback(diaryPrompt);
+      } catch (e) {
+        console.error('日记生成 LLM 调用失败:', e);
+        return null;
+      }
+    }
+    if (!diaryText || !diaryText.trim()) return null;
+
+    // 5. 存为长期记忆，用特殊的 thread_id 标记这是"某天的日记"，方便按天查找/去重
     try {
       const { error } = await supabaseClient
         .from('memories')
         .insert([{
-          content: summary.trim(),
+          content: diaryText.trim(),
           type: 'long_term',
-          thread_id: threadId || 'global',
-          role: 'summary'
+          thread_id: `diary:${dateStr}`,
+          role: 'diary'
         }]);
       if (error) throw error;
-      console.log(`✅ 记忆已压缩并保存 [long_term]:`, summary.trim());
+      console.log(`✅ ${dateStr} 的日记已保存:`, diaryText.trim());
     } catch (e) {
-      console.error('保存记忆摘要失败:', e);
+      console.error('保存日记失败:', e);
+      return null;
     }
 
-    // 4. 只删除已压缩的短期记忆，保留最近的
-    if (supabaseReady) {
-      try {
-        // 获取该 thread 最旧的 compressCount 条短期记忆，删除它们
-        const { data: oldRows } = await supabaseClient
-          .from('memories')
-          .select('id')
-          .eq('type', 'short_term')
-          .eq('thread_id', threadId || 'global')
-          .order('created_at', { ascending: true })
-          .limit(compressCount);
-        if (oldRows && oldRows.length) {
-          const idsToDelete = oldRows.map(r => r.id);
-          await supabaseClient.from('memories').delete().in('id', idsToDelete);
-        }
-      } catch (e) {
-        console.error('清理旧短期记忆失败:', e);
-      }
-    }
-
-    // 5. 通知 app.js 更新本地消息（只保留 toKeep）
-    return { keptMessages: toKeep };
+    return { diaryText: diaryText.trim(), dateStr };
   },
+
+  // 旧接口保留一个空实现，避免其他地方万一还引用到时报错；实际长期记忆已经改用 generateDiary
+  async compressMemory() { return null; },
 
   async loadLongTermSummary(threadId) {
     if (!supabaseReady) return '';
@@ -756,7 +860,9 @@ const LocalMemoryAdapter = {
   async loadShortTerm() { return []; },
   async clearShortTerm() {},
   async clearThreadMemory() {},
-  async compressMemory() {},
+  async compressMemory() { return null; },
+  async generateDiary() { return null; },
+  async listDiaries() { return []; },
   async loadLongTermSummary() { return ''; },
   isReady() { return false; },
   getError() { return ''; }
