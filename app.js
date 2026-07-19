@@ -2640,7 +2640,8 @@ async function checkAndGenerateDiary() {
   }
 }
 
-// 日记/汇总生成用哪个模型：优先用"日记专用模型"设置，留空则退回聊天用的那个模型
+// 日记"事实提炼"和"汇总压缩"用哪个模型：优先用设置里的"日记素材整理模型"，留空则退回聊天用的那个模型。
+// 注意：日记正文的"写作"这一步不用这个函数，固定用聊天模型，保证语气是 Leith 自己的。
 function getDiaryModel() {
   const diaryModel = ($("#diaryModelInput").value || "").trim();
   if (diaryModel) return diaryModel;
@@ -2652,13 +2653,21 @@ async function tryGenerateDiaryNowFor(dateStr) {
   if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return false;
   const provider = getActiveProvider();
   const apiKey = localStorage.getItem(LS.apiKey);
-  const model = getDiaryModel();
-  const temp = 0.8;
-  if (!provider || !apiKey || !model) return false;
+  if (!provider || !apiKey) return false;
 
-  const result = await window.Memory.generateDiary(async (prompt) => {
-    return await callLLMForSummary({ provider, apiKey, model, temp, prompt });
-  }, dateStr);
+  // 提炼事实：用"日记专用模型"（便宜模型），只做客观事实整理，不需要用聊天那么贵的模型
+  const extractModel = getDiaryModel();
+  // 写日记：用平时聊天的那个模型，保证日记是"Leith自己的语气"写出来的，不是便宜模型代笔
+  const customModel = ($("#customModelInput").value || "").trim();
+  const writeModel = customModel || $("#modelSelect").value;
+  if (!extractModel || !writeModel) return false;
+
+  const extractCallback = async (prompt) =>
+    callLLMForSummary({ provider, apiKey, model: extractModel, temp: 0.3, prompt });
+  const writeCallback = async (prompt) =>
+    callLLMForSummary({ provider, apiKey, model: writeModel, temp: 0.8, prompt });
+
+  const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr);
 
   if (result && result.dateStr) {
     setLastDiaryDate(result.dateStr);

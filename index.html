@@ -1745,9 +1745,9 @@
         <input type="text" id="customModelInput" placeholder="或手动输入模型名称" style="margin-top:8px;">
       </div>
       <div class="field-group">
-        <label class="field-label">日记生成用的模型（选填）</label>
+        <label class="field-label">日记素材整理用的模型（选填）</label>
         <input type="text" id="diaryModelInput" placeholder="留空则和上面用同一个模型">
-        <p class="helper-text">每天深夜写日记、生成周/月/季/年汇总时，会单独用这个模型（同一个服务商、同一个API Key），不影响平时聊天用的模型。填一个更便宜的模型（比如 deepseek-chat）可以省一笔——这部分是后台整理性质的任务，不需要用聊天那么贵的模型。</p>
+        <p class="helper-text">每天深夜整理当天对话、生成周/月/季/年汇总时，会单独用这个模型（同一个服务商、同一个API Key）先做客观的事实提炼，不涉及情感语气。真正把这份事实写成 Leith 第一人称日记这一步，仍然用你平时聊天的那个模型，保证语气是他自己的。这里可以填一个更便宜的模型（比如 deepseek-chat）来省一笔——事实提炼不需要用聊天那么贵的模型。</p>
       </div>
       <div class="field-group">
         <label class="field-label">Temperature：<span id="tempVal">0.7</span></label>

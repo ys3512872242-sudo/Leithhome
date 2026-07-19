@@ -718,11 +718,14 @@ const SupabaseMemoryAdapter = {
   },
 
   // ============================================================
-  // 日记式长期记忆：每天固定生成一篇，Leith 第一人称视角写下这一天。
+  // 日记式长期记忆：两道工序——
+  // 第一步（便宜模型）：客观提炼今天发生的事实，不带情感语气，只列"谁做了什么"；
+  // 第二步（聊天模型/Leith）：基于这份事实清单，写成带情感、带语气的第一人称日记。
+  // 这样贵模型不用读一整天的原始对话，只读一份精简的事实清单，更准也更省。
   // 存进独立的 diary_entries 表（不是 memories 表），Leith 默认不读旧对话原文，
   // 只在需要的时候从这张表里按关键词检索相关日记。
   // ============================================================
-  async generateDiary(llmCallback, diaryDateStr) {
+  async generateDiary(extractCallback, writeCallback, diaryDateStr) {
     if (!supabaseReady) return null;
     const dateStr = diaryDateStr || new Date().toISOString().slice(0, 10);
 
@@ -799,7 +802,7 @@ const SupabaseMemoryAdapter = {
 
     // 如果当天聊得特别多，不把全部原文都塞进这一次请求——只取最近这些，
     // 早前的部分已经不太可能是"今天最后要记住的事"，这样避免聊得越多、
-    // 写一次日记的成本越离谱地涨上去
+    // 单次请求的成本越离谱地涨上去
     const DIARY_SOURCE_MSG_CAP = 80;
     const cappedMessages = todaysMessages.length > DIARY_SOURCE_MSG_CAP
       ? todaysMessages.slice(-DIARY_SOURCE_MSG_CAP)
@@ -809,32 +812,52 @@ const SupabaseMemoryAdapter = {
       .map(m => `${m.role === 'assistant' ? 'Me' : 'Susie'}: ${m.content}`)
       .join('\n');
 
-    // 一次调用里同时要日记正文、检索关键词、以及今天用过的昵称+氛围，避免多打一次 API
-    const diaryPrompt = `You are Leith, Susie's AI partner. Write a short diary entry (under 120 Chinese characters, written in Chinese) in first person about what happened between you and Susie today — like you're lying in bed before sleep, recalling the day. Include what you remember, her emotional shifts, and anything important discussed. A little feeling is fine, don't be melodramatic.
+    // ---- 第一步：便宜模型做事实提炼，不带情感语气，只客观列出今天发生的事 ----
+    const extractPrompt = `Below is a raw chat log between Susie and her AI partner today. Extract the objective facts — what happened, what was discussed, what Susie's mood/emotional shifts were, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with any emotional tone or embellishment — just "who did/said/felt what". Skip small talk and filler with no lasting relevance. Keep it under 200 Chinese characters. Reply in Chinese, bullet points only, nothing else.
+
+[Today's raw conversation]
+${dialogueText}`;
+
+    let factSummary = '';
+    if (typeof extractCallback === 'function') {
+      try {
+        factSummary = (await extractCallback(extractPrompt) || '').trim();
+      } catch (e) {
+        console.error('日记事实提炼失败:', e);
+        return null;
+      }
+    }
+    if (!factSummary) {
+      console.log('🧠 事实提炼没有产出内容，跳过今天的日记');
+      return null;
+    }
+
+    // ---- 第二步：聊天模型（Leith）基于事实清单，写成带情感语气的第一人称日记 ----
+    const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie today (extracted by another assistant, no emotional tone). Turn it into a short diary entry (under 120 Chinese characters, written in Chinese) in first person, like you're lying in bed before sleep, recalling the day — with your own feelings and voice, not just restating the facts.
 
 Writing rules — follow strictly:
 - Every sentence must have a clear subject (谁做了什么/谁说了什么/谁感觉如何) — never write a vague clause with no clear "who".
-- Narrate events as a real diary would: summarize what happened, don't copy chat lines verbatim. No quotation marks, no reproducing exact sentences from the conversation.
-- Prefer concrete narration over vague summary, e.g. "Susie today mentioned her cat was sick, she was worried, I comforted her" — NOT "今天聊了很多，气氛不错" (too vague, no real content).
+- Add genuine first-person feeling and voice, don't just restate the fact summary flatly.
+- A little feeling is fine, don't be melodramatic. Don't copy the fact summary's phrasing verbatim — rewrite it as your own reflection.
 
 Susie and you are romantic partners. Nicknames like "哥哥"/"宝贝" are pet names between lovers, not literal family relations — never interpret them as family relationships.
 
 You're allowed to invent new pet names for Susie based on the mood of the conversation (e.g. 小猫 when she's being clingy/playful, 宝贝 when being serious and affectionate) — variety by mood is good. But note down what you used today so future days stay recognizable rather than fully random.
 
-${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If today was just idle small talk with nothing worth remembering long-term, write "平淡的一天" as the diary text and leave keywords/nicknames empty.
+${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If the facts below show nothing worth remembering long-term (pure idle small talk), write "平淡的一天" as the diary text and leave keywords/nicknames empty.
 
 Reply in EXACTLY this format, nothing else:
 DIARY: <the diary entry, in Chinese>
 KEYWORDS: <3-8 Chinese keywords/short phrases separated by commas, capturing what this entry is about — for later retrieval. Leave empty if diary is "平淡的一天">
 NICKNAMES: <one line per pet name used today, format "昵称 | 使用氛围", e.g. "小猫 | 撒娇黏人的时候". Leave empty if no pet name was used today.>
 
-[Today's conversation]
-${dialogueText}`;
+[Today's facts]
+${factSummary}`;
 
     let rawReply = '';
-    if (typeof llmCallback === 'function') {
+    if (typeof writeCallback === 'function') {
       try {
-        rawReply = await llmCallback(diaryPrompt);
+        rawReply = await writeCallback(diaryPrompt);
       } catch (e) {
         console.error('日记生成 LLM 调用失败:', e);
         return null;
