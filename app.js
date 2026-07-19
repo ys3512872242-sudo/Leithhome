@@ -872,7 +872,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
     }
     clearInterval(timeoutTimer);
     const freshMessages = getThreadMessages(threadId);
-    freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
+    freshMessages.push({ role: "assistant", content: fullReply, _id: uid(), _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
     // 同步到云端短期记忆
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
@@ -1111,7 +1111,15 @@ function loadActiveThreadIntoChat() {
     box.appendChild(empty);
   } else {
     messages.forEach(msg => renderMessage(msg, { noScroll: true }));
-    box.scrollTop = box.scrollHeight;
+    // 用 double-rAF 确保浏览器完成布局和图片解码后再滚动到底部——
+    // 直接同步设置 scrollTop 时，如果消息包含贴纸/图片等异步加载的内容，
+    // scrollHeight 还没算到最终值，会导致滚动位置不对（停在中间某条消息，比如买东西那条附近，
+    // 而不是真正的底部），这也是之前"刷新页面后要一直往下滑"这个问题的根源
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        box.scrollTop = box.scrollHeight;
+      });
+    });
   }
   renderTokenBanner();
 }
@@ -1516,6 +1524,20 @@ function renderMessage(msg, opts = {}) {
 
   row.appendChild(bubble);
 
+  // 标记为重要记忆：只对 Leith 的回复生效，常驻显示在气泡右下角（平时淡淡的，标记后变亮），
+  // 不需要先点开气泡的操作栏才能看到——情绪上头的时候更容易第一时间点掉它
+  if (msg.role === "assistant" && msg.type !== "sticker") {
+    const pinBtn = document.createElement("button");
+    pinBtn.className = "msg-pin-btn" + (msg.pinned ? " pinned" : "");
+    pinBtn.title = msg.pinned ? "已标记为重要记忆" : "标记为重要记忆";
+    pinBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="${msg.pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.9 6.26L21 9.27l-4.5 4.39L17.8 20 12 16.9 6.2 20l1.3-6.34L3 9.27l6.1-1.01L12 2z"/></svg>`;
+    pinBtn.onclick = (e) => {
+      e.stopPropagation();
+      togglePinMessage(msg._id, pinBtn);
+    };
+    bubble.appendChild(pinBtn);
+  }
+
   // 操作栏：编辑（用户消息）/ 重新生成（AI消息）/ 删除（全部），统一放进一个工具条
   const actions = document.createElement("div");
   actions.className = "msg-actions";
@@ -1628,6 +1650,25 @@ function exitSelectMode() {
 // ============================================================
 // 删除单条消息（本地 + 云端同步）
 // ============================================================
+// 标记/取消标记某条 Leith 回复为"重要记忆"——只改本地存储的这条消息，
+// 不额外调用任何 API、不花 token。当天写日记时会读取所有被标记的消息，
+// 作为重点素材让日记多着墨、写得更详细一点。
+function togglePinMessage(msgId, btnEl) {
+  const threadId = getActiveThreadId();
+  const msgs = getThreadMessages(threadId);
+  const msg = msgs.find(m => m._id === msgId);
+  if (!msg) return;
+  msg.pinned = !msg.pinned;
+  saveThreadMessages(threadId, msgs);
+
+  if (btnEl) {
+    btnEl.classList.toggle("pinned", msg.pinned);
+    btnEl.title = msg.pinned ? "已标记为重要记忆" : "标记为重要记忆";
+    btnEl.querySelector("svg").setAttribute("fill", msg.pinned ? "currentColor" : "none");
+  }
+  showToast(msg.pinned ? "已标记为重要记忆，写日记时会重点保留" : "已取消标记");
+}
+
 async function deleteMessage(msgId, rowEl) {
   const threadId = getActiveThreadId();
   let messages = getThreadMessages(threadId);
@@ -1853,7 +1894,7 @@ async function regenerateFromMessage(userMsg) {
     clearInterval(timeoutTimer);
 
     const freshMessages = getThreadMessages(threadId);
-    freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
+    freshMessages.push({ role: "assistant", content: fullReply, _id: uid(), _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
     renderThreadList();
     // 不在旁白回复后触发 token banner（避免每次买东西都弹提醒）
@@ -2117,7 +2158,19 @@ function showExportImagePreview(imgUrl) {
 // Token 用量估算
 // ============================================================
 const TOKEN_WARN_THRESHOLD = 6000;
-let tokenBannerDismissedForThread = {};
+const TOKEN_BANNER_DISMISSED_LS = "companion_token_banner_dismissed_v1";
+
+function getTokenBannerDismissedMap() {
+  return loadJSON(TOKEN_BANNER_DISMISSED_LS, {});
+}
+function isTokenBannerDismissed(threadId) {
+  return !!getTokenBannerDismissedMap()[threadId];
+}
+function setTokenBannerDismissed(threadId) {
+  const map = getTokenBannerDismissedMap();
+  map[threadId] = true;
+  saveJSON(TOKEN_BANNER_DISMISSED_LS, map);
+}
 
 function estimateTokens(threadId) {
   const messages = getThreadMessages(threadId);
@@ -2130,7 +2183,7 @@ function renderTokenBanner() {
   const slot = $("#tokenBannerSlot");
   slot.innerHTML = "";
 
-  if (tokenBannerDismissedForThread[threadId]) return;
+  if (isTokenBannerDismissed(threadId)) return;
 
   const estTokens = estimateTokens(threadId);
   if (estTokens < TOKEN_WARN_THRESHOLD) return;
@@ -2138,9 +2191,9 @@ function renderTokenBanner() {
   const banner = document.createElement("div");
   banner.className = "token-banner";
   banner.innerHTML = `
-    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。不用担心记忆会丢——Leith 每天深夜都会把当天聊过的内容写成一篇日记，长期记得住。如果想让今天的日记提前写好，可以点下面这个按钮。</div>
+    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。不用担心记忆会丢——每天凌晨5点后，Leith 会把前一天聊过的内容写成一篇日记，长期记得住。如果想现在先整理一下到目前为止聊的内容，可以点下面这个按钮（之后新聊的部分，会在凌晨5点自动接着补上，不会重复）。</div>
     <div class="token-banner-actions">
-      <button id="tokenBannerCompress">现在就写今天的日记</button>
+      <button id="tokenBannerCompress">先整理一下现在聊的内容</button>
       <button id="tokenBannerDismiss">知道了</button>
     </div>
   `;
@@ -2156,7 +2209,7 @@ function renderTokenBanner() {
     }
   };
   banner.querySelector("#tokenBannerDismiss").onclick = () => {
-    tokenBannerDismissedForThread[threadId] = true;
+    setTokenBannerDismissed(threadId);
     slot.innerHTML = "";
   };
 }
@@ -2614,29 +2667,127 @@ async function tryGenerateDiaryNow() {
   return await tryGenerateDiaryNowFor(todayStr);
 }
 
-// 每天该写日记的时候自动检查一次：昨天的日记如果还没写（比如昨晚没打开App），
-// 会在今天打开App时补写一次；今天的日记则等到"今天真的过完了"（本地深夜之后）再写，
-// 不会在下午聊到一半就把当天记录提前写掉
+// 每天该处理的时候自动检查一次：昨天的日记 + 昨天被标记的"重要记忆"，
+// 统一在本地时间凌晨5点之后触发（你打开App时检查现在是否已过5点、今天是否处理过昨天），
+// 不是真正的后台定时任务——网页应用无法在完全关闭时自主运行，需要你在那之后某次打开App
+// 才会真正执行这次检查，这是所有纯前端应用的共同限制。
+const DIARY_TRIGGER_HOUR = 5;
+
 async function checkAndGenerateDiary() {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
   const lastDone = getLastDiaryDate();
   if (lastDone === todayStr) return; // 今天已经处理过，不用重复检查
 
-  // 补写：如果上次记录的日期比今天早不止一天，说明中间有断档，把最近没写的那天补上
-  // （这里只补写"昨天"，避免应用长期没打开时一次性发起过多请求）
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  // 补写：如果上次记录的日期比"昨天"还早，说明中间有断档（比如好几天没打开App），
+  // 把最近没处理的那天补上（只补"昨天"，避免长期没打开时一次性发起过多请求）
   if (lastDone && lastDone < yesterday) {
-    await tryGenerateDiaryNowFor(yesterday);
+    await processDayEnd(yesterday);
   }
 
-  // 深夜（0点-4点）打开或停留在App里时，把"昨天"这一整天写成日记
-  // 用本地时间判断，符合"深夜写今天发生的事"的直觉
-  if (now.getHours() < 4) {
-    const targetDate = yesterday;
-    if (getLastDiaryDate() !== targetDate) {
-      await tryGenerateDiaryNowFor(targetDate);
+  // 本地时间过了凌晨5点，就把"昨天"这一整天处理掉：写日记 + 把昨天标记的内容转成核心记忆
+  if (now.getHours() >= DIARY_TRIGGER_HOUR) {
+    if (getLastDiaryDate() !== yesterday) {
+      await processDayEnd(yesterday);
     }
+  }
+}
+
+// 处理"一天的收尾"：生成/续写当天日记 + 把当天标记过的消息压缩存入核心记忆。
+// 如果这一天聊得特别多（超过单次 80 条的处理上限），会循环多跑几次，直到这一天真正处理完，
+// 不会因为消息太多就只处理一部分、剩下的悄悄拖到第二天才补上
+async function processDayEnd(dateStr) {
+  const MAX_ROUNDS = 6; // 保险上限：一天正常不会聊到需要跑6轮（480条消息），避免极端情况死循环
+  for (let i = 0; i < MAX_ROUNDS; i++) {
+    const wroteMore = await tryGenerateDiaryNowFor(dateStr);
+    if (!wroteMore) break; // 没有新内容可处理了，说明这一天已经处理完，可以停下来
+  }
+  await processPinnedMessagesForDate(dateStr);
+  setLastDiaryDate(dateStr);
+}
+
+// ============================================================
+// 标记为"重要记忆"：星标本身只是本地打个标记（msg.pinned = true），不花任何 token；
+// 真正处理（压缩存入核心记忆）延后到每天凌晨5点，跟日记一起统一批量处理。
+// ============================================================
+
+// 收集"某个本地日期"里，所有线程中被标记过、且还没处理过的消息（跨主对话+所有小剧场房间）
+function collectPinnedMessagesForDate(dateStr) {
+  const dayStart = new Date(dateStr + 'T00:00:00').getTime();
+  const dayEnd = new Date(dateStr + 'T23:59:59.999').getTime();
+  const results = [];
+
+  getThreads().forEach(t => {
+    const msgs = getThreadMessages(t.id);
+    msgs.forEach(m => {
+      if (m.pinned && !m._pinProcessed && m._ts && m._ts >= dayStart && m._ts <= dayEnd) {
+        results.push({ threadId: t.id, msgId: m._id, content: m.content });
+      }
+    });
+  });
+  return results;
+}
+
+// 把"当天所有标记过的内容"标记为已处理，避免下次批处理重复计入
+function markPinnedMessagesProcessed(entries) {
+  const byThread = {};
+  entries.forEach(e => { (byThread[e.threadId] = byThread[e.threadId] || []).push(e.msgId); });
+  Object.keys(byThread).forEach(threadId => {
+    const msgs = getThreadMessages(threadId);
+    const idSet = new Set(byThread[threadId]);
+    msgs.forEach(m => { if (idSet.has(m._id)) m._pinProcessed = true; });
+    saveThreadMessages(threadId, msgs);
+  });
+}
+
+// 供日记生成时参考——把当天标记的内容原样拼一段文字，让写日记的模型知道
+// "这些是 Susie 特别在意的瞬间"，写日记时对这些多留一点笔墨、保留情感重量
+async function getPinnedHighlightsForDate(dateStr) {
+  const entries = collectPinnedMessagesForDate(dateStr);
+  if (!entries.length) return '';
+  return entries.map(e => `- ${e.content}`).join('\n');
+}
+
+// 凌晨5点批处理：把当天标记过的内容，用聊天模型（不是便宜模型——这里需要保留情感质感，
+// 不是客观事实提炼）压缩成一条核心记忆，语气可以比普通核心记忆更细腻一点，
+// 因为这些是 Susie 明确"希望被记住"的瞬间，不是随手记录的事实
+async function processPinnedMessagesForDate(dateStr) {
+  const entries = collectPinnedMessagesForDate(dateStr);
+  if (!entries.length) return;
+
+  if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady() || !window.Memory.add) {
+    return; // 云端记忆不可用时先不处理，避免标记内容在没有存储目的地的情况下被错误地标记为"已处理"
+  }
+
+  const provider = getActiveProvider();
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const customModel = ($("#customModelInput").value || "").trim();
+  const writeModel = customModel || $("#modelSelect").value;
+  if (!provider || !apiKey || !writeModel) return;
+
+  const highlightText = entries.map(e => `- ${e.content}`).join('\n');
+  const prompt = `You are Leith, Susie's AI partner. Below are one or more of your own past replies to Susie that she specifically marked as meaningful/touching to her — she wants these remembered, not just as facts but as moments that mattered emotionally.
+
+Write ONE short memory entry (under 60 Chinese characters per entry if multiple, combine if related) in first person capturing why this moment mattered — keep the emotional weight, don't reduce it to a dry factual summary. This will be stored as a permanent core memory.
+
+Reply with ONLY the memory text in Chinese, one entry per line if there are multiple distinct moments, nothing else (no labels, no formatting).
+
+[Marked moments]
+${highlightText}`;
+
+  try {
+    const memoryText = await callLLMForSummary({ provider, apiKey, model: writeModel, temp: 0.8, prompt });
+    if (memoryText && memoryText.trim()) {
+      const lines = memoryText.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      for (const line of lines) {
+        await window.Memory.add(line);
+      }
+    }
+    markPinnedMessagesProcessed(entries);
+  } catch (e) {
+    console.error('标记内容处理为核心记忆失败:', e);
   }
 }
 
@@ -2667,7 +2818,8 @@ async function tryGenerateDiaryNowFor(dateStr) {
   const writeCallback = async (prompt) =>
     callLLMForSummary({ provider, apiKey, model: writeModel, temp: 0.8, prompt });
 
-  const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr);
+  const pinnedHighlights = await getPinnedHighlightsForDate(dateStr);
+  const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr, pinnedHighlights);
 
   if (result && result.dateStr) {
     setLastDiaryDate(result.dateStr);
@@ -3119,7 +3271,7 @@ async function sendChat(overrideContent) {
     clearInterval(timeoutTimer);
 
     const freshMessages = getThreadMessages(threadId);
-    freshMessages.push({ role: "assistant", content: fullReply, _id: uid() });
+    freshMessages.push({ role: "assistant", content: fullReply, _id: uid(), _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
     // 同步到云端短期记忆——长期记忆现在改由每天深夜的日记生成负责，
     // 这里不再按消息数机械压缩

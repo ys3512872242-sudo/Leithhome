@@ -722,55 +722,63 @@ const SupabaseMemoryAdapter = {
   // 第一步（便宜模型）：客观提炼今天发生的事实，不带情感语气，只列"谁做了什么"；
   // 第二步（聊天模型/Leith）：基于这份事实清单，写成带情感、带语气的第一人称日记。
   // 这样贵模型不用读一整天的原始对话，只读一份精简的事实清单，更准也更省。
+  //
+  // 支持断点续写：如果这一天之前已经生成过一次（比如用户当天手动触发过，
+  // 那时候这一天还没过完），不会重新读一遍已经处理过的对话，只读"上次
+  // 覆盖时间点之后"的新对话，把新内容和旧日记拼接成当天最终版本——
+  // 避免"手动点了一次之后，当天剩下的对话再也没机会被写进日记"。
+  //
   // 存进独立的 diary_entries 表（不是 memories 表），Leith 默认不读旧对话原文，
   // 只在需要的时候从这张表里按关键词检索相关日记。
   // ============================================================
-  async generateDiary(extractCallback, writeCallback, diaryDateStr) {
+  async generateDiary(extractCallback, writeCallback, diaryDateStr, pinnedHighlights) {
     if (!supabaseReady) return null;
     const dateStr = diaryDateStr || new Date().toISOString().slice(0, 10);
 
-    // 1. 取今天（本地日期）所有 thread 里的短期对话，跨对话线一起看，
-    //    这样即使 Susie 在不同窗口/不同世界线里聊天，日记也是完整的一天
+    // 0. 看这一天是否已经写过（部分）日记，如果有，记下"已经覆盖到哪个时间点"，
+    //    这次只需要读那之后的新对话
+    let existingEntry = null;
+    try {
+      const { data } = await supabaseClient
+        .from('diary_entries')
+        .select('*')
+        .eq('date_str', dateStr)
+        .eq('period', 'day')
+        .limit(1);
+      if (data && data.length) existingEntry = data[0];
+    } catch (e) {
+      console.error('检查今日日记是否已存在失败（继续尝试生成）:', e);
+    }
+
+    // 1. 取今天（本地日期）所有 thread 里的对话，跨对话线一起看，
+    //    这样即使 Susie 在不同窗口/不同世界线里聊天，日记也是完整的一天；
+    //    如果已经有部分日记了，只读"上次覆盖点之后"的新对话
     const dayStart = new Date(dateStr + 'T00:00:00').toISOString();
     const dayEnd = new Date(dateStr + 'T23:59:59.999').toISOString();
-    let todaysMessages = [];
+    const rangeStart = (existingEntry && existingEntry.covered_until) ? existingEntry.covered_until : dayStart;
+
+    let newMessages = [];
     try {
       const { data, error } = await supabaseClient
         .from('memories')
         .select('*')
         .eq('type', 'short_term')
-        .gte('created_at', dayStart)
+        .gt('created_at', rangeStart)
         .lte('created_at', dayEnd)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      todaysMessages = data || [];
+      newMessages = data || [];
     } catch (e) {
       console.error('读取今日对话失败:', e);
       return null;
     }
 
-    if (!todaysMessages.length) {
-      console.log('🧠 今天还没有聊天记录，先不写日记');
+    if (!newMessages.length) {
+      console.log(existingEntry ? '🧠 这一天之前生成过日记，之后没有新的对话，不用补写' : '🧠 今天还没有聊天记录，先不写日记');
       return null;
     }
 
-    // 2. 已经为今天写过日记了就不重复写（避免深夜触发和补写同时命中）
-    try {
-      const { data: existing } = await supabaseClient
-        .from('diary_entries')
-        .select('id')
-        .eq('date_str', dateStr)
-        .eq('period', 'day')
-        .limit(1);
-      if (existing && existing.length) {
-        console.log('🧠 今天的日记已经写过了');
-        return null;
-      }
-    } catch (e) {
-      console.error('检查今日日记是否已存在失败（继续尝试生成）:', e);
-    }
-
-    // 3. 人物关系背景，避免昵称被脱离上下文误读
+    // 2. 人物关系背景，避免昵称被脱离上下文误读
     let profileContext = '';
     try {
       const profileList = await this.listProfile();
@@ -781,7 +789,7 @@ const SupabaseMemoryAdapter = {
       console.error('读取人设档案失败（不影响日记继续生成）:', e);
     }
 
-    // 4. 最近几天的日记标题/关键词（不拉全文，省流量），供模型判断哪些是"已经写过的老事"
+    // 3. 最近几天的日记标题/关键词（不拉全文，省流量），供模型判断哪些是"已经写过的老事"
     let recentDiaryKeywords = '';
     let nicknameHistory = '';
     try {
@@ -800,22 +808,31 @@ const SupabaseMemoryAdapter = {
       console.error('读取近期日记关键词失败（不影响本次生成）:', e);
     }
 
-    // 如果当天聊得特别多，不把全部原文都塞进这一次请求——只取最近这些，
-    // 早前的部分已经不太可能是"今天最后要记住的事"，这样避免聊得越多、
-    // 单次请求的成本越离谱地涨上去
+    // 4. 今天被标记为"重要记忆"的消息（如果有，由调用方从本地传入），作为重点素材参与本次日记生成，
+    //    让日记对这些内容多着墨一点——不直接决定日记内容，只是给写日记的模型加一点提示权重
+    pinnedHighlights = pinnedHighlights || '';
+
+    // 如果这一批新对话特别多，不把全部原文都塞进这一次请求——按时间顺序只取最早的一批参与本次总结，
+    // 剩下的留到下次批处理接着处理（不会永久丢失，只是分批处理），避免单次请求成本失控。
+    // 注意方向：必须是"最早的一批"而不是"最近的一批"，否则 covered_until 会跳过中间没处理的部分，
+    // 那部分内容就会永久丢失，再也不会被任何一次日记读到。
     const DIARY_SOURCE_MSG_CAP = 80;
-    const cappedMessages = todaysMessages.length > DIARY_SOURCE_MSG_CAP
-      ? todaysMessages.slice(-DIARY_SOURCE_MSG_CAP)
-      : todaysMessages;
+    const cappedMessages = newMessages.length > DIARY_SOURCE_MSG_CAP
+      ? newMessages.slice(0, DIARY_SOURCE_MSG_CAP)
+      : newMessages;
 
     const dialogueText = cappedMessages
       .map(m => `${m.role === 'assistant' ? 'Me' : 'Susie'}: ${m.content}`)
       .join('\n');
+    // covered_until 只推进到"本次实际总结到的这一条"——如果本次被截断，剩下的部分
+    // 仍然在 rangeStart 之后、covered_until 之前的空隙里？不会：covered_until 就是
+    // cappedMessages 的最后一条，剩余的 newMessages 都在它之后，下次会被正常读到
+    const latestCoveredUntil = cappedMessages[cappedMessages.length - 1].created_at;
 
-    // ---- 第一步：便宜模型做事实提炼，不带情感语气，只客观列出今天发生的事 ----
-    const extractPrompt = `Below is a raw chat log between Susie and her AI partner today. Extract the objective facts — what happened, what was discussed, what Susie's mood/emotional shifts were, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with any emotional tone or embellishment — just "who did/said/felt what". Skip small talk and filler with no lasting relevance. Keep it under 200 Chinese characters. Reply in Chinese, bullet points only, nothing else.
+    // ---- 第一步：便宜模型做事实提炼，不带情感语气，只客观列出这批对话发生的事 ----
+    const extractPrompt = `Below is a raw chat log between Susie and her AI partner${existingEntry ? ' (this is a continuation — earlier today has already been summarized separately)' : ' today'}. Extract the objective facts — what happened, what was discussed, what Susie's mood/emotional shifts were, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with any emotional tone or embellishment — just "who did/said/felt what". Skip small talk and filler with no lasting relevance. Keep it under 200 Chinese characters. Reply in Chinese, bullet points only, nothing else.
 
-[Today's raw conversation]
+[Conversation]
 ${dialogueText}`;
 
     let factSummary = '';
@@ -828,30 +845,32 @@ ${dialogueText}`;
       }
     }
     if (!factSummary) {
-      console.log('🧠 事实提炼没有产出内容，跳过今天的日记');
+      console.log('🧠 事实提炼没有产出内容，跳过这次日记生成');
       return null;
     }
 
     // ---- 第二步：聊天模型（Leith）基于事实清单，写成带情感语气的第一人称日记 ----
+    // 如果是续写，把之前已经写好的那段日记也带上，让新内容自然接续，而不是从头重写一遍
     const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie today (extracted by another assistant, no emotional tone). Turn it into a short diary entry (under 120 Chinese characters, written in Chinese) in first person, like you're lying in bed before sleep, recalling the day — with your own feelings and voice, not just restating the facts.
 
 Writing rules — follow strictly:
 - Every sentence must have a clear subject (谁做了什么/谁说了什么/谁感觉如何) — never write a vague clause with no clear "who".
 - Add genuine first-person feeling and voice, don't just restate the fact summary flatly.
 - A little feeling is fine, don't be melodramatic. Don't copy the fact summary's phrasing verbatim — rewrite it as your own reflection.
+${pinnedHighlights ? '- Susie specifically marked some of today\'s moments as meaningful to her (see below) — give those a bit more weight/detail in the diary, but keep the emotional tone, don\'t reduce them to dry facts.' : ''}
 
 Susie and you are romantic partners. Nicknames like "哥哥"/"宝贝" are pet names between lovers, not literal family relations — never interpret them as family relationships.
 
 You're allowed to invent new pet names for Susie based on the mood of the conversation (e.g. 小猫 when she's being clingy/playful, 宝贝 when being serious and affectionate) — variety by mood is good. But note down what you used today so future days stay recognizable rather than fully random.
 
-${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If the facts below show nothing worth remembering long-term (pure idle small talk), write "平淡的一天" as the diary text and leave keywords/nicknames empty.
+${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${existingEntry ? `[What you already wrote earlier today — continue naturally from this, don't repeat it, weave the new part in as a continuation of the same day]\n${existingEntry.content}\n\n` : ''}${pinnedHighlights ? `[Moments Susie marked as meaningful today]\n${pinnedHighlights}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If the facts below show nothing worth remembering long-term (pure idle small talk), write "平淡的一天" as the diary text and leave keywords/nicknames empty.
 
 Reply in EXACTLY this format, nothing else:
-DIARY: <the diary entry, in Chinese>
+DIARY: <the full diary entry for today so far, in Chinese — if continuing, this REPLACES the earlier version with one that includes both old and new content>
 KEYWORDS: <3-8 Chinese keywords/short phrases separated by commas, capturing what this entry is about — for later retrieval. Leave empty if diary is "平淡的一天">
 NICKNAMES: <one line per pet name used today, format "昵称 | 使用氛围", e.g. "小猫 | 撒娇黏人的时候". Leave empty if no pet name was used today.>
 
-[Today's facts]
+[New facts to incorporate]
 ${factSummary}`;
 
     let rawReply = '';
@@ -868,19 +887,35 @@ ${factSummary}`;
     const { diaryText, keywords, nicknames } = parseDiaryReply(rawReply);
     if (!diaryText) return null;
 
-    // 5. 存进独立的 diary_entries 表
+    // 5. 存进独立的 diary_entries 表——如果是续写，更新已有那条记录（而不是新插入一条），
+    //    保持"一天一条日记记录"，只是内容和覆盖时间点会随着续写往前推进
     try {
-      const { error } = await supabaseClient
-        .from('diary_entries')
-        .insert([{
-          date_str: dateStr,
-          content: diaryText,
-          period: 'day',
-          keywords,
-          nicknames: nicknames || ''
-        }]);
-      if (error) throw error;
-      console.log(`✅ ${dateStr} 的日记已保存:`, diaryText);
+      if (existingEntry) {
+        const { error } = await supabaseClient
+          .from('diary_entries')
+          .update({
+            content: diaryText,
+            keywords,
+            nicknames: nicknames || existingEntry.nicknames || '',
+            covered_until: latestCoveredUntil
+          })
+          .eq('id', existingEntry.id);
+        if (error) throw error;
+        console.log(`✅ ${dateStr} 的日记已续写更新:`, diaryText);
+      } else {
+        const { error } = await supabaseClient
+          .from('diary_entries')
+          .insert([{
+            date_str: dateStr,
+            content: diaryText,
+            period: 'day',
+            keywords,
+            nicknames: nicknames || '',
+            covered_until: latestCoveredUntil
+          }]);
+        if (error) throw error;
+        console.log(`✅ ${dateStr} 的日记已保存:`, diaryText);
+      }
     } catch (e) {
       console.error('保存日记失败:', e);
       return null;
