@@ -8,6 +8,7 @@ const LS = {
   apiKey: "companion_api_key_v1",
   model: "companion_model_v1",
   customModel: "companion_custom_model_v1",
+  diaryModel: "companion_diary_model_v1", // 日记/汇总生成用的模型，留空则跟聊天用同一个模型
   temp: "companion_temp_v1",
   systemPrompt: "companion_system_prompt_v1",
   threads: "companion_threads_v1",
@@ -40,8 +41,12 @@ const DEFAULT_PROVIDERS = [
   }
 ];
 
-// 小世界规则（只注入一次到 system prompt，不随每条消息重复发送）
-const WORLD_RULES = `[World rules]
+// 小世界规则：拆成两层——
+// MINI 版极简、永远带上，只让 Leith 知道"有这几个标签、可以偶尔主动送礼/买东西"，
+// 保留"惊喜"能力，即使这轮聊天完全没提购物话题也不会丢失这个行为；
+// FULL 版是完整机制说明，只有聊天内容明显跟购物/礼物相关时才附加，减少平时的固定开销。
+const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift or buy something for yourself using [LGIFT:item]/[ABUY:item]/[SBUY:item] tags (full syntax rules included automatically when relevant).`;
+const WORLD_RULES_FULL = `[World rules]
 [LGIFT:item] Gift limited item to user -> deduct from limited fund, item delists into gift list
 [ABUY:item] Buy adult item -> deduct from allowance, item goes to nightstand
 [SBUY:item] Buy shelf item -> deduct from allowance, same mechanic
@@ -1272,11 +1277,13 @@ function initConfig() {
   const savedTemp = localStorage.getItem(LS.temp);
   const savedSystemPrompt = localStorage.getItem(LS.systemPrompt);
   const savedCustomModel = localStorage.getItem(LS.customModel);
+  const savedDiaryModel = localStorage.getItem(LS.diaryModel);
 
   if (savedKey) $("#apiKey").value = savedKey;
   if (savedTemp) { $("#tempInput").value = savedTemp; $("#tempVal").innerText = savedTemp; }
   if (savedSystemPrompt !== null) $("#systemPromptInput").value = savedSystemPrompt;
   if (savedCustomModel) $("#customModelInput").value = savedCustomModel;
+  if (savedDiaryModel) $("#diaryModelInput").value = savedDiaryModel;
 
   renderProviderList();
   populateModelSelect();
@@ -1298,6 +1305,7 @@ $("#saveConfigBtn").onclick = () => {
   localStorage.setItem(LS.apiKey, key);
   localStorage.setItem(LS.model, $("#modelSelect").value);
   localStorage.setItem(LS.customModel, $("#customModelInput").value.trim());
+  localStorage.setItem(LS.diaryModel, $("#diaryModelInput").value.trim());
   localStorage.setItem(LS.temp, $("#tempInput").value);
   localStorage.setItem(LS.systemPrompt, $("#systemPromptInput").value);
   updateStatusLabel();
@@ -2316,11 +2324,12 @@ async function buildEffectiveSystemPrompt() {
 
   // 按需检索：只把最近几条消息的文本喂给关键词提取，匹配到什么记忆才带什么，
   // 不再无条件把 profile/核心记忆/日记全量塞进去——这是本次瘦身的核心改动
+  const threadId = getActiveThreadId();
+  const recentMsgs = getThreadMessages(threadId).filter(m => !m._isNarration).slice(-6);
+  const recentText = recentMsgs.map(m => m.content).join(" ");
+
   let memoryBlock = "";
   if (window.Memory) {
-    const threadId = getActiveThreadId();
-    const recentMsgs = getThreadMessages(threadId).filter(m => !m._isNarration).slice(-6);
-    const recentText = recentMsgs.map(m => m.content).join(" ");
     memoryBlock = window.Memory.buildRelevantMemoryBlock
       ? await window.Memory.buildRelevantMemoryBlock(recentText)
       : await window.Memory.asPromptBlock();
@@ -2329,17 +2338,24 @@ async function buildEffectiveSystemPrompt() {
   // 旧版机械压缩留下的摘要（如果有历史数据）——这部分很轻量，只有真的存在时才会有内容
   let summaryBlock = "";
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-    const threadId = getActiveThreadId();
     const summary = await window.Memory.loadLongTermSummary(threadId);
     if (summary) {
       summaryBlock = `[Compressed summary from earlier conversation]\n- ${summary}`;
     }
   }
-  const worldBlock = buildWorldPromptBlock();
+
+  // 小世界（购物/礼物/床头柜）相关：极简版规则+极简状态永远带上（保留"偶尔主动送礼"的
+  // 惊喜能力，且知道有哪些商品、够不够钱），完整规则说明+完整状态（含床头柜/礼物记录等细节）
+  // 只有最近聊天明显涉及购物/礼物话题时才附加
+  const shopRelevant = isShopTopicRelevant(recentText);
+  const worldRulesBlock = shopRelevant ? WORLD_RULES_FULL : WORLD_RULES_MINI;
+  const worldBlock = shopRelevant ? buildWorldPromptBlock() : buildWorldPromptBlockMini();
+
   const webBlock = buildWebPromptBlock();
   const noteBlock = buildSystemNotesBlock();
-  // WORLD_RULES / FORMATTING_RULES 只注入一次（不随消息重复），且不受用户自定义人设影响
-  return [WORLD_RULES, FORMATTING_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
+  // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
+  // 世界规则（WORLD_RULES_MINI / WORLD_RULES_FULL）现在跟着 shopRelevant 走
+  return [worldRulesBlock, FORMATTING_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -2352,6 +2368,21 @@ function buildSystemNotesBlock() {
 }
 
 // 小世界状态（精简版：只报数据，不含规则）
+// 判断最近聊天内容是否跟"购物/礼物/床头柜"相关——命中才附加完整的世界规则说明和状态，
+// 覆盖两种情况：泛化的购物词汇，以及聊到了货架/成人用品区里具体某件商品的名字
+const SHOP_TOPIC_WORDS = ['买', '购', '花钱', '零花钱', '礼物', '送我', '送你', '送她', '床头柜', '钱包', '余额', '消耗', '用掉', '坏了', '损坏', '下架', '限定', '基金', 'buy', 'gift'];
+function isShopTopicRelevant(recentText) {
+  if (!recentText) return false;
+  if (SHOP_TOPIC_WORDS.some(w => recentText.includes(w))) return true;
+  // 具体商品名命中也算相关（比如聊到"鲜花""奶茶"这类已经上架的商品名）
+  try {
+    const allItemNames = [...getShelfItems(), ...getAdultItems(), ...getLimitedItems()].map(i => i.name).filter(Boolean);
+    return allItemNames.some(name => name.length >= 2 && recentText.includes(name));
+  } catch (e) {
+    return false;
+  }
+}
+
 function buildWorldPromptBlock() {
   const threadId = getActiveThreadId();
   const balance = getWallet(threadId);
@@ -2372,6 +2403,25 @@ function buildWorldPromptBlock() {
   const ns = nightstand.length ? nightstand.map(i => `${i.emoji}${i.name}`).join("、") : "empty";
 
   return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}  Nightstand: ${ns}\nGifted: ${gifts}\nLimited items: ${limited}\nAdult items available: ${adult}\nShelf items available: ${shelf}`;
+}
+
+// 极简版世界状态：只报"零花钱余额 + 可买的商品名和价格"，不含床头柜/礼物记录这些细节，
+// 用于"这轮聊天没提到购物"时依然让 Leith 有能力发起一次惊喜——没有这个的话，
+// 他连有哪些商品、够不够钱都不知道，[LGIFT:xxx] 这类标签会因为凭空编造的商品名对不上而失败
+function buildWorldPromptBlockMini() {
+  const threadId = getActiveThreadId();
+  const balance = getWallet(threadId);
+  const savings = getSavings(threadId);
+  const limitedItems = getLimitedItems();
+  const adultItems = getAdultItems();
+  const shelfItems = getShelfItems();
+
+  const availableAdult = adultItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldAdultBought, i.id));
+  const availableShelf = shelfItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldShelfBought, i.id));
+  const allNames = [...limitedItems, ...availableAdult, ...availableShelf].map(i => i.name);
+
+  if (!allNames.length && balance <= 0 && savings <= 0) return "";
+  return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}${allNames.length ? `  Items: ${allNames.join("、")}` : ""}`;
 }
 
 // 解析 AI 回复里的 [BUY:...] [LGIFT:...] [ABUY:...] [SBUY:...] [USE:...] 标记
@@ -2590,12 +2640,19 @@ async function checkAndGenerateDiary() {
   }
 }
 
+// 日记/汇总生成用哪个模型：优先用"日记专用模型"设置，留空则退回聊天用的那个模型
+function getDiaryModel() {
+  const diaryModel = ($("#diaryModelInput").value || "").trim();
+  if (diaryModel) return diaryModel;
+  const customModel = ($("#customModelInput").value || "").trim();
+  return customModel || $("#modelSelect").value;
+}
+
 async function tryGenerateDiaryNowFor(dateStr) {
   if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return false;
   const provider = getActiveProvider();
   const apiKey = localStorage.getItem(LS.apiKey);
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getDiaryModel();
   const temp = 0.8;
   if (!provider || !apiKey || !model) return false;
 
@@ -2637,8 +2694,7 @@ async function checkAndGenerateRollups() {
 
   const provider = getActiveProvider();
   const apiKey = localStorage.getItem(LS.apiKey);
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getDiaryModel();
   if (!provider || !apiKey || !model) return;
 
   const llmCallback = async (prompt) => callLLMForSummary({ provider, apiKey, model, temp: 0.5, prompt });

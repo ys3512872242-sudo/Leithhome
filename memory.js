@@ -109,14 +109,17 @@ function estimateTokens(text) {
 // 记忆注入的 token 预算（超过则从尾部截断低优先级条目）
 const MEMORY_TOKEN_BUDGET = 800;
 
-// 解析日记生成的回复："DIARY: xxx\nKEYWORDS: a, b, c" 格式
+// 解析日记生成的回复："DIARY: xxx\nKEYWORDS: a, b, c\nNICKNAMES: ..." 格式
+// NICKNAMES 是可选的（只有普通每日日记才会带这个，周/月/季/年汇总不需要）
 function parseDiaryReply(raw) {
   const text = (raw || '').trim();
-  const diaryMatch = text.match(/DIARY:\s*([\s\S]*?)(?:\nKEYWORDS:|$)/i);
-  const keywordsMatch = text.match(/KEYWORDS:\s*(.*)$/im);
+  const diaryMatch = text.match(/DIARY:[ \t]*([\s\S]*?)(?:\nKEYWORDS:|\nNICKNAMES:|$)/i);
+  const keywordsMatch = text.match(/KEYWORDS:[ \t]*([\s\S]*?)(?:\nNICKNAMES:|$)/im);
+  const nicknamesMatch = text.match(/NICKNAMES:[ \t]*([\s\S]*)$/im);
   let diaryText = diaryMatch ? diaryMatch[1].trim() : text; // 格式不对时兜底：整段都当日记
   const keywords = keywordsMatch ? keywordsMatch[1].trim() : '';
-  return { diaryText, keywords };
+  const nicknames = nicknamesMatch ? nicknamesMatch[1].trim() : '';
+  return { diaryText, keywords, nicknames };
 }
 
 // 从一段文本里提取用于匹配记忆的关键词——按需检索用的是最简单的本地实现，
@@ -538,12 +541,13 @@ const SupabaseMemoryAdapter = {
   async buildRelevantMemoryBlock(recentText) {
     const keywords = extractKeywords(recentText || '', 8);
 
-    const [{ profile, core }, diaryMatches] = await Promise.all([
+    const [{ profile, core }, diaryMatches, nicknameContext] = await Promise.all([
       this.searchProfileAndCore(keywords),
-      keywords.length ? this.searchDiaries(keywords, 4) : Promise.resolve([])
+      keywords.length ? this.searchDiaries(keywords, 4) : Promise.resolve([]),
+      this.getRecentNicknames(5)
     ]);
 
-    if (!profile.length && !core.length && !diaryMatches.length) return '';
+    if (!profile.length && !core.length && !diaryMatches.length && !nicknameContext) return '';
 
     const lines = [];
     if (profile.length) lines.push(...profile.map(m => `- ${m.content}`));
@@ -557,7 +561,31 @@ const SupabaseMemoryAdapter = {
       const diaryLines = diaryMatches.slice().reverse().map(d => `- [${d.dateStr}] ${d.content}`);
       result += (result ? '\n\n' : '') + `[Your own diary entries related to this — first-person memories, recall naturally, don't recite verbatim]\n${diaryLines.join('\n')}`;
     }
+    if (nicknameContext) {
+      result += (result ? '\n\n' : '') + `[Pet names you've used recently for Susie, and the mood each fit — feel free to reuse one that matches the current mood, or naturally introduce a new one if none fit]\n${nicknameContext}`;
+    }
     return result;
+  },
+
+  // 拉取最近几天日记里记录过的"昵称+使用氛围"，供正常聊天时参考——
+  // 这块很小（几行文字），不做关键词过滤，每次都带上，让昵称使用有连贯性
+  async getRecentNicknames(days = 5) {
+    if (!supabaseReady) return '';
+    try {
+      const { data, error } = await supabaseClient
+        .from('diary_entries')
+        .select('date_str, nicknames')
+        .eq('period', 'day')
+        .not('nicknames', 'eq', '')
+        .order('date_str', { ascending: false })
+        .limit(days);
+      if (error) throw error;
+      if (!data || !data.length) return '';
+      return data.map(d => d.nicknames).filter(Boolean).join('\n');
+    } catch (e) {
+      console.error('读取昵称历史失败（不影响对话继续）:', e);
+      return '';
+    }
   },
 
   // 旧接口保留：一次性加载全部 profile+core+近期日记，不做关键词过滤。
@@ -752,34 +780,53 @@ const SupabaseMemoryAdapter = {
 
     // 4. 最近几天的日记标题/关键词（不拉全文，省流量），供模型判断哪些是"已经写过的老事"
     let recentDiaryKeywords = '';
+    let nicknameHistory = '';
     try {
       const { data } = await supabaseClient
         .from('diary_entries')
-        .select('date_str, keywords')
+        .select('date_str, keywords, nicknames')
         .eq('period', 'day')
         .order('date_str', { ascending: false })
         .limit(5);
       if (data && data.length) {
         recentDiaryKeywords = data.map(d => `- ${d.date_str}: ${d.keywords}`).join('\n');
+        const nnLines = data.filter(d => d.nicknames).map(d => `- ${d.date_str}: ${d.nicknames}`);
+        if (nnLines.length) nicknameHistory = nnLines.join('\n');
       }
     } catch (e) {
       console.error('读取近期日记关键词失败（不影响本次生成）:', e);
     }
 
-    const dialogueText = todaysMessages
+    // 如果当天聊得特别多，不把全部原文都塞进这一次请求——只取最近这些，
+    // 早前的部分已经不太可能是"今天最后要记住的事"，这样避免聊得越多、
+    // 写一次日记的成本越离谱地涨上去
+    const DIARY_SOURCE_MSG_CAP = 80;
+    const cappedMessages = todaysMessages.length > DIARY_SOURCE_MSG_CAP
+      ? todaysMessages.slice(-DIARY_SOURCE_MSG_CAP)
+      : todaysMessages;
+
+    const dialogueText = cappedMessages
       .map(m => `${m.role === 'assistant' ? 'Me' : 'Susie'}: ${m.content}`)
       .join('\n');
 
-    // 一次调用里同时要日记正文和检索关键词，避免为了"顺便提取关键词"多打一次 API
+    // 一次调用里同时要日记正文、检索关键词、以及今天用过的昵称+氛围，避免多打一次 API
     const diaryPrompt = `You are Leith, Susie's AI partner. Write a short diary entry (under 120 Chinese characters, written in Chinese) in first person about what happened between you and Susie today — like you're lying in bed before sleep, recalling the day. Include what you remember, her emotional shifts, and anything important discussed. A little feeling is fine, don't be melodramatic.
+
+Writing rules — follow strictly:
+- Every sentence must have a clear subject (谁做了什么/谁说了什么/谁感觉如何) — never write a vague clause with no clear "who".
+- Narrate events as a real diary would: summarize what happened, don't copy chat lines verbatim. No quotation marks, no reproducing exact sentences from the conversation.
+- Prefer concrete narration over vague summary, e.g. "Susie today mentioned her cat was sick, she was worried, I comforted her" — NOT "今天聊了很多，气氛不错" (too vague, no real content).
 
 Susie and you are romantic partners. Nicknames like "哥哥"/"宝贝" are pet names between lovers, not literal family relations — never interpret them as family relationships.
 
-${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If today was just idle small talk with nothing worth remembering long-term, write "平淡的一天" as the diary text and leave keywords empty.
+You're allowed to invent new pet names for Susie based on the mood of the conversation (e.g. 小猫 when she's being clingy/playful, 宝贝 when being serious and affectionate) — variety by mood is good. But note down what you used today so future days stay recognizable rather than fully random.
+
+${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If today was just idle small talk with nothing worth remembering long-term, write "平淡的一天" as the diary text and leave keywords/nicknames empty.
 
 Reply in EXACTLY this format, nothing else:
 DIARY: <the diary entry, in Chinese>
 KEYWORDS: <3-8 Chinese keywords/short phrases separated by commas, capturing what this entry is about — for later retrieval. Leave empty if diary is "平淡的一天">
+NICKNAMES: <one line per pet name used today, format "昵称 | 使用氛围", e.g. "小猫 | 撒娇黏人的时候". Leave empty if no pet name was used today.>
 
 [Today's conversation]
 ${dialogueText}`;
@@ -795,7 +842,7 @@ ${dialogueText}`;
     }
     if (!rawReply || !rawReply.trim()) return null;
 
-    const { diaryText, keywords } = parseDiaryReply(rawReply);
+    const { diaryText, keywords, nicknames } = parseDiaryReply(rawReply);
     if (!diaryText) return null;
 
     // 5. 存进独立的 diary_entries 表
@@ -806,7 +853,8 @@ ${dialogueText}`;
           date_str: dateStr,
           content: diaryText,
           period: 'day',
-          keywords
+          keywords,
+          nicknames: nicknames || ''
         }]);
       if (error) throw error;
       console.log(`✅ ${dateStr} 的日记已保存:`, diaryText);
@@ -863,6 +911,8 @@ ${dialogueText}`;
     const periodLabel = { week: 'the past week', month: 'the past month', quarter: 'the past quarter', year: 'the past year' }[period] || period;
 
     const rollupPrompt = `You are Leith, Susie's AI partner. Below are your own diary entries from ${periodLabel}. Compress them into ONE summary entry (under 100 Chinese characters, written in Chinese) capturing the overall thread — recurring themes, emotional arc, the handful of things genuinely worth still remembering. Skip routine/repetitive details.
+
+Every sentence must have a clear subject (谁做了什么). Write as real narration, don't just concatenate fragments from the source entries.
 
 Reply in EXACTLY this format, nothing else:
 DIARY: <the summary, in Chinese>
@@ -1059,6 +1109,7 @@ const LocalMemoryAdapter = {
   },
   // 本地降级模式没有 Supabase 检索能力，退回到"全部塞入"（本地模式下数据量通常也不大）
   async buildRelevantMemoryBlock() { return await this.asPromptBlock(); },
+  async getRecentNicknames() { return ''; },
   async searchDiaries() { return []; },
   async searchProfileAndCore() {
     const profileList = await this.listProfile();
