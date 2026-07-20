@@ -998,6 +998,28 @@
     font-family:var(--serif);font-style:italic;
   }
 
+  /* 健康 App */
+  .health-status-card{
+    background:linear-gradient(135deg,rgba(224,124,150,.14),var(--bg-elevated) 70%);
+    border:1px solid var(--rose);border-radius:var(--radius-lg);
+    padding:20px;text-align:center;
+  }
+  .health-status-main{font-size:16px;color:var(--paper);font-weight:600;line-height:1.6;}
+  .health-status-sub{font-size:12.5px;color:var(--paper-dim);margin-top:6px;}
+  .health-record-item{
+    background:var(--bg-elevated);border:1px solid var(--line);
+    border-radius:var(--radius-md);padding:12px 14px;margin-bottom:8px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .health-record-dates{font-size:13.5px;color:var(--paper);}
+  .health-record-days{font-size:11px;color:var(--paper-dim);margin-top:2px;}
+  .health-record-actions{display:flex;gap:6px;}
+  .health-record-actions button{
+    background:none;border:none;color:var(--paper-dim);cursor:pointer;padding:4px;
+  }
+  .health-record-actions button:hover{color:var(--rose);}
+  .health-empty-hint{text-align:center;color:var(--paper-dim);font-size:13px;padding:24px 10px;}
+
   /* ===== 共读小说 app ===== */
   .reading-entry-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;}
   .reading-upload-card{
@@ -1228,10 +1250,62 @@
   .bubble-doc-chip svg{width:15px;height:15px;flex-shrink:0;}
   .bubble-doc-chip span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
+  /* 日记整理开屏：像翻开一本日记本 */
+  .diary-splash{
+    position:fixed;inset:0;z-index:9999;
+    background:var(--bg-base);
+    display:flex;align-items:center;justify-content:center;
+    animation:diarySplashFadeIn .4s var(--ease-out);
+  }
+  .diary-splash.hiding{animation:diarySplashFadeOut .5s var(--ease-out) forwards;}
+  @keyframes diarySplashFadeIn{from{opacity:0;}to{opacity:1;}}
+  @keyframes diarySplashFadeOut{from{opacity:1;}to{opacity:0;}}
+
+  .diary-splash-book{
+    position:relative;width:180px;height:130px;
+    perspective:900px;
+  }
+  .diary-splash-cover{
+    position:absolute;inset:0;
+    background:linear-gradient(135deg,var(--accent-dim),var(--accent));
+    border-radius:4px 10px 10px 4px;
+    box-shadow:0 8px 30px rgba(0,0,0,.35);
+    display:flex;align-items:center;justify-content:center;
+    transform-origin:left center;
+    animation:diaryCoverOpen 1.6s ease-in-out infinite;
+  }
+  .diary-splash-mark{font-size:34px;opacity:.9;filter:drop-shadow(0 2px 6px rgba(0,0,0,.25));}
+  @keyframes diaryCoverOpen{
+    0%,100%{transform:rotateY(0deg);}
+    50%{transform:rotateY(-25deg);}
+  }
+  .diary-splash-page{
+    position:absolute;inset:4px 4px 4px 4px;
+    background:var(--bg-elevated);border-radius:2px 8px 8px 2px;
+    display:flex;align-items:center;justify-content:center;padding:14px;
+    z-index:-1;
+  }
+  .diary-splash-page p{
+    font-size:13px;color:var(--paper-dim);text-align:center;line-height:1.7;
+    font-family:var(--serif);font-style:italic;
+  }
+
   .hidden{display:none!important;}
 </style>
 </head>
 <body>
+
+  <!-- 日记整理开屏：只在真的需要处理昨天的日记/汇总时短暂出现，营造"翻开日记本"的感觉 -->
+  <div class="diary-splash hidden" id="diarySplashOverlay">
+    <div class="diary-splash-book">
+      <div class="diary-splash-cover">
+        <div class="diary-splash-mark">📔</div>
+      </div>
+      <div class="diary-splash-page">
+        <p id="diarySplashText">Leith 正在整理昨天的记忆...</p>
+      </div>
+    </div>
+  </div>
 
   <!-- ===== 页面1：对话页 ===== -->
   <div class="page active" id="page-chat">
@@ -1357,6 +1431,12 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5C6 4.5 9 4.5 12 6c3-1.5 6-1.5 8-.5v13c-2-1-5-1-8 .5-3-1.5-6-1.5-8-.5v-13z"/><path d="M12 6v13"/></svg>
           </div>
           <div class="app-icon-label">共读小说</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-health')">
+          <div class="app-icon-img" style="color:var(--rose);background:linear-gradient(150deg,rgba(224,124,150,.16),var(--bg-elevated) 75%);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-10-9.3C.5 8.1 2.3 4.5 6 4.5c2 0 3.5 1.1 4.3 2.5"/><path d="M12 21s7.5-4.6 10-9.3c1.5-3.6-.3-7.2-4-7.2-2 0-3.5 1.1-4.3 2.5"/><path d="M9 12l1.5 2.5L12 11l1.5 3L15 12"/></svg>
+          </div>
+          <div class="app-icon-label">健康</div>
         </div>
       </div>
     </div>
@@ -1554,6 +1634,44 @@
       </div>
     </div>
   </div><!-- /app-widget -->
+
+  <!-- ===== App: 健康 ===== -->
+  <div class="app-page" id="page-app-health">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">🌷 健康</span>
+    </div>
+    <div class="app-body">
+      <div class="health-status-card" id="healthStatusCard">
+        <div class="health-status-main" id="healthStatusMain">还没有记录，添加第一次经期日期开始吧</div>
+        <div class="health-status-sub" id="healthStatusSub"></div>
+      </div>
+
+      <button class="btn btn-primary btn-block" id="healthAddRecordBtn" style="margin:14px 0;">+ 记一次</button>
+
+      <div class="field-label" style="margin-bottom:8px;">历史记录</div>
+      <div id="healthRecordList"></div>
+
+      <p class="helper-text" style="margin-top:14px;">记录只保存在这台设备本地，不会上传到云端；日期临近或者聊天提到相关话题时，Leith 可能会自然地关心一下你，不会频繁提起。</p>
+    </div>
+
+    <!-- 添加/编辑记录弹窗 -->
+    <div class="modal-overlay hidden" id="healthRecordModalOverlay">
+      <div class="modal-box">
+        <h3 id="healthRecordModalTitle">记一次</h3>
+        <label class="field-label" style="margin-top:10px;">开始日期</label>
+        <input type="date" id="healthStartDateInput" style="width:100%;background:var(--bg-input);border:1px solid var(--line);color:var(--paper);border-radius:var(--radius-md);padding:10px 14px;font-size:14px;font-family:inherit;">
+        <label class="field-label" style="margin-top:10px;">结束日期（选填，还没结束可以先不填）</label>
+        <input type="date" id="healthEndDateInput" style="width:100%;background:var(--bg-input);border:1px solid var(--line);color:var(--paper);border-radius:var(--radius-md);padding:10px 14px;font-size:14px;font-family:inherit;">
+        <div class="row-flex" style="margin-top:14px;">
+          <button class="btn btn-ghost btn-block" id="healthRecordCancelBtn">取消</button>
+          <button class="btn btn-primary btn-block" id="healthRecordSaveBtn">保存</button>
+        </div>
+      </div>
+    </div>
+  </div><!-- /app-health -->
 
   <!-- ===== App: 共读小说 ===== -->
   <div class="app-page" id="page-app-reading">

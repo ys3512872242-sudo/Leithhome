@@ -251,6 +251,7 @@ function openApp(appPageId) {
   if (appPageId === "page-app-widget") refreshWidgetApp();
   if (appPageId === "page-app-reading") showReadingLibrary();
   if (appPageId === "page-app-theater") renderTheaterRoomList();
+  if (appPageId === "page-app-health") renderHealthPage();
 }
 
 // 关闭 app 页面，回到桌面
@@ -359,11 +360,6 @@ function markPurchaseDamaged(threadId, lsKey, recordId) {
   const rec = list.find(r => r.id === recordId);
   if (rec) rec.damaged = true;
   saveJSON(lsKey, records);
-}
-// 判断"这件商品是否已经拥有过"（用于非消耗品判断能不能再买——只要买过、没被反复允许的机制，就一直算拥有）
-function hasEverPurchased(threadId, lsKey, itemId) {
-  const records = getPurchaseRecords(threadId, lsKey);
-  return records.some(r => r.itemId === itemId);
 }
 // 判断一条购买记录现在还"在库存里、没被消耗掉"吗（用掉了/损坏了/时效过了 都算不在库存里了）
 function isPurchaseActive(record, item) {
@@ -591,37 +587,14 @@ function renderPurchasableSection({ gridId, items, lsKey, threadId, emptyEmoji, 
     const consumeBadge = item.consumable === "once" ? `<span class="consume-badge">一次性</span>`
       : item.consumable === "timed" ? `<span class="consume-badge">${item.expiresInDays || 1}天</span>` : "";
 
-    if (item.consumable) {
-      // 消耗品：不管买过多少次，货架这边永远可以再买——每次都是新的一份，去床头柜看有几份
-      const ownedCount = getNightstand(threadId).filter(ni => ni.itemId === item.id && ni.lsKey === lsKey).length;
-      return `
-        <div class="inventory-item">
-          <div class="item-emoji">${item.emoji || "🛍️"}</div>
-          <div>${escapeHtml(item.name)}${consumeBadge}</div>
-          <div class="item-name">¥${item.price}${ownedCount ? ` · 床头柜有${ownedCount}份` : ""}</div>
-          <div style="display:flex;gap:4px;margin-top:4px;">
-            <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-buy-item="${item.id}">购买</button>
-            <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-del-item="${item.id}">下架</button>
-          </div>
-        </div>`;
-    }
-
-    // 非消耗品：买过一次就不能再买了（哪怕已经在床头柜里被标记"损坏"清出去了，也不重新允许购买）
-    const owned = hasEverPurchased(threadId, lsKey, item.id);
-    if (owned) {
-      return `
-        <div class="inventory-item owned">
-          <div class="item-emoji">${item.emoji || "🛍️"}</div>
-          <div>${escapeHtml(item.name)}${consumeBadge}</div>
-          <div class="item-name">已拥有</div>
-        </div>`;
-    }
-
+    // 现在所有商品——不管是不是消耗品——都可以无限重复购买，每次都是独立一份，
+    // 摆进床头柜各自计时/消耗；货架条目只有主动"下架"才会消失，不会因为买过而消失或锁定
+    const ownedCount = getNightstand(threadId).filter(ni => ni.itemId === item.id && ni.lsKey === lsKey).length;
     return `
       <div class="inventory-item">
         <div class="item-emoji">${item.emoji || "🛍️"}</div>
         <div>${escapeHtml(item.name)}${consumeBadge}</div>
-        <div class="item-name">¥${item.price}</div>
+        <div class="item-name">¥${item.price}${ownedCount ? ` · 床头柜有${ownedCount}份` : ""}</div>
         <div style="display:flex;gap:4px;margin-top:4px;">
           <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-buy-item="${item.id}">购买</button>
           <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-del-item="${item.id}">下架</button>
@@ -633,13 +606,7 @@ function renderPurchasableSection({ gridId, items, lsKey, threadId, emptyEmoji, 
     btn.addEventListener("click", () => {
       const item = items.find(i => i.id === btn.dataset.buyItem);
       if (!item) return;
-      // 非消耗品已经买过就不再重复购买（按钮理论上不会出现在这种状态，这里是双重保险）
-      if (!item.consumable && hasEverPurchased(threadId, lsKey, item.id)) {
-        showToast("已经拥有这件了");
-        return;
-      }
       const record = addPurchaseRecord(threadId, lsKey, item.id, "user");
-      // 消耗品和非消耗品现在都会进床头柜——消耗品用完/过期会自动清出，非消耗品要手动点"损坏"才清出
       addNightstandItem(threadId, { ...item, boughtBy: "user" }, record.id, lsKey);
       showToast(`已购买 ${item.emoji} ${item.name}`);
       if (notifyFn) notifyFn(item.name);
@@ -872,8 +839,10 @@ async function autoRespondToNarration(threadId, bubble, row) {
     }
     clearInterval(timeoutTimer);
     const freshMessages = getThreadMessages(threadId);
-    freshMessages.push({ role: "assistant", content: fullReply, _id: uid(), _ts: Date.now() });
+    const finalMsgId = uid();
+    freshMessages.push({ role: "assistant", content: fullReply, _id: finalMsgId, _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
+    attachPinButtonToBubble(bubble, finalMsgId, false);
     // 同步到云端短期记忆
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
       window.Memory.saveShortTerm(threadId, "assistant", fullReply);
@@ -888,8 +857,10 @@ async function autoRespondToNarration(threadId, bubble, row) {
         const partial = bubble.innerText;
         if (partial.trim()) {
           const freshMessages = getThreadMessages(threadId);
-          freshMessages.push({ role: "assistant", content: partial, _id: uid() });
+          const partialMsgId = uid();
+          freshMessages.push({ role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() });
           saveThreadMessages(threadId, freshMessages);
+          attachPinButtonToBubble(bubble, partialMsgId, false);
           if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
             window.Memory.saveShortTerm(threadId, "assistant", partial);
           }
@@ -1111,15 +1082,43 @@ function loadActiveThreadIntoChat() {
     box.appendChild(empty);
   } else {
     messages.forEach(msg => renderMessage(msg, { noScroll: true }));
-    // 用 double-rAF 确保浏览器完成布局和图片解码后再滚动到底部——
-    // 直接同步设置 scrollTop 时，如果消息包含贴纸/图片等异步加载的内容，
-    // scrollHeight 还没算到最终值，会导致滚动位置不对（停在中间某条消息，比如买东西那条附近，
-    // 而不是真正的底部），这也是之前"刷新页面后要一直往下滑"这个问题的根源
+    // 用 double-rAF 确保浏览器完成布局和图片解码后再滚动到底部。
+    // 另外：CSS 里 .chat-scroll 设置了 scroll-behavior:smooth，如果直接用这个平滑滚动
+    // 来定位"刚打开页面、历史消息还在陆续渲染"这种场景，会出问题——平滑滚动是"滚向发起那一刻
+    // 读到的目标值"，如果滚动过程中 scrollHeight 因为图片继续加载而变大，动画会停在旧的、
+    // 错误的位置（甚至可能停在很靠前的地方），而不是真正的底部。这里临时关掉平滑滚动，
+    // 做一次瞬间跳转，跳完再恢复，这样初始定位才是准确、稳定的。
+    box.style.scrollBehavior = "auto";
+    const scrollToBottomNow = () => { box.scrollTop = box.scrollHeight; };
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        box.scrollTop = box.scrollHeight;
+        scrollToBottomNow();
+        box.style.scrollBehavior = "";
       });
     });
+
+    // 双重 rAF 只能保证"布局计算完成"，不能保证贴纸/图片这类需要走网络请求+解码的
+    // 异步资源真的加载完了——如果消息里有贴纸，图片加载完成的时机可能落在 rAF 之后，
+    // 那时候 scrollHeight 又会变化。这里等所有图片都 load 完（或加载失败）后，
+    // 只要用户当时还停留在底部附近，就再校正一次，确保最终真的停在最后一条消息
+    const imgs = box.querySelectorAll("img");
+    if (imgs.length) {
+      let pending = imgs.length;
+      const onImgSettled = () => {
+        pending--;
+        if (pending === 0) {
+          const distFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+          if (distFromBottom < 300) scrollToBottomNow(); // 用户没有主动往上翻走，才校正
+        }
+      };
+      imgs.forEach(img => {
+        if (img.complete) { onImgSettled(); }
+        else {
+          img.addEventListener("load", onImgSettled, { once: true });
+          img.addEventListener("error", onImgSettled, { once: true });
+        }
+      });
+    }
   }
   renderTokenBanner();
 }
@@ -1527,15 +1526,7 @@ function renderMessage(msg, opts = {}) {
   // 标记为重要记忆：只对 Leith 的回复生效，常驻显示在气泡右下角（平时淡淡的，标记后变亮），
   // 不需要先点开气泡的操作栏才能看到——情绪上头的时候更容易第一时间点掉它
   if (msg.role === "assistant" && msg.type !== "sticker") {
-    const pinBtn = document.createElement("button");
-    pinBtn.className = "msg-pin-btn" + (msg.pinned ? " pinned" : "");
-    pinBtn.title = msg.pinned ? "已标记为重要记忆" : "标记为重要记忆";
-    pinBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="${msg.pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.9 6.26L21 9.27l-4.5 4.39L17.8 20 12 16.9 6.2 20l1.3-6.34L3 9.27l6.1-1.01L12 2z"/></svg>`;
-    pinBtn.onclick = (e) => {
-      e.stopPropagation();
-      togglePinMessage(msg._id, pinBtn);
-    };
-    bubble.appendChild(pinBtn);
+    attachPinButtonToBubble(bubble, msg._id, msg.pinned);
   }
 
   // 操作栏：编辑（用户消息）/ 重新生成（AI消息）/ 删除（全部），统一放进一个工具条
@@ -1650,6 +1641,24 @@ function exitSelectMode() {
 // ============================================================
 // 删除单条消息（本地 + 云端同步）
 // ============================================================
+// 给一个气泡 DOM 元素挂上"标记为重要记忆"的星标按钮——抽成公共函数是因为
+// Leith 的流式回复有好几处是手动创建气泡+逐字更新内容的（不经过 renderMessage），
+// 之前星标只在 renderMessage 里创建，导致刚回复完的那条消息看不到星标，要刷新页面
+// （重新走一遍 renderMessage）才会出现。现在流式回复真正结束、拿到消息 id 后，
+// 也调用这个函数补上星标，不用等刷新。
+function attachPinButtonToBubble(bubble, msgId, pinned) {
+  if (!bubble || bubble.querySelector(".msg-pin-btn")) return; // 避免重复添加
+  const pinBtn = document.createElement("button");
+  pinBtn.className = "msg-pin-btn" + (pinned ? " pinned" : "");
+  pinBtn.title = pinned ? "已标记为重要记忆" : "标记为重要记忆";
+  pinBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="${pinned ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.6"><path d="M12 2l2.9 6.26L21 9.27l-4.5 4.39L17.8 20 12 16.9 6.2 20l1.3-6.34L3 9.27l6.1-1.01L12 2z"/></svg>`;
+  pinBtn.onclick = (e) => {
+    e.stopPropagation();
+    togglePinMessage(msgId, pinBtn);
+  };
+  bubble.appendChild(pinBtn);
+}
+
 // 标记/取消标记某条 Leith 回复为"重要记忆"——只改本地存储的这条消息，
 // 不额外调用任何 API、不花 token。当天写日记时会读取所有被标记的消息，
 // 作为重点素材让日记多着墨、写得更详细一点。
@@ -1894,8 +1903,10 @@ async function regenerateFromMessage(userMsg) {
     clearInterval(timeoutTimer);
 
     const freshMessages = getThreadMessages(threadId);
-    freshMessages.push({ role: "assistant", content: fullReply, _id: uid(), _ts: Date.now() });
+    const finalMsgId = uid();
+    freshMessages.push({ role: "assistant", content: fullReply, _id: finalMsgId, _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
+    attachPinButtonToBubble(bubble, finalMsgId, false);
     renderThreadList();
     // 不在旁白回复后触发 token banner（避免每次买东西都弹提醒）
 
@@ -1909,8 +1920,10 @@ async function regenerateFromMessage(userMsg) {
         const partial = bubble.innerText;
         if (partial.trim()) {
           const freshMessages = getThreadMessages(threadId);
-          freshMessages.push({ role: "assistant", content: partial, _id: uid() });
+          const partialMsgId = uid();
+          freshMessages.push({ role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() });
           saveThreadMessages(threadId, freshMessages);
+          attachPinButtonToBubble(bubble, partialMsgId, false);
           renderThreadList();
           showToast("已停止，已生成的内容已保存");
         } else {
@@ -2406,9 +2419,10 @@ async function buildEffectiveSystemPrompt() {
 
   const webBlock = buildWebPromptBlock();
   const noteBlock = buildSystemNotesBlock();
+  const healthBlock = buildHealthPromptBlock(recentText);
   // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
   // 世界规则（WORLD_RULES_MINI / WORLD_RULES_FULL）现在跟着 shopRelevant 走
-  return [worldRulesBlock, FORMATTING_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim()].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -2418,6 +2432,220 @@ function buildSystemNotesBlock() {
   const notes = msgs.filter(m => m._isNarration).slice(-3);
   if (!notes.length) return "";
   return "[Recent events]\n" + notes.map(m => `- ${m.content}`).join("\n");
+}
+
+// ============================================================
+// 健康（生理期周期）—— 本地存储，不上云，纯个人工具
+// ============================================================
+const HEALTH_RECORDS_LS = "companion_health_records_v1"; // [{id, start, end}]  start/end: 'YYYY-MM-DD'
+
+function getHealthRecords() {
+  return loadJSON(HEALTH_RECORDS_LS, []).sort((a, b) => b.start.localeCompare(a.start)); // 最新的在前
+}
+function saveHealthRecords(records) { saveJSON(HEALTH_RECORDS_LS, records); }
+function addHealthRecord(start, end) {
+  const records = loadJSON(HEALTH_RECORDS_LS, []);
+  records.push({ id: uid(), start, end: end || null });
+  saveHealthRecords(records);
+}
+function updateHealthRecord(id, start, end) {
+  const records = loadJSON(HEALTH_RECORDS_LS, []);
+  const rec = records.find(r => r.id === id);
+  if (rec) { rec.start = start; rec.end = end || null; }
+  saveHealthRecords(records);
+}
+function deleteHealthRecord(id) {
+  const records = loadJSON(HEALTH_RECORDS_LS, []).filter(r => r.id !== id);
+  saveHealthRecords(records);
+}
+
+// 根据最近几次记录的"开始日期间隔"算平均周期天数——至少要有2次记录才能算出间隔，
+// 记录越多，取最近的几次间隔平均，比固定周期数字更贴近真实波动
+function getAverageCycleDays() {
+  const records = getHealthRecords(); // 最新的在前
+  if (records.length < 2) return null;
+  const gaps = [];
+  for (let i = 0; i < records.length - 1 && i < 5; i++) { // 最多看最近6次记录、5个间隔，太久远的不参考
+    const d1 = new Date(records[i].start);
+    const d2 = new Date(records[i + 1].start);
+    const days = Math.round((d1 - d2) / 86400000);
+    if (days > 0 && days < 90) gaps.push(days); // 过滤明显异常的间隔（比如漏记导致的超长间隔）
+  }
+  if (!gaps.length) return null;
+  return Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length);
+}
+
+// 计算当前健康状态：是否在经期中、距下次预计还有几天
+function getHealthStatus() {
+  const records = getHealthRecords();
+  if (!records.length) return null;
+  const latest = records[0];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayTime = new Date(todayStr).getTime();
+  const latestStartTime = new Date(latest.start).getTime();
+  const daysSinceStart = Math.round((todayTime - latestStartTime) / 86400000);
+
+  // 正在经期中：有开始日期，且（没填结束日期 且 距开始不超过10天）或者（今天在开始~结束之间）
+  const inPeriod = latest.end
+    ? (todayStr >= latest.start && todayStr <= latest.end)
+    : (daysSinceStart >= 0 && daysSinceStart <= 10);
+
+  const avgCycle = getAverageCycleDays();
+  let daysUntilNext = null;
+  if (avgCycle && !inPeriod) {
+    const nextPredicted = new Date(latestStartTime + avgCycle * 86400000);
+    daysUntilNext = Math.round((nextPredicted.getTime() - todayTime) / 86400000);
+  }
+
+  return { inPeriod, daysSinceStart, avgCycle, daysUntilNext, latest };
+}
+
+// 供聊天时判断"最近聊天内容是否跟身体状态相关"——命中，或者日期临近/经期中，才把健康信息
+// 当作背景提示带进这次对话，平时不会主动提起，符合"按需检索"的思路，不会显得刻意
+const HEALTH_TOPIC_WORDS = ['姨妈', '大姨妈', '例假', '生理期', '经期', '肚子疼', '肚子痛', '腰疼', '腰酸', '痛经', '冰', '冷饮', '熬夜', '没睡', '没休息', '难受', '不舒服', '红糖水', '暖宝宝'];
+function isHealthTopicRelevant(recentText) {
+  if (!recentText) return false;
+  return HEALTH_TOPIC_WORDS.some(w => recentText.includes(w));
+}
+
+// 生成健康背景提示——只有"日期临近/经期中"或者"聊天内容相关"才会真的返回内容，
+// 平时聊天大概率是空字符串，不占用额外 token
+function buildHealthPromptBlock(recentText) {
+  const status = getHealthStatus();
+  if (!status) return "";
+
+  const topicRelevant = isHealthTopicRelevant(recentText);
+  const dateRelevant = status.inPeriod || (status.daysUntilNext !== null && status.daysUntilNext <= 2 && status.daysUntilNext >= -1);
+  if (!topicRelevant && !dateRelevant) return "";
+
+  let line = "";
+  if (status.inPeriod) {
+    line = `Susie is currently on her period (day ${status.daysSinceStart + 1}). If natural in context, you can show a bit of extra gentle care — don't force it into every message, just be a little more attentive if relevant.`;
+  } else if (status.daysUntilNext !== null && status.daysUntilNext <= 2) {
+    line = `Susie's period is expected in about ${Math.max(status.daysUntilNext, 0)} day(s). She may be more sensitive/tired around this time — you can be a bit gentler if it fits naturally, no need to mention this explicitly.`;
+  } else if (topicRelevant) {
+    line = `Susie mentioned something that could relate to her physical wellbeing (diet, sleep, discomfort). Respond with natural care as a partner would, no need to be clinical.`;
+  }
+  return line ? `[Health context — private, don't state this info explicitly, just let it inform your tone]\n${line}` : "";
+}
+
+// ============================================================
+// 健康 App —— 页面渲染与交互
+// ============================================================
+let healthEditingId = null; // 正在编辑的记录 id，null 表示是"新增"
+
+function renderHealthPage() {
+  const status = getHealthStatus();
+  const mainEl = $("#healthStatusMain");
+  const subEl = $("#healthStatusSub");
+
+  if (!status) {
+    mainEl.innerText = "还没有记录，添加第一次经期日期开始吧";
+    subEl.innerText = "";
+  } else if (status.inPeriod) {
+    mainEl.innerText = `经期第 ${status.daysSinceStart + 1} 天`;
+    subEl.innerText = status.avgCycle ? `平均周期约 ${status.avgCycle} 天` : "再记录一次就能算出平均周期了";
+  } else if (status.daysUntilNext !== null) {
+    if (status.daysUntilNext >= 0) {
+      mainEl.innerText = status.daysUntilNext === 0 ? "预计今天来经期" : `预计还有 ${status.daysUntilNext} 天来经期`;
+    } else {
+      mainEl.innerText = `已经超过预计日期 ${Math.abs(status.daysUntilNext)} 天`;
+    }
+    subEl.innerText = `平均周期约 ${status.avgCycle} 天`;
+  } else {
+    mainEl.innerText = "已记录 1 次，再记一次就能开始预测周期了";
+    subEl.innerText = "";
+  }
+
+  const listEl = $("#healthRecordList");
+  const records = getHealthRecords();
+  if (!records.length) {
+    listEl.innerHTML = `<div class="health-empty-hint">还没有任何记录</div>`;
+  } else {
+    listEl.innerHTML = "";
+    records.forEach(r => {
+      const item = document.createElement("div");
+      item.className = "health-record-item";
+      const daysText = r.end ? `持续 ${Math.round((new Date(r.end) - new Date(r.start)) / 86400000) + 1} 天` : "未填写结束日期";
+      item.innerHTML = `
+        <div>
+          <div class="health-record-dates">${r.start}${r.end ? ` ~ ${r.end}` : ""}</div>
+          <div class="health-record-days">${daysText}</div>
+        </div>
+        <div class="health-record-actions">
+          <button data-edit="${r.id}" title="编辑">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+          <button data-del="${r.id}" title="删除">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+          </button>
+        </div>`;
+      listEl.appendChild(item);
+    });
+    listEl.querySelectorAll("[data-edit]").forEach(btn => {
+      btn.onclick = () => openHealthRecordModal(btn.dataset.edit);
+    });
+    listEl.querySelectorAll("[data-del]").forEach(btn => {
+      btn.onclick = () => {
+        if (confirm("确定删除这条记录吗？")) {
+          deleteHealthRecord(btn.dataset.del);
+          renderHealthPage();
+        }
+      };
+    });
+  }
+}
+
+function openHealthRecordModal(recordId) {
+  healthEditingId = recordId || null;
+  const modalTitle = $("#healthRecordModalTitle");
+  const startInput = $("#healthStartDateInput");
+  const endInput = $("#healthEndDateInput");
+
+  if (recordId) {
+    const rec = getHealthRecords().find(r => r.id === recordId);
+    modalTitle.innerText = "编辑记录";
+    startInput.value = rec ? rec.start : "";
+    endInput.value = rec && rec.end ? rec.end : "";
+  } else {
+    modalTitle.innerText = "记一次";
+    startInput.value = new Date().toISOString().slice(0, 10);
+    endInput.value = "";
+  }
+
+  $("#healthRecordModalOverlay").classList.remove("hidden");
+  pushNavLayer(closeHealthRecordModal);
+}
+function closeHealthRecordModal() {
+  $("#healthRecordModalOverlay").classList.add("hidden");
+  healthEditingId = null;
+}
+function closeHealthRecordModalFromUI() {
+  popNavLayerSilently();
+  closeHealthRecordModal();
+}
+
+function initHealthApp() {
+  $("#healthAddRecordBtn").onclick = () => openHealthRecordModal(null);
+  $("#healthRecordCancelBtn").onclick = closeHealthRecordModalFromUI;
+  $("#healthRecordModalOverlay").addEventListener("click", (e) => {
+    if (e.target.id === "healthRecordModalOverlay") closeHealthRecordModalFromUI();
+  });
+  $("#healthRecordSaveBtn").onclick = () => {
+    const start = $("#healthStartDateInput").value;
+    const end = $("#healthEndDateInput").value;
+    if (!start) return showToast("请先选择开始日期");
+    if (end && end < start) return showToast("结束日期不能早于开始日期");
+
+    if (healthEditingId) {
+      updateHealthRecord(healthEditingId, start, end);
+    } else {
+      addHealthRecord(start, end);
+    }
+    closeHealthRecordModalFromUI();
+    renderHealthPage();
+    showToast("已保存");
+  };
 }
 
 // 小世界状态（精简版：只报数据，不含规则）
@@ -2448,11 +2676,9 @@ function buildWorldPromptBlock() {
 
   const gifts = giftRecords.length ? giftRecords.map(g => `${g.emoji}${g.name}`).join("、") : "none";
   const limited = limitedItems.length ? limitedItems.map(i => `${i.name}¥${i.price}`).join("、") : "none";
-  // 消耗品永远可以再买；非消耗品买过就不再列为"可买"
-  const availableAdult = adultItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldAdultBought, i.id));
-  const adult = availableAdult.length ? availableAdult.map(i => `${i.name}¥${i.price}`).join("、") : "none";
-  const availableShelf = shelfItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldShelfBought, i.id));
-  const shelf = availableShelf.length ? availableShelf.map(i => `${i.name}¥${i.price}`).join("、") : "none";
+  // 现在所有商品都可以无限重复购买，货架列表不再按"是否已拥有"过滤
+  const adult = adultItems.length ? adultItems.map(i => `${i.name}¥${i.price}`).join("、") : "none";
+  const shelf = shelfItems.length ? shelfItems.map(i => `${i.name}¥${i.price}`).join("、") : "none";
   const ns = nightstand.length ? nightstand.map(i => `${i.emoji}${i.name}`).join("、") : "empty";
 
   return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}  Nightstand: ${ns}\nGifted: ${gifts}\nLimited items: ${limited}\nAdult items available: ${adult}\nShelf items available: ${shelf}`;
@@ -2469,9 +2695,7 @@ function buildWorldPromptBlockMini() {
   const adultItems = getAdultItems();
   const shelfItems = getShelfItems();
 
-  const availableAdult = adultItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldAdultBought, i.id));
-  const availableShelf = shelfItems.filter(i => i.consumable || !hasEverPurchased(threadId, LS.worldShelfBought, i.id));
-  const allNames = [...limitedItems, ...availableAdult, ...availableShelf].map(i => i.name);
+  const allNames = [...limitedItems, ...adultItems, ...shelfItems].map(i => i.name);
 
   if (!allNames.length && balance <= 0 && savings <= 0) return "";
   return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}${allNames.length ? `  Items: ${allNames.join("、")}` : ""}`;
@@ -2531,14 +2755,10 @@ function handleAIActions(actions) {
       showGiftModal(limitedItem);
       needRefresh = true;
     } else if (action.type === "abuy") {
-      // Leith 买成人用品：从钱包扣。消耗品随时可以再买；非消耗品买过就不重复买
+      // Leith 买成人用品：从钱包扣，任何商品都可以随时重复买
       const adultItem = findAdultItem(action.itemName);
       if (!adultItem) {
         showToast(`Leith 想买"${action.itemName}"但成人用品区没有`);
-        return;
-      }
-      if (!adultItem.consumable && hasEverPurchased(threadId, LS.worldAdultBought, adultItem.id)) {
-        showToast(`Leith 想买 ${adultItem.name} 但你们已经有了`);
         return;
       }
       const balance = getWallet(threadId);
@@ -2557,10 +2777,6 @@ function handleAIActions(actions) {
       const shelfItem = findShelfItem(action.itemName);
       if (!shelfItem) {
         showToast(`Leith 想买"${action.itemName}"但货架上没有`);
-        return;
-      }
-      if (!shelfItem.consumable && hasEverPurchased(threadId, LS.worldShelfBought, shelfItem.id)) {
-        showToast(`Leith 想买 ${shelfItem.name} 但你们已经有了`);
         return;
       }
       const balance2 = getWallet(threadId);
@@ -2684,15 +2900,39 @@ async function checkAndGenerateDiary() {
   // 补写：如果上次记录的日期比"昨天"还早，说明中间有断档（比如好几天没打开App），
   // 把最近没处理的那天补上（只补"昨天"，避免长期没打开时一次性发起过多请求）
   if (lastDone && lastDone < yesterday) {
-    await processDayEnd(yesterday);
+    await runDayEndWithSplash(yesterday);
+    return;
   }
 
   // 本地时间过了凌晨5点，就把"昨天"这一整天处理掉：写日记 + 把昨天标记的内容转成核心记忆
   if (now.getHours() >= DIARY_TRIGGER_HOUR) {
     if (getLastDiaryDate() !== yesterday) {
-      await processDayEnd(yesterday);
+      await runDayEndWithSplash(yesterday);
     }
   }
+}
+
+// 带开屏的日记处理：只有真的要处理的时候才会短暂出现，营造"翻开日记本"的感觉，
+// 处理完（不管有没有真正写出新内容）就自动淡出，不会一直卡着不让你进入 App
+async function runDayEndWithSplash(dateStr) {
+  showDiarySplash();
+  try {
+    await processDayEnd(dateStr);
+  } finally {
+    hideDiarySplash();
+  }
+}
+
+function showDiarySplash() {
+  const overlay = $("#diarySplashOverlay");
+  if (!overlay) return;
+  overlay.classList.remove("hidden", "hiding");
+}
+function hideDiarySplash() {
+  const overlay = $("#diarySplashOverlay");
+  if (!overlay || overlay.classList.contains("hidden")) return;
+  overlay.classList.add("hiding");
+  setTimeout(() => overlay.classList.add("hidden"), 500);
 }
 
 // 处理"一天的收尾"：生成/续写当天日记 + 把当天标记过的消息压缩存入核心记忆。
@@ -3271,8 +3511,10 @@ async function sendChat(overrideContent) {
     clearInterval(timeoutTimer);
 
     const freshMessages = getThreadMessages(threadId);
-    freshMessages.push({ role: "assistant", content: fullReply, _id: uid(), _ts: Date.now() });
+    const finalMsgId = uid();
+    freshMessages.push({ role: "assistant", content: fullReply, _id: finalMsgId, _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
+    attachPinButtonToBubble(bubble, finalMsgId, false);
     // 同步到云端短期记忆——长期记忆现在改由每天深夜的日记生成负责，
     // 这里不再按消息数机械压缩
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
@@ -3291,8 +3533,10 @@ async function sendChat(overrideContent) {
         const partial = bubble.innerText;
         if (partial.trim()) {
           const freshMessages = getThreadMessages(threadId);
-          freshMessages.push({ role: "assistant", content: partial, _id: uid() });
+          const partialMsgId = uid();
+          freshMessages.push({ role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() });
           saveThreadMessages(threadId, freshMessages);
+          attachPinButtonToBubble(bubble, partialMsgId, false);
           renderThreadList();
           showToast("已停止，已生成的内容已保存");
         } else {
@@ -5250,6 +5494,7 @@ initMemoryApp();
 initWidget();
 initReading();
 initAttachments();
+initHealthApp();
 initHealthCheck();
 tryOpenSharedBookFromUrl();
 tryOpenSharedLinkFromUrl();
@@ -5297,9 +5542,25 @@ if ($("#testSupabaseBtn")) {
 setTimeout(updateSupabaseStatus, 2000);
 setTimeout(updateSupabaseStatus, 5000);
 
-// 每日日记：等云端记忆连接稳定后检查一次是否需要补写/生成，
-// 之后每 30 分钟再检查一次，覆盖"App 一直开着跨过了深夜"的情况
-setTimeout(() => { checkAndGenerateDiary().catch(e => console.error("日记检查失败:", e)); }, 6000);
+// 每日日记：开屏尽量在用户看到聊天界面之前就出现，而不是加载完聊天界面后又突然打断——
+// 先根据本地记录快速判断"今天有没有可能需要处理"，需要的话立刻显示开屏占位，
+// 实际的检查和处理等云端连接稳定后再执行，执行完再让开屏淡出
+(function scheduleDiaryCheckWithEarlySplash() {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const lastDone = getLastDiaryDate();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const mightNeedProcessing = lastDone !== todayStr &&
+    (now.getHours() >= DIARY_TRIGGER_HOUR || (lastDone && lastDone < yesterday));
+
+  if (mightNeedProcessing) showDiarySplash();
+
+  setTimeout(() => {
+    checkAndGenerateDiary()
+      .catch(e => console.error("日记检查失败:", e))
+      .finally(() => { if (mightNeedProcessing) hideDiarySplash(); });
+  }, 6000);
+})();
 setInterval(() => { checkAndGenerateDiary().catch(e => console.error("日记检查失败:", e)); }, 30 * 60 * 1000);
 // 分层汇总检查频率低得多——内部本身已经做了"今天查过就跳过"，这里只要保证每次开App都会过一遍
 setTimeout(() => { checkAndGenerateRollups().catch(e => console.error("日记汇总检查失败:", e)); }, 9000);
