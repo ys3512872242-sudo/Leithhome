@@ -843,6 +843,51 @@
   .theater-room-empty .mark{font-size:34px;margin-bottom:10px;}
 
   /* ===== 记忆树状可视化 ===== */
+  .memory-view-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .memory-view-switch{display:flex;background:var(--bg-input);border:1px solid var(--line);border-radius:12px;padding:3px;}
+  .memory-view-switch button{border:0;background:transparent;color:var(--paper-dim);font:500 11px var(--sans);padding:6px 10px;border-radius:9px;cursor:pointer;}
+  .memory-view-switch button.active{background:var(--bg-elevated-2);color:var(--paper);box-shadow:0 1px 4px rgba(0,0,0,.18);}
+  .memory-legend{font-size:10px;color:var(--paper-dim);white-space:nowrap;}
+  .memory-legend-solid,.memory-legend-virtual{display:inline-block;width:15px;vertical-align:middle;margin:0 3px 0 7px;border-top:1.5px solid var(--accent);}
+  .memory-legend-virtual{border-top-style:dashed;opacity:.55;}
+  .memory-graph-wrap{
+    position:relative;height:min(66vh,620px);min-height:430px;
+    overflow:hidden;border:1px solid var(--line);border-radius:var(--radius-lg);
+    background:
+      radial-gradient(circle at 50% 45%,var(--accent-glow),transparent 32%),
+      radial-gradient(circle at 20% 18%,rgba(128,152,201,.08),transparent 24%),
+      var(--bg-deep);
+    touch-action:none;user-select:none;
+  }
+  .memory-graph-wrap::before{
+    content:"";position:absolute;inset:0;pointer-events:none;opacity:.22;
+    background-image:radial-gradient(circle,rgba(255,255,255,.45) 0 1px,transparent 1.4px);
+    background-size:43px 43px;background-position:7px 11px;
+  }
+  .memory-graph-svg{position:absolute;inset:0;width:100%;height:100%;cursor:grab;}
+  .memory-graph-svg.dragging{cursor:grabbing;}
+  .memory-edge{fill:none;stroke:var(--moon);stroke-width:1;opacity:.38;vector-effect:non-scaling-stroke;}
+  .memory-edge.virtual{stroke-dasharray:3 5;opacity:.25;}
+  .memory-graph-node{cursor:pointer;transform-box:fill-box;transform-origin:center;transition:filter .15s ease;}
+  .memory-graph-node:hover{filter:brightness(1.25) drop-shadow(0 0 8px var(--accent-glow));}
+  .memory-node-halo{fill:var(--accent-glow);stroke:var(--accent-dim);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .memory-graph-node.virtual .memory-node-halo{fill:rgba(128,152,201,.08);stroke-dasharray:3 3;opacity:.72;}
+  .memory-node-label{fill:var(--paper);font:500 10px var(--sans);text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:var(--bg-deep);stroke-width:3px;stroke-linejoin:round;}
+  .memory-node-sub{fill:var(--paper-dim);font:400 8px var(--sans);text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:var(--bg-deep);stroke-width:2px;}
+  .memory-root-ring{fill:rgba(183,156,232,.14);stroke:var(--accent);stroke-width:1.3;vector-effect:non-scaling-stroke;}
+  .memory-graph-controls{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px;z-index:2;}
+  .memory-graph-controls button{width:32px;height:32px;border:1px solid var(--line);border-radius:10px;background:var(--surface-glass);backdrop-filter:blur(8px);color:var(--paper);font-size:16px;cursor:pointer;}
+  .memory-graph-hint{position:absolute;left:12px;bottom:10px;color:var(--paper-dim);font-size:9.5px;opacity:.7;pointer-events:none;}
+  .memory-node-detail{
+    position:absolute;left:10px;right:10px;bottom:10px;z-index:3;
+    max-height:42%;overflow:auto;padding:13px 36px 13px 14px;
+    border:1px solid var(--line);border-radius:14px;background:rgba(20,20,28,.94);
+    backdrop-filter:blur(16px);box-shadow:0 8px 28px rgba(0,0,0,.35);
+  }
+  .memory-node-detail-title{font-size:11px;color:var(--accent-2);margin-bottom:6px;}
+  .memory-node-detail-content{font:13px/1.65 var(--serif);color:var(--paper);white-space:pre-wrap;word-break:break-word;}
+  .memory-node-detail-meta{font-size:10px;color:var(--paper-dim);margin-top:7px;}
+  .memory-node-detail-close{position:absolute;right:8px;top:7px;width:26px;height:26px;border:0;background:transparent;color:var(--paper-dim);font-size:18px;cursor:pointer;}
   .memory-tree{
     display:flex;flex-direction:column;gap:4px;
   }
@@ -1290,10 +1335,75 @@
     font-family:var(--serif);font-style:italic;
   }
 
+  /* ===== Leith 记忆锁 ===== */
+  .memory-lock-screen{
+    position:fixed;inset:0;z-index:600;
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;background:
+      radial-gradient(circle at 50% 30%,var(--accent-glow),transparent 38%),
+      linear-gradient(160deg,var(--bg-deep),var(--bg) 58%,var(--bg-elevated));
+  }
+  .memory-lock-screen.hidden{display:none;}
+  .memory-lock-card{width:min(100%,360px);text-align:center;}
+  .memory-lock-orbit{
+    width:82px;height:82px;border-radius:50%;margin:0 auto 24px;
+    display:flex;align-items:center;justify-content:center;font-size:30px;
+    border:1px solid var(--accent-dim);background:var(--surface-glass);
+    box-shadow:0 0 0 12px rgba(183,156,232,.035),0 0 42px var(--accent-glow);
+    animation:lockBreathe 3.6s ease-in-out infinite;
+  }
+  @keyframes lockBreathe{50%{transform:scale(1.035);box-shadow:0 0 0 16px rgba(183,156,232,.025),0 0 54px var(--accent-glow);}}
+  .memory-lock-title{font-family:var(--serif-display);font-style:italic;font-size:25px;color:var(--paper);}
+  .memory-lock-sub{font-size:12.5px;line-height:1.7;color:var(--paper-dim);margin:8px 0 20px;}
+  .memory-lock-input{
+    width:100%;height:52px;border:1px solid var(--line);border-radius:16px;
+    background:var(--bg-input);color:var(--paper);text-align:center;
+    font-size:22px;letter-spacing:9px;padding-left:9px;outline:none;
+    font-family:var(--sans);caret-color:var(--accent);
+  }
+  .memory-lock-input:focus{border-color:var(--accent-dim);box-shadow:0 0 0 3px var(--accent-glow);}
+  .memory-lock-error{min-height:20px;margin-top:9px;font-size:12px;color:var(--danger);}
+  .memory-lock-btn{margin-top:4px;height:46px;border-radius:14px;}
+  .desktop-lock-button{
+    margin-top:10px;border:1px solid var(--line);background:var(--surface-glass);
+    color:var(--paper-dim);border-radius:999px;padding:5px 11px;
+    font:500 11px var(--sans);cursor:pointer;
+  }
+  .desktop-lock-button:active{transform:scale(.97);}
+
   .hidden{display:none!important;}
 </style>
 </head>
 <body>
+
+  <div class="memory-lock-screen" id="memoryLockScreen">
+    <div class="memory-lock-card">
+      <div class="memory-lock-orbit">☁️</div>
+      <div class="memory-lock-title">Leith 在等你</div>
+      <div class="memory-lock-sub">输入记忆密码，让这台设备接回你们的对话和小世界。</div>
+      <input class="memory-lock-input" id="memoryLockInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="current-password" aria-label="记忆密码">
+      <div class="memory-lock-error" id="memoryLockError"></div>
+      <button class="btn btn-primary btn-block memory-lock-btn" id="memoryUnlockBtn">接回 Leith</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="changeMemoryPasscodeOverlay">
+    <div class="modal-box">
+      <h3>修改记忆密码</h3>
+      <p class="helper-text" style="margin:6px 0 14px;">密码只用来解锁云端记忆，不会发给 Leith，也不会增加 token。</p>
+      <label class="field-label">当前密码</label>
+      <input type="password" inputmode="numeric" maxlength="12" id="currentMemoryPasscodeInput" placeholder="6–12 位数字">
+      <label class="field-label" style="margin-top:10px;">新密码</label>
+      <input type="password" inputmode="numeric" maxlength="12" id="newMemoryPasscodeInput" placeholder="6–12 位数字">
+      <label class="field-label" style="margin-top:10px;">再输入一次</label>
+      <input type="password" inputmode="numeric" maxlength="12" id="confirmMemoryPasscodeInput" placeholder="重复新密码">
+      <div class="memory-lock-error" id="changeMemoryPasscodeError"></div>
+      <div class="row-flex" style="margin-top:8px;">
+        <button class="btn btn-ghost btn-block" id="changeMemoryPasscodeCancelBtn">取消</button>
+        <button class="btn btn-primary btn-block" id="changeMemoryPasscodeConfirmBtn">保存</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 日记整理开屏：只在真的需要处理昨天的日记/汇总时短暂出现，营造"翻开日记本"的感觉 -->
   <div class="diary-splash hidden" id="diarySplashOverlay">
@@ -1383,6 +1493,7 @@
       <div class="desktop-header">
         <h2>Leith·Home</h2>
         <p>Leith 的小世界</p>
+        <button class="desktop-lock-button" id="changeLeithPasswordBtn">🔐 修改记忆密码</button>
       </div>
 
       <!-- 小组件预览卡（苹果小组件风格：时间/天气/留言一目了然） -->
@@ -1591,7 +1702,31 @@
       </button>
     </div>
     <div class="app-body">
-      <div id="memoryTree" class="memory-tree"></div>
+      <div class="memory-view-bar">
+        <div class="memory-view-switch">
+          <button id="memoryGraphViewBtn" class="active">记忆云图</button>
+          <button id="memoryListViewBtn">分层列表</button>
+        </div>
+        <div class="memory-legend"><span class="memory-legend-solid"></span>实记忆<span class="memory-legend-virtual"></span>虚记忆</div>
+      </div>
+      <div class="memory-graph-wrap" id="memoryGraphWrap">
+        <svg class="memory-graph-svg" id="memoryGraphSvg" aria-label="Leith 的记忆云图">
+          <g id="memoryGraphViewport"></g>
+        </svg>
+        <div class="memory-graph-controls">
+          <button id="memoryGraphZoomInBtn" title="放大">＋</button>
+          <button id="memoryGraphZoomOutBtn" title="缩小">－</button>
+          <button id="memoryGraphResetBtn" title="回到中心" style="font-size:12px;">◎</button>
+        </div>
+        <div class="memory-graph-hint" id="memoryGraphHint">拖动探索 · 双指或滚轮缩放 · 点亮一段记忆</div>
+        <div class="memory-node-detail hidden" id="memoryNodeDetail">
+          <button class="memory-node-detail-close" id="memoryNodeDetailCloseBtn">×</button>
+          <div class="memory-node-detail-title" id="memoryNodeDetailTitle"></div>
+          <div class="memory-node-detail-content" id="memoryNodeDetailContent"></div>
+          <div class="memory-node-detail-meta" id="memoryNodeDetailMeta"></div>
+        </div>
+      </div>
+      <div id="memoryTree" class="memory-tree hidden"></div>
       <!-- 添加记忆的弹窗（点树枝上的+后出现） -->
       <div class="memory-add-modal hidden" id="memoryAddModal">
         <div class="memory-add-modal-box">
@@ -1931,7 +2066,7 @@
       <div class="divider"></div>
 
       <button class="btn btn-danger btn-block" id="clearAllBtn">清空全部本地数据</button>
-      <p class="helper-text" style="text-align:center;margin-top:8px;">对话记录、密钥、服务商配置存储在本机浏览器。人设档案、核心记忆和归档信件通过 Supabase 云端同步。</p>
+      <p class="helper-text" style="text-align:center;margin-top:8px;">对话、桌面小世界和共读状态会在解锁后同步。模型 API Key、服务商配置和健康记录仍只保存在本机。</p>
 
     </div>
   </div>

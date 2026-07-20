@@ -25,11 +25,24 @@
 
 // ---- Supabase 配置 ----
 const SUPABASE_URL = 'https://kiphsgskorznxjdcjsos.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpcGhzZ3Nrb3J6bnhqZGNqc29zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2ODQzNDAsImV4cCI6MjA5OTI2MDM0MH0.7g_nvTFSqn5Xv7BStds8ESQ6__wL027MVKIAj1azWfY';
+const SUPABASE_KEY = 'sb_publishable_Sk9lyJqWR92A4SIDMHK1IQ_BFbAAf9o';
+const LEITH_SESSION_LS_KEY = 'leith_memory_session_v2';
 
 let supabaseClient = null;
 let supabaseReady = false;
 let supabaseConnectError = '';
+let leithLockEnabled = false;
+
+function getLeithSessionToken() {
+  return localStorage.getItem(LEITH_SESSION_LS_KEY) || '';
+}
+
+function createSupabaseClient(sessionToken = '') {
+  const options = sessionToken
+    ? { global: { headers: { 'x-leith-token': sessionToken } } }
+    : undefined;
+  return window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, options);
+}
 
 // 初始化 Supabase 客户端
 function initSupabase() {
@@ -38,11 +51,28 @@ function initSupabase() {
     return false;
   }
   try {
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    supabaseClient = createSupabaseClient(getLeithSessionToken());
     return true;
   } catch (e) {
     console.error('Supabase 初始化失败:', e);
     supabaseConnectError = e.message;
+    return false;
+  }
+}
+
+async function detectLeithLock() {
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) return false;
+  try {
+    const probeClient = createSupabaseClient(getLeithSessionToken());
+    const { data, error } = await probeClient.rpc('leith_lock_status');
+    if (error) {
+      // 兼容数据库脚本尚未执行的旧部署。
+      if (error.code === 'PGRST202' || /leith_lock_status/i.test(error.message || '')) return false;
+      throw error;
+    }
+    return data === true;
+  } catch (e) {
+    console.warn('检测记忆锁失败，暂按旧版连接处理:', e);
     return false;
   }
 }
@@ -54,6 +84,16 @@ async function testSupabaseConnection() {
     return false;
   }
   try {
+    if (leithLockEnabled) {
+      const { data: sessionValid, error: sessionError } = await supabaseClient.rpc('leith_session_valid');
+      if (sessionError) throw sessionError;
+      if (!sessionValid) {
+        localStorage.removeItem(LEITH_SESSION_LS_KEY);
+        supabaseConnectError = '需要输入记忆密码';
+        supabaseReady = false;
+        return false;
+      }
+    }
     const { data, error } = await supabaseClient
       .from('memories')
       .select('*')
@@ -75,6 +115,61 @@ async function testSupabaseConnection() {
     supabaseReady = false;
     return false;
   }
+}
+
+async function unlockLeithMemory(passcode) {
+  if (!/^\d{6,12}$/.test(passcode || '')) {
+    return { ok: false, error: '请输入 6–12 位数字密码' };
+  }
+  try {
+    const unlockClient = createSupabaseClient('');
+    const { data: token, error } = await unlockClient.rpc('leith_unlock', { p_passcode: passcode });
+    if (error) throw error;
+    if (!token) return { ok: false, error: '密码不对，或者尝试次数过多，请稍后再试' };
+
+    localStorage.setItem(LEITH_SESSION_LS_KEY, token);
+    leithLockEnabled = true;
+    const ok = await testSupabaseConnection();
+    if (!ok) throw new Error(supabaseConnectError || '云端验证失败');
+
+    window.Memory = SupabaseMemoryAdapter;
+    window.dispatchEvent(new CustomEvent('leith:memory-unlocked'));
+    window.dispatchEvent(new CustomEvent('leith:supabase-ready', {
+      detail: { ok: true, error: '' }
+    }));
+    return { ok: true };
+  } catch (e) {
+    localStorage.removeItem(LEITH_SESSION_LS_KEY);
+    supabaseReady = false;
+    supabaseConnectError = e.message || '解锁失败';
+    return { ok: false, error: supabaseConnectError };
+  }
+}
+
+async function changeLeithPasscode(currentPasscode, newPasscode) {
+  if (!/^\d{6,12}$/.test(newPasscode || '')) {
+    return { ok: false, error: '新密码需要是 6–12 位数字' };
+  }
+  if (!supabaseClient || !supabaseReady) return { ok: false, error: '云端记忆尚未连接' };
+  try {
+    const { data: token, error } = await supabaseClient.rpc('leith_change_passcode', {
+      p_current: currentPasscode,
+      p_new: newPasscode
+    });
+    if (error) throw error;
+    if (!token) return { ok: false, error: '当前密码不对，或新密码格式不正确' };
+    localStorage.setItem(LEITH_SESSION_LS_KEY, token);
+    supabaseClient = createSupabaseClient(token);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message || '修改密码失败' };
+  }
+}
+
+function lockLeithMemoryOnThisDevice() {
+  localStorage.removeItem(LEITH_SESSION_LS_KEY);
+  supabaseReady = false;
+  location.reload();
 }
 
 // ---- 本地存储工具（表情包仍用本地） ----
@@ -1103,6 +1198,58 @@ ${sourceText}`;
     }
   },
 
+  // ============================================================
+  // Cloud Sync V2：桌面、小世界、对话窗口和共读状态
+  // 这里只保存结构化状态，不会进入模型上下文，也不会产生聊天 token。
+  // ============================================================
+  async loadAppState() {
+    if (!supabaseReady) return [];
+    try {
+      const { data, error } = await supabaseClient
+        .from('app_state')
+        .select('state_key,value,updated_at')
+        .order('state_key', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    } catch (e) {
+      console.error('加载云端桌面状态失败:', e);
+      return [];
+    }
+  },
+
+  async saveAppState(stateKey, value) {
+    if (!supabaseReady || !stateKey) return false;
+    try {
+      const { error } = await supabaseClient
+        .from('app_state')
+        .upsert({
+          state_key: stateKey,
+          value,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'state_key' });
+      if (error) throw error;
+      return true;
+    } catch (e) {
+      console.error(`同步状态失败（${stateKey}）:`, e);
+      return false;
+    }
+  },
+
+  async removeAppState(stateKey) {
+    if (!supabaseReady || !stateKey) return false;
+    try {
+      const { error } = await supabaseClient
+        .from('app_state')
+        .delete()
+        .eq('state_key', stateKey);
+      if (error) throw error;
+      return true;
+    } catch (e) {
+      console.error(`删除云端状态失败（${stateKey}）:`, e);
+      return false;
+    }
+  },
+
   // 连接状态
   isReady() {
     return supabaseReady;
@@ -1205,6 +1352,9 @@ const LocalMemoryAdapter = {
   async generateRollup() { return null; },
   async listDiaries() { return []; },
   async loadLongTermSummary() { return ''; },
+  async loadAppState() { return []; },
+  async saveAppState() { return false; },
+  async removeAppState() { return false; },
   isReady() { return false; },
   getError() { return ''; }
 };
@@ -1242,6 +1392,17 @@ window.Memory = LocalMemoryAdapter;
 window.Stickers = LocalStickerAdapter;
 
 window.addEventListener('DOMContentLoaded', async () => {
+  leithLockEnabled = await detectLeithLock();
+  if (leithLockEnabled && !getLeithSessionToken()) {
+    supabaseReady = false;
+    supabaseConnectError = '需要输入记忆密码';
+    window.dispatchEvent(new CustomEvent('leith:memory-lock-required'));
+    window.dispatchEvent(new CustomEvent('leith:supabase-ready', {
+      detail: { ok: false, locked: true, error: supabaseConnectError }
+    }));
+    return;
+  }
+
   const ok = await testSupabaseConnection();
   if (ok) {
     window.Memory = SupabaseMemoryAdapter;
@@ -1254,12 +1415,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (supabaseConnectError) {
       console.warn('连接错误:', supabaseConnectError);
     }
+    if (leithLockEnabled) {
+      window.dispatchEvent(new CustomEvent('leith:memory-lock-required'));
+    }
   }
   window.dispatchEvent(new CustomEvent('leith:supabase-ready', {
-    detail: { ok, error: supabaseConnectError }
+    detail: { ok, locked: leithLockEnabled && !ok, error: supabaseConnectError }
   }));
 });
 
 window.testSupabaseConnection = testSupabaseConnection;
+window.unlockLeithMemory = unlockLeithMemory;
+window.changeLeithPasscode = changeLeithPasscode;
+window.lockLeithMemoryOnThisDevice = lockLeithMemoryOnThisDevice;
+window.isLeithLockEnabled = () => leithLockEnabled;
 window.SupabaseMemoryAdapter = SupabaseMemoryAdapter;
 window.getSupabaseClient = () => supabaseClient;

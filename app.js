@@ -194,7 +194,120 @@ function loadJSON(key, fallback) {
     return raw ? JSON.parse(raw) : fallback;
   } catch (e) { return fallback; }
 }
-function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+function saveJSON(key, val) {
+  localStorage.setItem(key, JSON.stringify(val));
+  scheduleCloudStateSync(key, val);
+}
+
+// Cloud Sync V2：只同步产品状态，不同步模型 API Key、服务商或搜索代理。
+// 数据库读写不会进入 Leith 的 prompt，因此不会产生模型 token。
+const CLOUD_SYNC_STATIC_KEYS = new Set([
+  LS.threads,
+  LS.activeThreadId,
+  LS.worldAllowance,
+  LS.worldWallets,
+  LS.worldAllowanceLog,
+  LS.worldSavings,
+  LS.worldGiftRecords,
+  LS.worldLimitedItems,
+  LS.worldAdultItems,
+  LS.worldAdultBought,
+  LS.worldShelfItems,
+  LS.worldShelfBought,
+  LS.worldNightstand,
+  LS.readingBooks,
+  LS.readingLinks,
+  'companion_theater_rooms_v1'
+]);
+const cloudStatePending = new Map();
+const cloudStateTimers = new Map();
+let cloudStateReady = false;
+let suppressCloudStateWrites = false;
+
+function isCloudSyncStateKey(key) {
+  return CLOUD_SYNC_STATIC_KEYS.has(key) || key.startsWith(LS.threadMsgPrefix);
+}
+
+function parseStoredStateValue(raw) {
+  if (raw === null || raw === undefined) return null;
+  try { return JSON.parse(raw); } catch (e) { return raw; }
+}
+
+function serializeCloudStateValue(value) {
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function scheduleCloudStateSync(key, value) {
+  if (suppressCloudStateWrites || !isCloudSyncStateKey(key)) return;
+  cloudStatePending.set(key, value);
+  if (!cloudStateReady || !window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return;
+
+  clearTimeout(cloudStateTimers.get(key));
+  cloudStateTimers.set(key, setTimeout(() => flushCloudStateKey(key), 300));
+}
+
+async function flushCloudStateKey(key) {
+  clearTimeout(cloudStateTimers.get(key));
+  cloudStateTimers.delete(key);
+  if (!cloudStatePending.has(key) || !window.Memory || !window.Memory.saveAppState) return false;
+  const value = cloudStatePending.get(key);
+  const ok = await window.Memory.saveAppState(key, value);
+  if (ok && cloudStatePending.get(key) === value) cloudStatePending.delete(key);
+  return ok;
+}
+
+async function flushPendingCloudState() {
+  const keys = Array.from(cloudStatePending.keys()).filter(isCloudSyncStateKey);
+  await Promise.all(keys.map(flushCloudStateKey));
+}
+
+function refreshUiAfterCloudStateRestore() {
+  ensureAtLeastOneThread();
+  loadActiveThreadIntoChat();
+  if (typeof loadReadingBooks === 'function') loadReadingBooks();
+  if (typeof loadReadingLinks === 'function') loadReadingLinks();
+  if (activePage === 'page-desktop') updateWidgetPreview();
+  const activeApp = document.querySelector('.app-page.active');
+  if (!activeApp) return;
+  if (activeApp.id === 'page-app-shop') renderShopPage();
+  if (activeApp.id === 'page-app-reading') showReadingLibrary();
+  if (activeApp.id === 'page-app-theater') renderTheaterRoomList();
+}
+
+async function restoreCloudAppState() {
+  if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady() || !window.Memory.loadAppState) return false;
+  const rows = await window.Memory.loadAppState();
+  const cloudKeys = new Set();
+
+  suppressCloudStateWrites = true;
+  try {
+    for (const row of rows) {
+      const key = row.state_key;
+      if (!isCloudSyncStateKey(key)) continue;
+      cloudKeys.add(key);
+      cloudStatePending.delete(key);
+      localStorage.setItem(key, serializeCloudStateValue(row.value));
+    }
+  } finally {
+    suppressCloudStateWrites = false;
+  }
+
+  // 云端第一次启用时，把现有浏览器里的桌面状态作为初始状态上传；
+  // 后续换浏览器时，已有的云端键优先，本地仅补齐云端从未保存过的键。
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !isCloudSyncStateKey(key) || cloudKeys.has(key)) continue;
+    cloudStatePending.set(key, parseStoredStateValue(localStorage.getItem(key)));
+  }
+
+  cloudStateReady = true;
+  await flushPendingCloudState();
+  refreshUiAfterCloudStateRestore();
+  window.dispatchEvent(new CustomEvent('leith:cloud-state-restored', {
+    detail: { restoredKeys: cloudKeys.size }
+  }));
+  return true;
+}
 
 function showModal(title, msg, buttonText = "知道了") {
   $("#modalTitle").innerText = title;
@@ -217,6 +330,118 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
+
+const DEFAULT_PASSCODE_WARNING_LS = 'leith_default_passcode_warning_v1';
+
+function isSharedReadingEntry() {
+  const params = new URLSearchParams(location.search);
+  return Boolean(params.get('book') || params.get('link'));
+}
+
+function showMemoryLockScreen(message = '') {
+  const screen = $("#memoryLockScreen");
+  if (!screen) return;
+  screen.classList.remove("hidden");
+  $("#memoryLockError").innerText = message;
+  setTimeout(() => $("#memoryLockInput").focus(), 80);
+}
+
+function hideMemoryLockScreen() {
+  const screen = $("#memoryLockScreen");
+  if (screen) screen.classList.add("hidden");
+  if ($("#memoryLockInput")) $("#memoryLockInput").value = "";
+  if ($("#memoryLockError")) $("#memoryLockError").innerText = "";
+}
+
+function updateDesktopPasscodeButton() {
+  const btn = $("#changeLeithPasswordBtn");
+  if (!btn) return;
+  btn.innerText = localStorage.getItem(DEFAULT_PASSCODE_WARNING_LS) === '1'
+    ? '🔐 修改记忆密码 · 建议尽快修改'
+    : '🔐 修改记忆密码';
+}
+
+async function submitMemoryUnlock() {
+  const input = $("#memoryLockInput");
+  const button = $("#memoryUnlockBtn");
+  const passcode = (input.value || '').trim();
+  $("#memoryLockError").innerText = "";
+  button.disabled = true;
+  button.innerText = "正在接回记忆…";
+  const result = await window.unlockLeithMemory(passcode);
+  button.disabled = false;
+  button.innerText = "接回 Leith";
+  if (!result.ok) {
+    $("#memoryLockError").innerText = result.error || "没有解锁成功";
+    input.select();
+    return;
+  }
+  if (passcode === '123456') localStorage.setItem(DEFAULT_PASSCODE_WARNING_LS, '1');
+  hideMemoryLockScreen();
+  updateDesktopPasscodeButton();
+}
+
+function openChangeMemoryPasscode() {
+  $("#currentMemoryPasscodeInput").value = "";
+  $("#newMemoryPasscodeInput").value = "";
+  $("#confirmMemoryPasscodeInput").value = "";
+  $("#changeMemoryPasscodeError").innerText = "";
+  $("#changeMemoryPasscodeOverlay").classList.remove("hidden");
+  pushNavLayer(() => $("#changeMemoryPasscodeOverlay").classList.add("hidden"));
+  setTimeout(() => $("#currentMemoryPasscodeInput").focus(), 80);
+}
+
+function closeChangeMemoryPasscodeFromUI() {
+  popNavLayerSilently();
+  $("#changeMemoryPasscodeOverlay").classList.add("hidden");
+}
+
+async function submitMemoryPasscodeChange() {
+  const current = $("#currentMemoryPasscodeInput").value.trim();
+  const next = $("#newMemoryPasscodeInput").value.trim();
+  const confirmNext = $("#confirmMemoryPasscodeInput").value.trim();
+  const errorEl = $("#changeMemoryPasscodeError");
+  if (!/^\d{6,12}$/.test(next)) {
+    errorEl.innerText = "新密码需要是 6–12 位数字";
+    return;
+  }
+  if (next !== confirmNext) {
+    errorEl.innerText = "两次输入的新密码不一样";
+    return;
+  }
+  const button = $("#changeMemoryPasscodeConfirmBtn");
+  button.disabled = true;
+  button.innerText = "保存中…";
+  const result = await window.changeLeithPasscode(current, next);
+  button.disabled = false;
+  button.innerText = "保存";
+  if (!result.ok) {
+    errorEl.innerText = result.error || "修改失败";
+    return;
+  }
+  localStorage.removeItem(DEFAULT_PASSCODE_WARNING_LS);
+  updateDesktopPasscodeButton();
+  closeChangeMemoryPasscodeFromUI();
+  showToast("记忆密码已修改，其他设备需要使用新密码");
+}
+
+$("#memoryUnlockBtn").onclick = submitMemoryUnlock;
+$("#memoryLockInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitMemoryUnlock();
+});
+$("#changeLeithPasswordBtn").onclick = openChangeMemoryPasscode;
+$("#changeMemoryPasscodeCancelBtn").onclick = closeChangeMemoryPasscodeFromUI;
+$("#changeMemoryPasscodeConfirmBtn").onclick = submitMemoryPasscodeChange;
+$("#changeMemoryPasscodeOverlay").addEventListener("click", (e) => {
+  if (e.target.id === "changeMemoryPasscodeOverlay") closeChangeMemoryPasscodeFromUI();
+});
+window.addEventListener('leith:memory-lock-required', () => {
+  if (isSharedReadingEntry()) hideMemoryLockScreen();
+  else showMemoryLockScreen();
+});
+window.addEventListener('leith:memory-unlocked', hideMemoryLockScreen);
+if (isSharedReadingEntry()) hideMemoryLockScreen();
+updateDesktopPasscodeButton();
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
@@ -1061,6 +1286,7 @@ function getActiveThreadId() {
 }
 function setActiveThreadId(id) {
   localStorage.setItem(LS.activeThreadId, id);
+  scheduleCloudStateSync(LS.activeThreadId, id);
 }
 
 function getThreadMessages(threadId) {
@@ -4175,10 +4401,258 @@ async function sendTheaterMessage() {
 }
 
 // ============================================================
-// 记忆可视化 app（树状结构，联动 Supabase）
+// 记忆可视化 app（虚实云图 + 分层列表，联动 Supabase）
 // ============================================================
 let memoryExpandedNodes = new Set(["profile", "core"]); // 默认展开的分支
 let memoryAddTarget = ""; // 当前要添加记忆的分支
+let memoryGraphTransform = { x: 0, y: 0, scale: 1 };
+const memoryGraphPointers = new Map();
+let memoryGraphGesture = null;
+let memoryGraphDidMove = false;
+
+function setMemoryView(mode) {
+  const graphMode = mode !== 'list';
+  $("#memoryGraphWrap").classList.toggle("hidden", !graphMode);
+  $("#memoryTree").classList.toggle("hidden", graphMode);
+  $("#memoryGraphViewBtn").classList.toggle("active", graphMode);
+  $("#memoryListViewBtn").classList.toggle("active", !graphMode);
+  if (graphMode) requestAnimationFrame(applyMemoryGraphTransform);
+}
+
+function clampMemoryGraphScale(scale) {
+  return Math.max(.42, Math.min(3.2, scale));
+}
+
+function applyMemoryGraphTransform() {
+  const wrap = $("#memoryGraphWrap");
+  const viewport = $("#memoryGraphViewport");
+  if (!wrap || !viewport) return;
+  const cx = wrap.clientWidth / 2 + memoryGraphTransform.x;
+  const cy = wrap.clientHeight / 2 + memoryGraphTransform.y;
+  viewport.setAttribute("transform", `translate(${cx} ${cy}) scale(${memoryGraphTransform.scale})`);
+}
+
+function zoomMemoryGraph(factor, clientX, clientY) {
+  const wrap = $("#memoryGraphWrap");
+  if (!wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  const px = (clientX ?? rect.left + rect.width / 2) - rect.left;
+  const py = (clientY ?? rect.top + rect.height / 2) - rect.top;
+  const centerX = rect.width / 2;
+  const centerY = rect.height / 2;
+  const oldScale = memoryGraphTransform.scale;
+  const newScale = clampMemoryGraphScale(oldScale * factor);
+  const worldX = (px - centerX - memoryGraphTransform.x) / oldScale;
+  const worldY = (py - centerY - memoryGraphTransform.y) / oldScale;
+  memoryGraphTransform.x = px - centerX - worldX * newScale;
+  memoryGraphTransform.y = py - centerY - worldY * newScale;
+  memoryGraphTransform.scale = newScale;
+  applyMemoryGraphTransform();
+}
+
+function resetMemoryGraph() {
+  memoryGraphTransform = { x: 0, y: 0, scale: 1 };
+  applyMemoryGraphTransform();
+}
+
+function closeMemoryNodeDetail() {
+  $("#memoryNodeDetail").classList.add("hidden");
+  $("#memoryGraphHint").classList.remove("hidden");
+}
+
+function showMemoryNodeDetail(branch, item) {
+  const detail = $("#memoryNodeDetail");
+  if (!detail) return;
+  $("#memoryNodeDetailTitle").innerText = item
+    ? `${branch.icon} ${branch.label}`
+    : `${branch.icon} ${branch.label} · ${branch.items.length} 个节点`;
+  $("#memoryNodeDetailContent").innerText = item
+    ? item.content
+    : (branch.virtual
+      ? '这是一组由对话自然沉淀、会继续变化的虚记忆。'
+      : '这是一组被主动保存、可以明确触碰的实记忆。');
+  $("#memoryNodeDetailMeta").innerText = item && item.createdAt ? formatMemoryTime(item.createdAt) : '';
+  detail.classList.remove("hidden");
+  $("#memoryGraphHint").classList.add("hidden");
+}
+
+function createMemorySvgElement(name, attrs = {}) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, String(value)));
+  return el;
+}
+
+function appendMemoryGraphEdge(viewport, x1, y1, x2, y2, virtual) {
+  const edge = createMemorySvgElement('line', { x1, y1, x2, y2 });
+  edge.setAttribute('class', `memory-edge${virtual ? ' virtual' : ''}`);
+  viewport.appendChild(edge);
+}
+
+function appendMemoryGraphNode(viewport, { x, y, radius, label, sublabel, icon, color, virtual, branch, item, root }) {
+  const group = createMemorySvgElement('g', { transform: `translate(${x} ${y})`, tabindex: 0 });
+  group.setAttribute('class', `memory-graph-node${virtual ? ' virtual' : ''}`);
+
+  const circle = createMemorySvgElement('circle', { cx: 0, cy: 0, r: radius });
+  circle.setAttribute('class', root ? 'memory-root-ring' : 'memory-node-halo');
+  if (!root && color) {
+    circle.style.stroke = color;
+    circle.style.fill = virtual ? `${color}18` : `${color}2c`;
+  }
+  group.appendChild(circle);
+
+  if (icon) {
+    const iconText = createMemorySvgElement('text', { x: 0, y: root ? 6 : (item ? 4 : 5), 'text-anchor': 'middle', 'font-size': root ? 22 : (item ? 9 : 15) });
+    iconText.textContent = icon;
+    iconText.style.pointerEvents = 'none';
+    group.appendChild(iconText);
+  }
+
+  if (label) {
+    const text = createMemorySvgElement('text', { x: 0, y: radius + 14 });
+    text.setAttribute('class', 'memory-node-label');
+    text.textContent = label;
+    group.appendChild(text);
+  }
+  if (sublabel) {
+    const sub = createMemorySvgElement('text', { x: 0, y: radius + 25 });
+    sub.setAttribute('class', 'memory-node-sub');
+    sub.textContent = sublabel;
+    group.appendChild(sub);
+  }
+
+  if (branch) {
+    const open = (event) => {
+      event.stopPropagation();
+      if (!memoryGraphDidMove) showMemoryNodeDetail(branch, item || null);
+    };
+    group.addEventListener('click', open);
+    group.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') open(event);
+    });
+  }
+  viewport.appendChild(group);
+}
+
+function renderMemoryGraph(branches) {
+  const viewport = $("#memoryGraphViewport");
+  if (!viewport) return;
+  viewport.innerHTML = '';
+
+  const branchRadius = 185;
+  const branchPositions = [];
+  branches.forEach((branch, index) => {
+    const angle = -Math.PI / 2 + index * (Math.PI * 2 / branches.length);
+    branch.virtual = ['diary', 'summary', 'short_term'].includes(branch.id);
+    const bx = Math.cos(angle) * branchRadius;
+    const by = Math.sin(angle) * branchRadius;
+    branchPositions.push({ branch, angle, x: bx, y: by });
+    appendMemoryGraphEdge(viewport, 0, 0, bx, by, branch.virtual);
+
+    branch.items.forEach((item, itemIndex) => {
+      const perRing = 9;
+      const ring = Math.floor(itemIndex / perRing);
+      const slot = itemIndex % perRing;
+      const spread = (slot - (Math.min(branch.items.length - ring * perRing, perRing) - 1) / 2) * .115;
+      const leafAngle = angle + spread;
+      const leafDistance = 70 + ring * 48;
+      const x = bx + Math.cos(leafAngle) * leafDistance;
+      const y = by + Math.sin(leafAngle) * leafDistance;
+      appendMemoryGraphEdge(viewport, bx, by, x, y, branch.virtual);
+      const preview = (item.content || '').replace(/\s+/g, ' ').trim();
+      appendMemoryGraphNode(viewport, {
+        x, y,
+        radius: Math.min(9, 4.5 + Math.sqrt(preview.length || 1) / 4),
+        label: preview.length > 9 ? preview.slice(0, 9) + '…' : preview,
+        icon: '', color: branch.color, virtual: branch.virtual, branch, item
+      });
+    });
+  });
+
+  branchPositions.forEach(({ branch, x, y }) => {
+    appendMemoryGraphNode(viewport, {
+      x, y, radius: 23,
+      label: branch.label.replace(/（.*?）/g, ''),
+      sublabel: `${branch.items.length} 段`,
+      icon: branch.icon, color: branch.color, virtual: branch.virtual, branch
+    });
+  });
+
+  appendMemoryGraphNode(viewport, {
+    x: 0, y: 0, radius: 31, label: 'Leith 的记忆', icon: '🧠', root: true
+  });
+  applyMemoryGraphTransform();
+}
+
+function initMemoryGraphGestures() {
+  const svg = $("#memoryGraphSvg");
+  if (!svg) return;
+
+  svg.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    zoomMemoryGraph(event.deltaY < 0 ? 1.13 : .885, event.clientX, event.clientY);
+  }, { passive: false });
+
+  svg.addEventListener('pointerdown', (event) => {
+    svg.setPointerCapture(event.pointerId);
+    memoryGraphPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    memoryGraphDidMove = false;
+    svg.classList.add('dragging');
+    if (memoryGraphPointers.size === 1) {
+      memoryGraphGesture = {
+        type: 'pan', startX: event.clientX, startY: event.clientY,
+        originX: memoryGraphTransform.x, originY: memoryGraphTransform.y
+      };
+    } else if (memoryGraphPointers.size === 2) {
+      const points = Array.from(memoryGraphPointers.values());
+      const dx = points[1].x - points[0].x;
+      const dy = points[1].y - points[0].y;
+      memoryGraphGesture = {
+        type: 'pinch', distance: Math.hypot(dx, dy), scale: memoryGraphTransform.scale,
+        midX: (points[0].x + points[1].x) / 2,
+        midY: (points[0].y + points[1].y) / 2
+      };
+    }
+  });
+
+  svg.addEventListener('pointermove', (event) => {
+    if (!memoryGraphPointers.has(event.pointerId)) return;
+    memoryGraphPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (memoryGraphPointers.size >= 2) {
+      const points = Array.from(memoryGraphPointers.values()).slice(0, 2);
+      const distance = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+      if (!memoryGraphGesture || memoryGraphGesture.type !== 'pinch') return;
+      const targetScale = clampMemoryGraphScale(memoryGraphGesture.scale * distance / Math.max(1, memoryGraphGesture.distance));
+      const factor = targetScale / memoryGraphTransform.scale;
+      const midX = (points[0].x + points[1].x) / 2;
+      const midY = (points[0].y + points[1].y) / 2;
+      zoomMemoryGraph(factor, midX, midY);
+      memoryGraphDidMove = true;
+    } else if (memoryGraphGesture && memoryGraphGesture.type === 'pan') {
+      const dx = event.clientX - memoryGraphGesture.startX;
+      const dy = event.clientY - memoryGraphGesture.startY;
+      if (Math.abs(dx) + Math.abs(dy) > 4) memoryGraphDidMove = true;
+      memoryGraphTransform.x = memoryGraphGesture.originX + dx;
+      memoryGraphTransform.y = memoryGraphGesture.originY + dy;
+      applyMemoryGraphTransform();
+    }
+  });
+
+  const endPointer = (event) => {
+    memoryGraphPointers.delete(event.pointerId);
+    if (!memoryGraphPointers.size) {
+      memoryGraphGesture = null;
+      svg.classList.remove('dragging');
+    } else {
+      const point = Array.from(memoryGraphPointers.values())[0];
+      memoryGraphGesture = {
+        type: 'pan', startX: point.x, startY: point.y,
+        originX: memoryGraphTransform.x, originY: memoryGraphTransform.y
+      };
+    }
+  };
+  svg.addEventListener('pointerup', endPointer);
+  svg.addEventListener('pointercancel', endPointer);
+}
 
 function initMemoryApp() {
   // 刷新按钮
@@ -4189,6 +4663,14 @@ function initMemoryApp() {
       showToast("已刷新");
     };
   }
+
+  $("#memoryGraphViewBtn").onclick = () => setMemoryView('graph');
+  $("#memoryListViewBtn").onclick = () => setMemoryView('list');
+  $("#memoryGraphZoomInBtn").onclick = () => zoomMemoryGraph(1.2);
+  $("#memoryGraphZoomOutBtn").onclick = () => zoomMemoryGraph(1 / 1.2);
+  $("#memoryGraphResetBtn").onclick = resetMemoryGraph;
+  $("#memoryNodeDetailCloseBtn").onclick = closeMemoryNodeDetail;
+  initMemoryGraphGestures();
 
   // 添加记忆弹窗 — 取消
   $("#memoryAddCancelBtn").onclick = () => {
@@ -4351,6 +4833,7 @@ async function renderMemoryTree() {
   html += `</div></div>`;
 
   container.innerHTML = html;
+  renderMemoryGraph(branches);
 }
 
 function toggleMemNode(rowEl) {
@@ -4680,6 +5163,7 @@ function saveReadingBooks() {
   // content 可能很大，超出 localStorage 配额时给出提示而不是静默失败
   try {
     localStorage.setItem(LS.readingBooks, JSON.stringify(readingBooks));
+    scheduleCloudStateSync(LS.readingBooks, readingBooks);
   } catch (e) {
     showToast("书本太大，本机存储空间不够了");
   }
@@ -4699,7 +5183,7 @@ function getReadingClient() {
     try {
       return window.supabase.createClient(
         "https://kiphsgskorznxjdcjsos.supabase.co",
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpcGhzZ3Nrb3J6bnhqZGNqc29zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM2ODQzNDAsImV4cCI6MjA5OTI2MDM0MH0.7g_nvTFSqn5Xv7BStds8ESQ6__wL027MVKIAj1azWfY"
+        "sb_publishable_Sk9lyJqWR92A4SIDMHK1IQ_BFbAAf9o"
       );
     } catch (e) { return null; }
   }
@@ -4842,7 +5326,10 @@ function loadReadingLinks() {
   return readingLinks;
 }
 function saveReadingLinksLocal() {
-  try { localStorage.setItem(LS.readingLinks, JSON.stringify(readingLinks)); } catch (e) {}
+  try {
+    localStorage.setItem(LS.readingLinks, JSON.stringify(readingLinks));
+    scheduleCloudStateSync(LS.readingLinks, readingLinks);
+  } catch (e) {}
 }
 
 function normalizeUrl(raw) {
@@ -5592,7 +6079,7 @@ function updateSupabaseStatus() {
   const el = $("#supabaseStatus");
   if (!el) return;
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-    el.innerHTML = "☁️ Leith 已接上云端记忆（长期记忆 + 新对话同步）";
+    el.innerHTML = "☁️ Leith 已接上云端记忆（对话 + 桌面 + 共读同步）";
     el.style.borderColor = "var(--accent-dim)";
     el.style.color = "var(--accent)";
   } else {
@@ -5613,10 +6100,15 @@ if ($("#testSupabaseBtn")) {
     if (ok) {
       window.Memory = SupabaseMemoryAdapter;
       showToast("✅ 云端连接成功");
+      await restoreCloudAppState();
       renderMemoryList();
       await restoreCloudConversationIfNeeded();
     } else {
-      showToast("❌ 连接失败，请检查网络和配置");
+      if (window.isLeithLockEnabled && window.isLeithLockEnabled()) {
+        showMemoryLockScreen("请先输入记忆密码");
+      } else {
+        showToast("❌ 连接失败，请检查网络和配置");
+      }
     }
     updateSupabaseStatus();
   });
@@ -5625,8 +6117,13 @@ if ($("#testSupabaseBtn")) {
 window.addEventListener("leith:supabase-ready", async (event) => {
   updateSupabaseStatus();
   if (event.detail && event.detail.ok) {
+    hideMemoryLockScreen();
+    await restoreCloudAppState();
     renderMemoryList();
     await restoreCloudConversationIfNeeded();
+  } else if (event.detail && event.detail.locked) {
+    if (isSharedReadingEntry()) hideMemoryLockScreen();
+    else showMemoryLockScreen();
   }
 });
 
