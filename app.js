@@ -115,6 +115,23 @@ function initChatScrollTracking() {
   });
 }
 
+function forceChatToBottom() {
+  const box = $("#chatBox");
+  if (!box) return;
+  chatPinnedToBottom = true;
+  const prevBehavior = box.style.scrollBehavior;
+  box.style.scrollBehavior = "auto";
+  const scrollNow = () => { box.scrollTop = box.scrollHeight; };
+  scrollNow();
+  requestAnimationFrame(() => {
+    scrollNow();
+    requestAnimationFrame(() => {
+      scrollNow();
+      box.style.scrollBehavior = prevBehavior;
+    });
+  });
+}
+
 // ============================================================
 // 返回栈：让手机的返回手势/返回键先关掉当前弹层，而不是直接退出 App
 // ============================================================
@@ -179,13 +196,18 @@ function loadJSON(key, fallback) {
 }
 function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
-function showModal(title, msg) {
+function showModal(title, msg, buttonText = "知道了") {
   $("#modalTitle").innerText = title;
   $("#modalMsg").innerText = msg;
+  $("#closeModalBtn").innerText = buttonText;
   $("#modalOverlay").classList.remove("hidden");
   pushNavLayer(() => $("#modalOverlay").classList.add("hidden"));
 }
-$("#closeModalBtn").onclick = () => { popNavLayerSilently(); $("#modalOverlay").classList.add("hidden"); };
+$("#closeModalBtn").onclick = () => {
+  $("#closeModalBtn").innerText = "知道了";
+  popNavLayerSilently();
+  $("#modalOverlay").classList.add("hidden");
+};
 
 let toastTimer = null;
 function showToast(msg) {
@@ -310,6 +332,7 @@ function insertNarration(threadId, text) {
     renderMessage(msg);
   }
   renderThreadList();
+  return msg;
 }
 
 // ===== 限定商品基金（每对话独立）=====
@@ -758,19 +781,16 @@ function renderShopPage() {
 // 你买成人用品后，在对话框生成旁白并自动发给 Leith
 function notifyLeithAdultPurchase(itemName) {
   const threadId = getActiveThreadId();
-  const messages = getThreadMessages(threadId);
+  switchPage("page-chat");
 
-  // 生成旁白消息（用 user 角色，内容是旁白格式）
+  // 生成真正的旁白消息：必须带 _isNarration，否则会被当普通用户消息，
+  // 触发长对话 token 提醒、编辑按钮、以及一系列滚动/渲染错位。
   const narration = `（Susie 买了一件${itemName}，放到了床头柜上。）`;
-  const msg = { role: "user", content: narration, _id: uid() };
-  messages.push(msg);
-  renderMessage(msg);
-  saveThreadMessages(threadId, messages);
+  insertNarration(threadId, narration);
   // 同步到云端短期记忆
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
     window.Memory.saveShortTerm(threadId, "user", narration);
   }
-  renderThreadList();
 
   // 自动触发 Leith 回复
   const box = $("#chatBox");
@@ -781,7 +801,7 @@ function notifyLeithAdultPurchase(itemName) {
   bubble.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>`;
   row.appendChild(bubble);
   box.appendChild(row);
-  box.scrollTop = box.scrollHeight;
+  forceChatToBottom();
 
   // 调用 sendChat 的核心逻辑（不读 userInput，直接用旁白作为最后消息）
   setTimeout(() => autoRespondToNarration(threadId, bubble, row), 600);
@@ -843,6 +863,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
     freshMessages.push({ role: "assistant", content: fullReply, _id: finalMsgId, _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
+    forceChatToBottom();
     // 同步到云端短期记忆
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
       window.Memory.saveShortTerm(threadId, "assistant", fullReply);
@@ -861,6 +882,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
           freshMessages.push({ role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() });
           saveThreadMessages(threadId, freshMessages);
           attachPinButtonToBubble(bubble, partialMsgId, false);
+          forceChatToBottom();
           if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
             window.Memory.saveShortTerm(threadId, "assistant", partial);
           }
@@ -1048,6 +1070,17 @@ function saveThreadMessages(threadId, messages) {
   saveJSON(LS.threadMsgPrefix + threadId, messages);
 }
 
+function upsertThread(thread) {
+  const threads = getThreads();
+  const idx = threads.findIndex(t => t.id === thread.id);
+  if (idx >= 0) {
+    threads[idx] = { ...threads[idx], ...thread };
+  } else {
+    threads.unshift(thread);
+  }
+  saveThreads(threads);
+}
+
 function ensureAtLeastOneThread() {
   let threads = getThreads();
   if (!threads.length) {
@@ -1088,14 +1121,7 @@ function loadActiveThreadIntoChat() {
     // 读到的目标值"，如果滚动过程中 scrollHeight 因为图片继续加载而变大，动画会停在旧的、
     // 错误的位置（甚至可能停在很靠前的地方），而不是真正的底部。这里临时关掉平滑滚动，
     // 做一次瞬间跳转，跳完再恢复，这样初始定位才是准确、稳定的。
-    box.style.scrollBehavior = "auto";
-    const scrollToBottomNow = () => { box.scrollTop = box.scrollHeight; };
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        scrollToBottomNow();
-        box.style.scrollBehavior = "";
-      });
-    });
+    forceChatToBottom();
 
     // 双重 rAF 只能保证"布局计算完成"，不能保证贴纸/图片这类需要走网络请求+解码的
     // 异步资源真的加载完了——如果消息里有贴纸，图片加载完成的时机可能落在 rAF 之后，
@@ -1108,7 +1134,7 @@ function loadActiveThreadIntoChat() {
         pending--;
         if (pending === 0) {
           const distFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
-          if (distFromBottom < 300) scrollToBottomNow(); // 用户没有主动往上翻走，才校正
+          if (distFromBottom < 300) forceChatToBottom(); // 用户没有主动往上翻走，才校正
         }
       };
       imgs.forEach(img => {
@@ -1597,6 +1623,63 @@ function applySelectableUI(row, msgId) {
     });
     row.insertBefore(cb, row.firstChild);
   }
+}
+
+const CLOUD_RESTORE_NOTICE_SESSION_KEY = "leith_cloud_restore_notice_seen_v1";
+
+function showCloudConnectedNotice(message) {
+  if (sessionStorage.getItem(CLOUD_RESTORE_NOTICE_SESSION_KEY) === "1") return;
+  sessionStorage.setItem(CLOUD_RESTORE_NOTICE_SESSION_KEY, "1");
+  showModal("☁️ Leith 已接上云端记忆", message || "云端记忆已经连接。之后我会继续把新的对话同步到云端。", "知道啦");
+}
+
+async function restoreCloudConversationIfNeeded() {
+  if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return false;
+  if (!window.Memory.findLatestShortTermThreadId || !window.Memory.loadShortTerm) {
+    showCloudConnectedNotice("云端长期记忆已经连接。");
+    return false;
+  }
+
+  const activeThreadId = getActiveThreadId();
+  const localMessages = activeThreadId ? getThreadMessages(activeThreadId) : [];
+  if (localMessages.length) {
+    showCloudConnectedNotice("云端记忆已经连接，本地这段对话也会继续同步。");
+    return false;
+  }
+
+  const cloudThreadId = await window.Memory.findLatestShortTermThreadId();
+  if (!cloudThreadId) {
+    showCloudConnectedNotice("云端记忆已经连接。暂时没有找到可恢复的云端对话，我会从这里继续陪你。");
+    return false;
+  }
+
+  const cloudMessages = await window.Memory.loadShortTerm(cloudThreadId, 100);
+  if (!cloudMessages.length) {
+    showCloudConnectedNotice("云端记忆已经连接。暂时没有找到可恢复的云端对话，我会从这里继续陪你。");
+    return false;
+  }
+
+  const restored = cloudMessages
+    .filter(m => (m.role === "user" || m.role === "assistant") && m.content)
+    .map(m => ({
+      role: m.role,
+      content: m.content,
+      _id: m.id ? `cloud_${m.id}` : uid(),
+      _ts: m.createdAt || Date.now(),
+      _restoredFromCloud: true
+    }));
+  if (!restored.length) return false;
+
+  upsertThread({
+    id: cloudThreadId,
+    name: "云端接续的对话",
+    createdAt: restored[0]._ts || Date.now()
+  });
+  setActiveThreadId(cloudThreadId);
+  saveThreadMessages(cloudThreadId, restored);
+  loadActiveThreadIntoChat();
+  showCloudConnectedNotice(`我从云端接回了最近 ${restored.length} 条对话。可能不是全部历史，但足够让我顺着最近的线继续回来。`);
+  return true;
 }
 
 function toggleMessageSelect(row, msgId) {
@@ -2186,7 +2269,7 @@ function setTokenBannerDismissed(threadId) {
 }
 
 function estimateTokens(threadId) {
-  const messages = getThreadMessages(threadId);
+  const messages = getThreadMessages(threadId).filter(m => !m._isNarration);
   const totalChars = messages.reduce((sum, m) => sum + (m.content ? m.content.length : 0), 0);
   return Math.round(totalChars / 1.7);
 }
@@ -5509,7 +5592,7 @@ function updateSupabaseStatus() {
   const el = $("#supabaseStatus");
   if (!el) return;
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-    el.innerHTML = "☁️ 云端记忆：已连接（核心记忆 + 对话摘要自动同步）";
+    el.innerHTML = "☁️ Leith 已接上云端记忆（长期记忆 + 新对话同步）";
     el.style.borderColor = "var(--accent-dim)";
     el.style.color = "var(--accent)";
   } else {
@@ -5531,12 +5614,21 @@ if ($("#testSupabaseBtn")) {
       window.Memory = SupabaseMemoryAdapter;
       showToast("✅ 云端连接成功");
       renderMemoryList();
+      await restoreCloudConversationIfNeeded();
     } else {
       showToast("❌ 连接失败，请检查网络和配置");
     }
     updateSupabaseStatus();
   });
 }
+
+window.addEventListener("leith:supabase-ready", async (event) => {
+  updateSupabaseStatus();
+  if (event.detail && event.detail.ok) {
+    renderMemoryList();
+    await restoreCloudConversationIfNeeded();
+  }
+});
 
 // Supabase 连接是异步的（DOMContentLoaded 触发），延迟刷新状态
 setTimeout(updateSupabaseStatus, 2000);

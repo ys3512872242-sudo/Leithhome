@@ -677,16 +677,37 @@ const SupabaseMemoryAdapter = {
         .select('*')
         .eq('type', 'short_term')
         .eq('thread_id', threadId || 'global')
-        .order('created_at', { ascending: true })
+        // 先取最近 N 条，再在本地转回正序。否则 limit(50) 会拿到最早的 50 条，
+        // 换浏览器恢复时反而接不上最近的对话。
+        .order('created_at', { ascending: false })
         .limit(limit);
       if (error) throw error;
-      return (data || []).map(item => ({
+      return (data || []).slice().reverse().map(item => ({
+        id: String(item.id),
         role: item.role || 'user',
-        content: item.content
+        content: item.content,
+        createdAt: new Date(item.created_at).getTime()
       }));
     } catch (e) {
       console.error('加载短期记忆失败:', e);
       return [];
+    }
+  },
+
+  async findLatestShortTermThreadId() {
+    if (!supabaseReady) return '';
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('thread_id')
+        .eq('type', 'short_term')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      return (data && data[0] && data[0].thread_id) ? data[0].thread_id : '';
+    } catch (e) {
+      console.error('查找最近云端对话失败:', e);
+      return '';
     }
   },
 
@@ -1176,6 +1197,7 @@ const LocalMemoryAdapter = {
   async saveShortTerm() {},
   async saveShortTermBatch() {},
   async loadShortTerm() { return []; },
+  async findLatestShortTermThreadId() { return ''; },
   async clearShortTerm() {},
   async clearThreadMemory() {},
   async compressMemory() { return null; },
@@ -1233,6 +1255,9 @@ window.addEventListener('DOMContentLoaded', async () => {
       console.warn('连接错误:', supabaseConnectError);
     }
   }
+  window.dispatchEvent(new CustomEvent('leith:supabase-ready', {
+    detail: { ok, error: supabaseConnectError }
+  }));
 });
 
 window.testSupabaseConnection = testSupabaseConnection;
