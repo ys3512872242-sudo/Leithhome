@@ -851,33 +851,56 @@
   .memory-legend-solid,.memory-legend-virtual{display:inline-block;width:15px;vertical-align:middle;margin:0 3px 0 7px;border-top:1.5px solid var(--accent);}
   .memory-legend-virtual{border-top-style:dashed;opacity:.55;}
   .memory-graph-wrap{
-    position:relative;height:min(66vh,620px);min-height:430px;
-    overflow:hidden;border:1px solid var(--line);border-radius:var(--radius-lg);
+    position:relative;height:min(68vh,650px);min-height:440px;
+    overflow:hidden;border:1px solid rgba(205,190,235,.13);border-radius:22px;
     background:
-      radial-gradient(circle at 50% 45%,var(--accent-glow),transparent 32%),
-      radial-gradient(circle at 20% 18%,rgba(128,152,201,.08),transparent 24%),
-      var(--bg-deep);
-    touch-action:none;user-select:none;
+      radial-gradient(ellipse at 49% 48%,rgba(157,119,211,.15) 0,rgba(90,67,135,.07) 24%,transparent 52%),
+      radial-gradient(ellipse at 16% 23%,rgba(72,126,165,.12),transparent 38%),
+      radial-gradient(ellipse at 84% 76%,rgba(174,92,130,.09),transparent 34%),
+      linear-gradient(155deg,#080a11 0%,#0d0d18 54%,#090b13 100%);
+    box-shadow:inset 0 0 80px rgba(0,0,0,.38),0 14px 36px rgba(0,0,0,.18);
+    touch-action:none;user-select:none;isolation:isolate;
   }
   .memory-graph-wrap::before{
-    content:"";position:absolute;inset:0;pointer-events:none;opacity:.22;
-    background-image:radial-gradient(circle,rgba(255,255,255,.45) 0 1px,transparent 1.4px);
-    background-size:43px 43px;background-position:7px 11px;
+    content:"";position:absolute;inset:0;pointer-events:none;opacity:.58;
+    background-image:
+      radial-gradient(circle at 13% 17%,rgba(255,255,255,.78) 0 1px,transparent 1.4px),
+      radial-gradient(circle at 68% 24%,rgba(211,197,242,.6) 0 .8px,transparent 1.2px),
+      radial-gradient(circle at 34% 72%,rgba(177,211,234,.55) 0 .7px,transparent 1.1px),
+      radial-gradient(circle at 87% 63%,rgba(255,255,255,.55) 0 .8px,transparent 1.2px);
+    background-size:137px 151px,181px 167px,157px 193px,211px 179px;
+  }
+  .memory-graph-wrap::after{
+    content:"";position:absolute;width:58%;height:42%;left:20%;top:27%;pointer-events:none;
+    border-radius:50%;background:rgba(151,116,205,.045);filter:blur(34px);z-index:-1;
   }
   .memory-graph-svg{position:absolute;inset:0;width:100%;height:100%;cursor:grab;}
   .memory-graph-svg.dragging{cursor:grabbing;}
-  .memory-edge{fill:none;stroke:var(--moon);stroke-width:1;opacity:.38;vector-effect:non-scaling-stroke;}
-  .memory-edge.virtual{stroke-dasharray:3 5;opacity:.25;}
-  .memory-graph-node{cursor:pointer;transform-box:fill-box;transform-origin:center;transition:filter .15s ease;}
-  .memory-graph-node:hover{filter:brightness(1.25) drop-shadow(0 0 8px var(--accent-glow));}
-  .memory-node-halo{fill:var(--accent-glow);stroke:var(--accent-dim);stroke-width:1;vector-effect:non-scaling-stroke;}
-  .memory-graph-node.virtual .memory-node-halo{fill:rgba(128,152,201,.08);stroke-dasharray:3 3;opacity:.72;}
-  .memory-node-label{fill:var(--paper);font:500 10px var(--sans);text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:var(--bg-deep);stroke-width:3px;stroke-linejoin:round;}
-  .memory-node-sub{fill:var(--paper-dim);font:400 8px var(--sans);text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:var(--bg-deep);stroke-width:2px;}
-  .memory-root-ring{fill:rgba(183,156,232,.14);stroke:var(--accent);stroke-width:1.3;vector-effect:non-scaling-stroke;}
+  .memory-edge{fill:none;stroke:var(--edge-color,var(--moon));stroke-width:.72;opacity:.25;vector-effect:non-scaling-stroke;}
+  .memory-edge.branch-edge{stroke-width:1.05;opacity:.34;}
+  .memory-edge.virtual{stroke-dasharray:2.5 5.5;opacity:.17;}
+  .memory-graph-node{cursor:pointer;transform-box:fill-box;transform-origin:center;transition:filter .2s ease,opacity .2s ease;}
+  .memory-graph-node:hover,.memory-graph-node:focus,.memory-graph-node.selected{filter:brightness(1.22) drop-shadow(0 0 7px var(--node-color,var(--accent)));outline:none;}
+  .memory-node-halo{fill:color-mix(in srgb,var(--node-color,var(--accent)) 17%,transparent);stroke:var(--node-color,var(--accent));stroke-width:.8;vector-effect:non-scaling-stroke;}
+  .memory-graph-node.item .memory-node-halo{stroke-width:.65;}
+  .memory-graph-node.item .memory-node-core{fill:var(--node-color,var(--accent));opacity:.92;pointer-events:none;}
+  .memory-graph-node.virtual .memory-node-halo{fill:color-mix(in srgb,var(--node-color,#8098c9) 8%,transparent);stroke-dasharray:2.4 2.4;opacity:.65;}
+  .memory-node-label{fill:rgba(244,239,249,.93);font:500 10.5px var(--sans);letter-spacing:.03em;text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:#0a0b13;stroke-width:3.5px;stroke-linejoin:round;}
+  .memory-node-sub{fill:rgba(199,191,215,.68);font:400 8px var(--sans);text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:#0a0b13;stroke-width:2.8px;}
+  .memory-item-caption{opacity:0;transition:opacity .18s ease;font-size:8px;}
+  .memory-graph-node.item:hover .memory-item-caption,.memory-graph-node.item:focus .memory-item-caption,.memory-graph-node.item.selected .memory-item-caption{opacity:1;}
+  .memory-root-aura{fill:rgba(169,132,220,.055);stroke:rgba(202,177,239,.13);stroke-width:.65;stroke-dasharray:2 6;vector-effect:non-scaling-stroke;}
+  .memory-root-ring{fill:url(#memoryRootGlow);stroke:rgba(220,202,246,.72);stroke-width:1;vector-effect:non-scaling-stroke;}
+  .memory-root-core{fill:rgba(235,222,251,.9);filter:url(#memorySoftGlow);pointer-events:none;}
+  @media (prefers-reduced-motion:no-preference){
+    .memory-root-aura{animation:memoryAuraTurn 28s linear infinite;transform-origin:center;}
+    .memory-graph-node.item:nth-of-type(3n){animation:memoryStarBreathe 4.8s ease-in-out infinite;}
+  }
+  @keyframes memoryAuraTurn{to{transform:rotate(360deg)}}
+  @keyframes memoryStarBreathe{50%{opacity:.72}}
   .memory-graph-controls{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px;z-index:2;}
-  .memory-graph-controls button{width:32px;height:32px;border:1px solid var(--line);border-radius:10px;background:var(--surface-glass);backdrop-filter:blur(8px);color:var(--paper);font-size:16px;cursor:pointer;}
-  .memory-graph-hint{position:absolute;left:12px;bottom:10px;color:var(--paper-dim);font-size:9.5px;opacity:.7;pointer-events:none;}
+  .memory-graph-controls button{width:34px;height:34px;border:1px solid rgba(226,213,245,.13);border-radius:12px;background:rgba(15,16,27,.68);backdrop-filter:blur(12px);color:rgba(241,235,248,.86);font-size:16px;cursor:pointer;box-shadow:0 5px 16px rgba(0,0,0,.15);}
+  .memory-graph-hint{position:absolute;left:13px;bottom:11px;color:rgba(213,203,224,.55);font-size:9.5px;letter-spacing:.02em;pointer-events:none;}
   .memory-node-detail{
     position:absolute;left:10px;right:10px;bottom:10px;z-index:3;
     max-height:42%;overflow:auto;padding:13px 36px 13px 14px;

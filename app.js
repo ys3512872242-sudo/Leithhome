@@ -4386,7 +4386,7 @@ async function sendTheaterMessage() {
 // ============================================================
 let memoryExpandedNodes = new Set(["profile", "core"]); // 默认展开的分支
 let memoryAddTarget = ""; // 当前要添加记忆的分支
-let memoryGraphTransform = { x: 0, y: 0, scale: 1 };
+let memoryGraphTransform = { x: 0, y: 0, scale: .5 };
 const memoryGraphPointers = new Map();
 let memoryGraphGesture = null;
 let memoryGraphDidMove = false;
@@ -4401,7 +4401,7 @@ function setMemoryView(mode) {
 }
 
 function clampMemoryGraphScale(scale) {
-  return Math.max(.42, Math.min(3.2, scale));
+  return Math.max(.28, Math.min(3.5, scale));
 }
 
 function applyMemoryGraphTransform() {
@@ -4432,13 +4432,17 @@ function zoomMemoryGraph(factor, clientX, clientY) {
 }
 
 function resetMemoryGraph() {
-  memoryGraphTransform = { x: 0, y: 0, scale: 1 };
+  const wrap = $("#memoryGraphWrap");
+  const available = wrap ? Math.min(wrap.clientWidth - 42, wrap.clientHeight - 48) : 380;
+  const fitScale = Math.max(.34, Math.min(1.05, available / 760));
+  memoryGraphTransform = { x: 0, y: 0, scale: fitScale };
   applyMemoryGraphTransform();
 }
 
 function closeMemoryNodeDetail() {
   $("#memoryNodeDetail").classList.add("hidden");
   $("#memoryGraphHint").classList.remove("hidden");
+  document.querySelectorAll('.memory-graph-node.selected').forEach(node => node.classList.remove('selected'));
 }
 
 function showMemoryNodeDetail(branch, item) {
@@ -4463,23 +4467,39 @@ function createMemorySvgElement(name, attrs = {}) {
   return el;
 }
 
-function appendMemoryGraphEdge(viewport, x1, y1, x2, y2, virtual) {
-  const edge = createMemorySvgElement('line', { x1, y1, x2, y2 });
-  edge.setAttribute('class', `memory-edge${virtual ? ' virtual' : ''}`);
+function appendMemoryGraphEdge(viewport, x1, y1, x2, y2, virtual, color, branchEdge = false, bend = 0) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const mx = (x1 + x2) / 2 - dy / length * bend;
+  const my = (y1 + y2) / 2 + dx / length * bend;
+  const edge = createMemorySvgElement('path', { d: `M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}` });
+  edge.setAttribute('class', `memory-edge${branchEdge ? ' branch-edge' : ''}${virtual ? ' virtual' : ''}`);
+  if (color) edge.style.setProperty('--edge-color', color);
   viewport.appendChild(edge);
 }
 
 function appendMemoryGraphNode(viewport, { x, y, radius, label, sublabel, icon, color, virtual, branch, item, root }) {
   const group = createMemorySvgElement('g', { transform: `translate(${x} ${y})`, tabindex: 0 });
-  group.setAttribute('class', `memory-graph-node${virtual ? ' virtual' : ''}`);
+  group.setAttribute('class', `memory-graph-node${item ? ' item' : ''}${virtual ? ' virtual' : ''}`);
+  if (color) group.style.setProperty('--node-color', color);
+
+  if (root) {
+    group.appendChild(createMemorySvgElement('circle', { cx: 0, cy: 0, r: radius + 18, class: 'memory-root-aura' }));
+  }
 
   const circle = createMemorySvgElement('circle', { cx: 0, cy: 0, r: radius });
   circle.setAttribute('class', root ? 'memory-root-ring' : 'memory-node-halo');
-  if (!root && color) {
-    circle.style.stroke = color;
-    circle.style.fill = virtual ? `${color}18` : `${color}2c`;
-  }
   group.appendChild(circle);
+
+  if (item) {
+    group.appendChild(createMemorySvgElement('circle', { cx: 0, cy: 0, r: Math.max(1.5, radius * .3), class: 'memory-node-core' }));
+    const title = createMemorySvgElement('title');
+    title.textContent = item.content || '';
+    group.appendChild(title);
+  } else if (root) {
+    group.appendChild(createMemorySvgElement('circle', { cx: 0, cy: 0, r: 4.2, class: 'memory-root-core' }));
+  }
 
   if (icon) {
     const iconText = createMemorySvgElement('text', { x: 0, y: root ? 6 : (item ? 4 : 5), 'text-anchor': 'middle', 'font-size': root ? 22 : (item ? 9 : 15) });
@@ -4490,7 +4510,7 @@ function appendMemoryGraphNode(viewport, { x, y, radius, label, sublabel, icon, 
 
   if (label) {
     const text = createMemorySvgElement('text', { x: 0, y: radius + 14 });
-    text.setAttribute('class', 'memory-node-label');
+    text.setAttribute('class', `memory-node-label${item ? ' memory-item-caption' : ''}`);
     text.textContent = label;
     group.appendChild(text);
   }
@@ -4504,7 +4524,11 @@ function appendMemoryGraphNode(viewport, { x, y, radius, label, sublabel, icon, 
   if (branch) {
     const open = (event) => {
       event.stopPropagation();
-      if (!memoryGraphDidMove) showMemoryNodeDetail(branch, item || null);
+      if (!memoryGraphDidMove) {
+        document.querySelectorAll('.memory-graph-node.selected').forEach(node => node.classList.remove('selected'));
+        group.classList.add('selected');
+        showMemoryNodeDetail(branch, item || null);
+      }
     };
     group.addEventListener('click', open);
     group.addEventListener('keydown', (event) => {
@@ -4519,31 +4543,44 @@ function renderMemoryGraph(branches) {
   if (!viewport) return;
   viewport.innerHTML = '';
 
-  const branchRadius = 185;
+  const defs = createMemorySvgElement('defs');
+  defs.innerHTML = `
+    <radialGradient id="memoryRootGlow"><stop offset="0" stop-color="#e7d9f8" stop-opacity=".28"/><stop offset=".5" stop-color="#ae86dc" stop-opacity=".18"/><stop offset="1" stop-color="#8e68bf" stop-opacity=".06"/></radialGradient>
+    <filter id="memorySoftGlow" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="2.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+  viewport.appendChild(defs);
+
+  // 不再用整齐的“车轮辐条”。七个记忆域保持松散、略微不对称，像自然形成的星团。
+  const anchors = [
+    { x: -168, y: -184 }, { x: 38, y: -228 }, { x: 214, y: -92 },
+    { x: 186, y: 126 }, { x: 42, y: 228 }, { x: -174, y: 166 },
+    { x: -236, y: -22 }
+  ];
   const branchPositions = [];
   branches.forEach((branch, index) => {
-    const angle = -Math.PI / 2 + index * (Math.PI * 2 / branches.length);
+    const anchor = anchors[index % anchors.length];
     branch.virtual = ['diary', 'summary', 'short_term'].includes(branch.id);
-    const bx = Math.cos(angle) * branchRadius;
-    const by = Math.sin(angle) * branchRadius;
+    const bx = anchor.x;
+    const by = anchor.y;
+    const angle = Math.atan2(by, bx);
     branchPositions.push({ branch, angle, x: bx, y: by });
-    appendMemoryGraphEdge(viewport, 0, 0, bx, by, branch.virtual);
+    appendMemoryGraphEdge(viewport, 0, 0, bx, by, branch.virtual, branch.color, true, index % 2 ? 20 : -20);
 
-    branch.items.forEach((item, itemIndex) => {
-      const perRing = 9;
-      const ring = Math.floor(itemIndex / perRing);
-      const slot = itemIndex % perRing;
-      const spread = (slot - (Math.min(branch.items.length - ring * perRing, perRing) - 1) / 2) * .115;
-      const leafAngle = angle + spread;
-      const leafDistance = 70 + ring * 48;
+    const visibleItems = branch.items.slice(0, 42);
+    visibleItems.forEach((item, itemIndex) => {
+      const seedText = `${branch.id}:${item.id || item.createdAt || itemIndex}`;
+      let seed = 0;
+      for (let i = 0; i < seedText.length; i++) seed = (seed * 31 + seedText.charCodeAt(i)) >>> 0;
+      const jitter = ((seed % 1000) / 1000 - .5);
+      const leafAngle = angle + Math.PI + itemIndex * 2.399963 + jitter * .48;
+      const leafDistance = 48 + Math.sqrt(itemIndex + 1) * 13.5 + (seed % 17);
       const x = bx + Math.cos(leafAngle) * leafDistance;
-      const y = by + Math.sin(leafAngle) * leafDistance;
-      appendMemoryGraphEdge(viewport, bx, by, x, y, branch.virtual);
+      const y = by + Math.sin(leafAngle) * leafDistance * .82;
+      appendMemoryGraphEdge(viewport, bx, by, x, y, branch.virtual, branch.color, false, jitter * 13);
       const preview = (item.content || '').replace(/\s+/g, ' ').trim();
       appendMemoryGraphNode(viewport, {
         x, y,
-        radius: Math.min(9, 4.5 + Math.sqrt(preview.length || 1) / 4),
-        label: preview.length > 9 ? preview.slice(0, 9) + '…' : preview,
+        radius: Math.min(7.2, 3.2 + Math.sqrt(preview.length || 1) / 5.5),
+        label: preview.length > 11 ? preview.slice(0, 11) + '…' : preview,
         icon: '', color: branch.color, virtual: branch.virtual, branch, item
       });
     });
@@ -4559,9 +4596,9 @@ function renderMemoryGraph(branches) {
   });
 
   appendMemoryGraphNode(viewport, {
-    x: 0, y: 0, radius: 31, label: 'Leith 的记忆', icon: '🧠', root: true
+    x: 0, y: 0, radius: 27, label: 'Leith 的记忆', icon: '', root: true
   });
-  applyMemoryGraphTransform();
+  requestAnimationFrame(resetMemoryGraph);
 }
 
 function initMemoryGraphGestures() {

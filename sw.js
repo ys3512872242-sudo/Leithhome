@@ -2,7 +2,7 @@
 // 换上新文件——用一个固定的时间戳当版本号，比手动记得改数字更不容易漏掉。
 // 这个值本身不需要每次手动改：只要发布流程里有一步"替换成当前时间"就行；
 // 如果发布流程是纯手动复制文件，那还是需要发布前手动改一下这一行。
-const CACHE_NAME = "companion-shell-20260720-cloud-v2-login-health-fix";
+const CACHE_NAME = "companion-shell-20260720-cloud-v2-passcode-nebula-fix";
 const SHELL_FILES = ["./index.html", "./app.js", "./memory.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
