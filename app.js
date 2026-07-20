@@ -217,7 +217,8 @@ const CLOUD_SYNC_STATIC_KEYS = new Set([
   LS.worldNightstand,
   LS.readingBooks,
   LS.readingLinks,
-  'companion_theater_rooms_v1'
+  'companion_theater_rooms_v1',
+  'companion_health_records_v1'
 ]);
 const cloudStatePending = new Map();
 const cloudStateTimers = new Map();
@@ -272,6 +273,7 @@ function refreshUiAfterCloudStateRestore() {
   if (activeApp.id === 'page-app-shop') renderShopPage();
   if (activeApp.id === 'page-app-reading') showReadingLibrary();
   if (activeApp.id === 'page-app-theater') renderTheaterRoomList();
+  if (activeApp.id === 'page-app-health') renderHealthPage();
 }
 
 async function restoreCloudAppState() {
@@ -361,26 +363,6 @@ function updateDesktopPasscodeButton() {
     : '🔐 修改记忆密码';
 }
 
-async function submitMemoryUnlock() {
-  const input = $("#memoryLockInput");
-  const button = $("#memoryUnlockBtn");
-  const passcode = (input.value || '').trim();
-  $("#memoryLockError").innerText = "";
-  button.disabled = true;
-  button.innerText = "正在接回记忆…";
-  const result = await window.unlockLeithMemory(passcode);
-  button.disabled = false;
-  button.innerText = "接回 Leith";
-  if (!result.ok) {
-    $("#memoryLockError").innerText = result.error || "没有解锁成功";
-    input.select();
-    return;
-  }
-  if (passcode === '123456') localStorage.setItem(DEFAULT_PASSCODE_WARNING_LS, '1');
-  hideMemoryLockScreen();
-  updateDesktopPasscodeButton();
-}
-
 function openChangeMemoryPasscode() {
   $("#currentMemoryPasscodeInput").value = "";
   $("#newMemoryPasscodeInput").value = "";
@@ -425,10 +407,6 @@ async function submitMemoryPasscodeChange() {
   showToast("记忆密码已修改，其他设备需要使用新密码");
 }
 
-$("#memoryUnlockBtn").onclick = submitMemoryUnlock;
-$("#memoryLockInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") submitMemoryUnlock();
-});
 $("#changeLeithPasswordBtn").onclick = openChangeMemoryPasscode;
 $("#changeMemoryPasscodeCancelBtn").onclick = closeChangeMemoryPasscodeFromUI;
 $("#changeMemoryPasscodeConfirmBtn").onclick = submitMemoryPasscodeChange;
@@ -439,7 +417,10 @@ window.addEventListener('leith:memory-lock-required', () => {
   if (isSharedReadingEntry()) hideMemoryLockScreen();
   else showMemoryLockScreen();
 });
-window.addEventListener('leith:memory-unlocked', hideMemoryLockScreen);
+window.addEventListener('leith:memory-unlocked', () => {
+  hideMemoryLockScreen();
+  updateDesktopPasscodeButton();
+});
 if (isSharedReadingEntry()) hideMemoryLockScreen();
 updateDesktopPasscodeButton();
 
@@ -2744,7 +2725,7 @@ function buildSystemNotesBlock() {
 }
 
 // ============================================================
-// 健康（生理期周期）—— 本地存储，不上云，纯个人工具
+// 健康（生理期周期）—— 解锁后随应用状态私密同步，不进入模型 prompt
 // ============================================================
 const HEALTH_RECORDS_LS = "companion_health_records_v1"; // [{id, start, end}]  start/end: 'YYYY-MM-DD'
 
@@ -6079,7 +6060,7 @@ function updateSupabaseStatus() {
   const el = $("#supabaseStatus");
   if (!el) return;
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-    el.innerHTML = "☁️ Leith 已接上云端记忆（对话 + 桌面 + 共读同步）";
+    el.innerHTML = "☁️ Leith 已接上云端记忆（对话 + 桌面 + 共读 + 健康记录同步）";
     el.style.borderColor = "var(--accent-dim)";
     el.style.color = "var(--accent)";
   } else {

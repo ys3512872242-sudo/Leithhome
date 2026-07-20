@@ -1383,7 +1383,7 @@
       <div class="memory-lock-sub">输入记忆密码，让这台设备接回你们的对话和小世界。</div>
       <input class="memory-lock-input" id="memoryLockInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="current-password" aria-label="记忆密码">
       <div class="memory-lock-error" id="memoryLockError"></div>
-      <button class="btn btn-primary btn-block memory-lock-btn" id="memoryUnlockBtn">接回 Leith</button>
+      <button type="button" class="btn btn-primary btn-block memory-lock-btn" id="memoryUnlockBtn">接回 Leith</button>
     </div>
   </div>
 
@@ -1789,7 +1789,7 @@
       <div class="field-label" style="margin-bottom:8px;">历史记录</div>
       <div id="healthRecordList"></div>
 
-      <p class="helper-text" style="margin-top:14px;">记录只保存在这台设备本地，不会上传到云端；日期临近或者聊天提到相关话题时，Leith 可能会自然地关心一下你，不会频繁提起。</p>
+      <p class="helper-text" style="margin-top:14px;">解锁后，记录会随其他私密状态同步到你的云端；日期临近或者聊天提到相关话题时，Leith 可能会自然地关心一下你，不会频繁提起。</p>
     </div>
 
     <!-- 添加/编辑记录弹窗 -->
@@ -2066,7 +2066,7 @@
       <div class="divider"></div>
 
       <button class="btn btn-danger btn-block" id="clearAllBtn">清空全部本地数据</button>
-      <p class="helper-text" style="text-align:center;margin-top:8px;">对话、桌面小世界和共读状态会在解锁后同步。模型 API Key、服务商配置和健康记录仍只保存在本机。</p>
+      <p class="helper-text" style="text-align:center;margin-top:8px;">对话、桌面小世界、共读和健康记录会在解锁后同步。模型 API Key 与服务商配置仍只保存在本机。</p>
 
     </div>
   </div>

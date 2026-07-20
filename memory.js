@@ -172,6 +172,56 @@ function lockLeithMemoryOnThisDevice() {
   location.reload();
 }
 
+// 锁屏必须由最先加载的记忆模块自己接管。这样即使体量较大的 app.js
+// 在初始化其他页面时出错，用户也不会被困在一个“能输入、不能提交”的锁屏上。
+function bindLeithUnlockScreen() {
+  const input = document.getElementById('memoryLockInput');
+  const button = document.getElementById('memoryUnlockBtn');
+  const errorEl = document.getElementById('memoryLockError');
+  const screen = document.getElementById('memoryLockScreen');
+  if (!input || !button || !errorEl || button.dataset.unlockBound === '1') return;
+
+  button.dataset.unlockBound = '1';
+  button.type = 'button';
+
+  const submit = async () => {
+    if (button.disabled) return;
+    const passcode = (input.value || '').trim();
+    errorEl.textContent = '';
+    button.disabled = true;
+    button.textContent = '正在接回记忆…';
+
+    try {
+      const result = await unlockLeithMemory(passcode);
+      if (!result.ok) {
+        errorEl.textContent = result.error || '没有解锁成功';
+        input.focus();
+        input.select();
+        return;
+      }
+
+      if (passcode === '123456') {
+        localStorage.setItem('leith_default_passcode_warning_v1', '1');
+      }
+      input.value = '';
+      screen?.classList.add('hidden');
+    } catch (error) {
+      console.error('解锁云端记忆失败:', error);
+      errorEl.textContent = error?.message || '没有解锁成功，请检查网络后重试';
+    } finally {
+      button.disabled = false;
+      button.textContent = '接回 Leith';
+    }
+  };
+
+  button.addEventListener('click', submit);
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    submit();
+  });
+}
+
 // ---- 本地存储工具（表情包仍用本地） ----
 const STICKER_LS_KEY = 'companion_stickers_v1';
 const MEMORY_LS_KEY = 'companion_memory_v2';       // 本地降级用（core）
@@ -1199,7 +1249,7 @@ ${sourceText}`;
   },
 
   // ============================================================
-  // Cloud Sync V2：桌面、小世界、对话窗口和共读状态
+  // Cloud Sync V2：桌面、小世界、对话窗口、共读和健康状态
   // 这里只保存结构化状态，不会进入模型上下文，也不会产生聊天 token。
   // ============================================================
   async loadAppState() {
@@ -1392,6 +1442,8 @@ window.Memory = LocalMemoryAdapter;
 window.Stickers = LocalStickerAdapter;
 
 window.addEventListener('DOMContentLoaded', async () => {
+  // 必须放在第一个 await 之前，确保按钮立即可用。
+  bindLeithUnlockScreen();
   leithLockEnabled = await detectLeithLock();
   if (leithLockEnabled && !getLeithSessionToken()) {
     supabaseReady = false;
