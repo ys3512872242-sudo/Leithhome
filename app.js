@@ -174,7 +174,7 @@ function getTimeOfDay(hour) {
 function applyTimeOfDayTheme() {
   const tod = getTimeOfDay();
   document.documentElement.setAttribute("data-tod", tod);
-  const themeColors = { day: '#8DC9F3', dusk: '#263B68', night: '#061329' };
+  const themeColors = { day: '#B9D7E7', dusk: '#243A63', night: '#061329' };
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', themeColors[tod]);
   return tod;
@@ -2354,39 +2354,77 @@ async function exportSelectionAsImage(messages) {
   const width = 380;
   const maxBubbleWidth = width - padding * 2 - 40;
   const fontSize = 15;
-  const lineHeight = 22;
+  const lineHeight = 25;
+  const labelHeight = 19;
+  const bubblePadX = 16;
+  const bubblePadTop = 13;
+  const bubblePadBottom = 15;
+  const rootStyle = getComputedStyle(document.documentElement);
+  const cssVar = (name, fallback) => (rootStyle.getPropertyValue(name).trim() || fallback);
+  const exportTheme = {
+    bg: cssVar("--bg", "#07172E"),
+    bgDeep: cssVar("--bg-deep", "#030A18"),
+    paper: cssVar("--paper", "#E3E0E8"),
+    paperDim: cssVar("--paper-dim", "#A9A8B8"),
+    line: cssVar("--line", "rgba(255,255,255,.12)"),
+    accent: cssVar("--accent", "#C5A7E8"),
+    accent2: cssVar("--accent-2", "#E0C5F2"),
+    userText: cssVar("--bubble-user-text", "#321D28"),
+    assistantBg: cssVar("--bg-elevated", "#10223C")
+  };
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px "Noto Sans SC", sans-serif`;
 
   function wrapText(text, maxWidth) {
     const lines = [];
-    let current = "";
-    for (const ch of text) {
-      const test = current + ch;
-      if (ctx.measureText(test).width > maxWidth && current) {
-        lines.push(current);
-        current = ch;
-      } else {
-        current = test;
+    String(text || "").split("\n").forEach((paragraph, pIndex) => {
+      let current = "";
+      for (const ch of paragraph) {
+        const test = current + ch;
+        if (ctx.measureText(test).width > maxWidth && current) {
+          lines.push(current);
+          current = ch;
+        } else {
+          current = test;
+        }
       }
-      if (ch === "\n") { lines.push(current.slice(0, -1)); current = ""; }
+      lines.push(current);
+      if (pIndex < String(text || "").split("\n").length - 1 && current) lines.push("");
+    });
+    return lines.length ? lines : [""];
+  }
+
+  function drawVerticalGradient(ctx, x, y, w, h, stops) {
+    const gradient = ctx.createLinearGradient(x, y, x, y + h);
+    stops.forEach(([offset, color]) => gradient.addColorStop(offset, color));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  function fillRoundedRect(ctx, x, y, w, h, r, fillStyle, strokeStyle) {
+    ctx.beginPath();
+    roundRect(ctx, x, y, w, h, r);
+    ctx.fillStyle = fillStyle;
+    ctx.fill();
+    if (strokeStyle) {
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
-    if (current) lines.push(current);
-    return lines;
   }
 
   const items = messages.map(m => {
     const isSticker = m.type === "sticker";
     const label = m.role === "user" ? "我" : "Leith";
     const text = isSticker ? "[表情包]" : m.content;
-    const lines = isSticker ? [] : wrapText(text, maxBubbleWidth - 24);
-    const bubbleHeight = isSticker ? 100 : (lines.length * lineHeight + 20);
+    const lines = isSticker ? [] : wrapText(text, maxBubbleWidth - bubblePadX * 2);
+    const bubbleHeight = isSticker ? 100 : Math.max(42, lines.length * lineHeight + bubblePadTop + bubblePadBottom);
     return { m, label, lines, isSticker, bubbleHeight };
   });
 
-  const totalHeight = padding * 2 + items.reduce((sum, it) => sum + it.bubbleHeight + bubbleGap + 18, 0);
+  const totalHeight = padding * 2 + items.reduce((sum, it) => sum + it.bubbleHeight + bubbleGap + labelHeight, 0);
 
   const dpr = window.devicePixelRatio || 2;
   canvas.width = width * dpr;
@@ -2395,37 +2433,53 @@ async function exportSelectionAsImage(messages) {
   canvas.style.height = totalHeight + "px";
   ctx.scale(dpr, dpr);
 
-  ctx.fillStyle = "#0D1017";
-  ctx.fillRect(0, 0, width, totalHeight);
+  drawVerticalGradient(ctx, 0, 0, width, totalHeight, [
+    [0, exportTheme.bg],
+    [.62, exportTheme.bgDeep],
+    [1, exportTheme.bg]
+  ]);
+  ctx.fillStyle = "rgba(255,255,255,.04)";
+  ctx.beginPath();
+  ctx.arc(width - 72, 72, 130, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.025)";
+  ctx.beginPath();
+  ctx.arc(36, totalHeight - 80, 160, 0, Math.PI * 2);
+  ctx.fill();
 
   let y = padding;
   for (const it of items) {
     const isUser = it.m.role === "user";
-    ctx.font = "11px sans-serif";
-    ctx.fillStyle = "#7C879C";
+    ctx.font = "11px \"Noto Sans SC\", sans-serif";
+    ctx.fillStyle = exportTheme.paperDim;
     ctx.textAlign = isUser ? "right" : "left";
     ctx.fillText(it.label, isUser ? width - padding : padding, y + 10);
-    y += 18;
+    y += labelHeight;
 
-    const bubbleW = it.isSticker ? 100 : Math.min(maxBubbleWidth, Math.max(...it.lines.map(l => ctx.measureText(l).width), 0) + 24);
+    ctx.font = `${fontSize}px "Noto Sans SC", sans-serif`;
+    const bubbleW = it.isSticker ? 100 : Math.min(maxBubbleWidth, Math.max(...it.lines.map(l => ctx.measureText(l).width), 0) + bubblePadX * 2);
     const bubbleX = isUser ? width - padding - bubbleW : padding;
 
-    ctx.beginPath();
-    roundRect(ctx, bubbleX, y, bubbleW, it.bubbleHeight, 14);
-    ctx.fillStyle = isUser ? "#4A7BB5" : "#161B26";
-    ctx.fill();
+    if (isUser) {
+      const userGradient = ctx.createLinearGradient(bubbleX, y, bubbleX + bubbleW, y + it.bubbleHeight);
+      userGradient.addColorStop(0, exportTheme.accent2);
+      userGradient.addColorStop(1, exportTheme.accent);
+      fillRoundedRect(ctx, bubbleX, y, bubbleW, it.bubbleHeight, 14, userGradient, "rgba(255,255,255,.2)");
+    } else {
+      fillRoundedRect(ctx, bubbleX, y, bubbleW, it.bubbleHeight, 14, exportTheme.assistantBg, exportTheme.line);
+    }
 
     if (it.isSticker) {
-      ctx.font = "12px sans-serif";
-      ctx.fillStyle = "#7C879C";
+      ctx.font = "12px \"Noto Sans SC\", sans-serif";
+      ctx.fillStyle = exportTheme.paperDim;
       ctx.textAlign = "center";
       ctx.fillText("[表情包]", bubbleX + bubbleW / 2, y + it.bubbleHeight / 2 + 4);
     } else {
-      ctx.font = "15px sans-serif";
-      ctx.fillStyle = isUser ? "#0A1622" : "#E7ECF5";
+      ctx.font = `${fontSize}px "Noto Sans SC", sans-serif`;
+      ctx.fillStyle = isUser ? exportTheme.userText : exportTheme.paper;
       ctx.textAlign = "left";
       it.lines.forEach((line, i) => {
-        ctx.fillText(line, bubbleX + 12, y + 24 + i * lineHeight);
+        ctx.fillText(line, bubbleX + bubblePadX, y + bubblePadTop + fontSize + i * lineHeight);
       });
     }
 
@@ -2700,9 +2754,26 @@ function getAnthropicTools() {
 // 用户在界面上看不到，所以用英文写，省 token
 function buildWebPromptBlock() {
   if (!webEnabled) return "";
+  return `[Web] web_search tool available for real-time info.`;
+}
+
+function buildTemporalContextBlock() {
   const now = new Date();
-  const timeStr = now.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", dateStyle: "full", timeStyle: "short" });
-  return `[Web] Current time: ${timeStr}. web_search tool available for real-time info.`;
+  const current = now.toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  const threadMessages = getThreadMessages(getActiveThreadId())
+    .filter(message => Number.isFinite(message._ts))
+    .sort((a, b) => a._ts - b._ts);
+  let span = '';
+  if (threadMessages.length) {
+    const first = new Date(threadMessages[0]._ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+    const last = new Date(threadMessages[threadMessages.length - 1]._ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+    span = ` Visible chat history spans ${first}${first === last ? '' : ` to ${last}`}.`;
+  }
+  return `[Time context] Current Shanghai time: ${current}.${span}
+Treat memory date labels as authoritative. "发生于" is the event date; "记录于" is only when the memory was saved and may differ from when it happened. Retrieval order never means "recent", "yesterday", or "just now". If no event date is known, do not invent one.`;
 }
 
 async function buildEffectiveSystemPrompt() {
@@ -2726,7 +2797,7 @@ async function buildEffectiveSystemPrompt() {
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
     const summary = await window.Memory.loadLongTermSummary(threadId);
     if (summary) {
-      summaryBlock = `[Compressed summary from earlier conversation]\n- ${summary}`;
+      summaryBlock = `[Compressed summary from earlier conversation — recorded dates are not necessarily event dates]\n${summary}`;
     }
   }
 
@@ -2738,11 +2809,12 @@ async function buildEffectiveSystemPrompt() {
   const worldBlock = shopRelevant ? buildWorldPromptBlock() : buildWorldPromptBlockMini();
 
   const webBlock = buildWebPromptBlock();
+  const temporalBlock = buildTemporalContextBlock();
   const noteBlock = buildSystemNotesBlock();
   const healthBlock = buildHealthPromptBlock(recentText);
   // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
   // 世界规则（WORLD_RULES_MINI / WORLD_RULES_FULL）现在跟着 shopRelevant 走
-  return [worldRulesBlock, FORMATTING_RULES, base.trim(), memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim()].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, base.trim(), temporalBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -3162,7 +3234,11 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
   if (!provider || !apiKey || !model) return '';
   try {
     const messages = [{ role: 'user', content: prompt }];
-    const systemPrompt = '你是Leith，正在以自己的视角回顾和记录。不要跳出角色，不要提及自己是AI。';
+    const basePersona = localStorage.getItem(LS.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
+    const systemPrompt = `${basePersona.trim()}
+
+你现在只是在整理自己的记忆和日记，不是在回复 Susie。保持 Leith 的语气和关系视角，不要跳出角色，不要提及自己是 AI。
+如果对话里出现成人或亲密内容，只记录双方的情绪、关系变化、照顾、信任和边界，不复述露骨细节；不要因为这类内容拒绝写日记。`;
     let result;
     if (provider.apiStyle === 'anthropic') {
       result = await streamAnthropic({
@@ -3189,6 +3265,8 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
 // Leith 以第一人称视角记下这一天，更像"他自己在记东西"
 // ============================================================
 const DIARY_LAST_DATE_LS = "companion_diary_last_date_v1";
+const DIARY_FAILURE_COOLDOWN_LS = "companion_diary_failure_cooldown_v1";
+const DIARY_FAILURE_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 function formatLocalDate(date = new Date()) {
   const year = date.getFullYear();
@@ -3201,6 +3279,49 @@ function offsetLocalDate(date, days) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
+function getDiaryRangeMs(dateStr) {
+  const start = new Date(dateStr + "T05:00:00").getTime();
+  return { start, end: start + 24 * 60 * 60 * 1000 };
+}
+
+function getCurrentDiaryDateStr(now = new Date()) {
+  const shifted = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() - 5, now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+  return formatLocalDate(shifted);
+}
+
+function getLastCompletedDiaryDateStr(now = new Date()) {
+  return formatLocalDate(offsetLocalDate(new Date(getCurrentDiaryDateStr(now) + "T00:00:00"), -1));
+}
+
+function getDiaryFailureKey(dateStr) {
+  const provider = getActiveProvider();
+  const providerKey = provider ? `${provider.id || provider.name || provider.baseUrl || "provider"}|${provider.baseUrl || ""}` : "no-provider";
+  return `${dateStr}|${providerKey}|extract:${getDiaryModel()}|write:${($("#customModelInput").value || "").trim() || $("#modelSelect").value || ""}`;
+}
+
+function getDiaryFailureCooldown() {
+  try { return JSON.parse(localStorage.getItem(DIARY_FAILURE_COOLDOWN_LS) || "{}"); }
+  catch (e) { return {}; }
+}
+
+function isDiaryFailureCooling(dateStr) {
+  const data = getDiaryFailureCooldown();
+  const until = data[getDiaryFailureKey(dateStr)] || 0;
+  return Date.now() < until;
+}
+
+function setDiaryFailureCooling(dateStr) {
+  const data = getDiaryFailureCooldown();
+  data[getDiaryFailureKey(dateStr)] = Date.now() + DIARY_FAILURE_COOLDOWN_MS;
+  localStorage.setItem(DIARY_FAILURE_COOLDOWN_LS, JSON.stringify(data));
+}
+
+function clearDiaryFailureCooling(dateStr) {
+  const data = getDiaryFailureCooldown();
+  delete data[getDiaryFailureKey(dateStr)];
+  localStorage.setItem(DIARY_FAILURE_COOLDOWN_LS, JSON.stringify(data));
+}
+
 function getLastDiaryDate() {
   return localStorage.getItem(DIARY_LAST_DATE_LS) || "";
 }
@@ -3210,7 +3331,8 @@ function setLastDiaryDate(dateStr) {
 
 // 手动触发：把"今天"写成日记（供 token 提示条里的按钮使用）
 async function tryGenerateDiaryNow() {
-  const todayStr = formatLocalDate();
+  const todayStr = getCurrentDiaryDateStr();
+  clearDiaryFailureCooling(todayStr);
   return await tryGenerateDiaryNowFor(todayStr);
 }
 
@@ -3224,11 +3346,19 @@ async function checkAndGenerateDiary({ silent = false } = {}) {
   if (diaryCheckPromise) return diaryCheckPromise;
   diaryCheckPromise = (async () => {
   const now = new Date();
-  const todayStr = formatLocalDate(now);
   const lastDone = getLastDiaryDate();
-  const yesterday = formatLocalDate(offsetLocalDate(now, -1));
-  if (lastDone === yesterday || lastDone === todayStr) return false;
+  const yesterday = getLastCompletedDiaryDateStr(now);
   if (!window.Memory?.isReady?.()) return false;
+  // 云端日记才是事实来源：避免本地曾标记“写过”，但云端其实是拒答、重复项或已被清理。
+  if (window.Memory.hasDailyDiary) {
+    if (await window.Memory.hasDailyDiary(yesterday)) {
+      if (lastDone !== yesterday) setLastDiaryDate(yesterday);
+      return false;
+    }
+  } else if (lastDone === yesterday) {
+    return false;
+  }
+  if (isDiaryFailureCooling(yesterday)) return false;
   return silent ? await processDayEnd(yesterday) : await runDayEndWithSplash(yesterday);
   })();
   try { return await diaryCheckPromise; }
@@ -3266,7 +3396,10 @@ async function processDayEnd(dateStr) {
   let fullyProcessed = false;
   for (let i = 0; i < MAX_ROUNDS; i++) {
     const wroteMore = await tryGenerateDiaryNowFor(dateStr);
-    if (wroteMore === null) return false; // 网络或模型失败时下次仍会重试，不能误标为已完成
+    if (wroteMore === null) {
+      setDiaryFailureCooling(dateStr);
+      return false; // 网络或模型失败时下次仍会重试，不能误标为已完成
+    }
     if (!wroteMore) { fullyProcessed = true; break; }
   }
   if (!fullyProcessed) return false; // 极端超长对话留到下次继续，避免跳过未处理部分
@@ -3282,14 +3415,13 @@ async function processDayEnd(dateStr) {
 
 // 收集"某个本地日期"里，所有线程中被标记过、且还没处理过的消息（跨主对话+所有小剧场房间）
 function collectPinnedMessagesForDate(dateStr) {
-  const dayStart = new Date(dateStr + 'T00:00:00').getTime();
-  const dayEnd = new Date(dateStr + 'T23:59:59.999').getTime();
+  const { start: dayStart, end: dayEnd } = getDiaryRangeMs(dateStr);
   const results = [];
 
   getThreads().forEach(t => {
     const msgs = getThreadMessages(t.id);
     msgs.forEach(m => {
-      if (m.pinned && !m._pinProcessed && m._ts && m._ts >= dayStart && m._ts <= dayEnd) {
+      if (m.pinned && !m._pinProcessed && m._ts && m._ts >= dayStart && m._ts < dayEnd) {
         results.push({ threadId: t.id, msgId: m._id, content: m.content });
       }
     });
@@ -4878,7 +5010,14 @@ async function renderMemoryTree() {
             <div class="mem-leaf-content">${roleLabel ? `<span style="color:${branch.color};font-weight:600;font-family:'Noto Sans SC',sans-serif;font-size:11px;">${roleLabel}：</span>` : ""}${escapeHtml(contentPreview)}</div>
             ${timeStr ? `<div class="mem-leaf-meta">${timeStr}</div>` : ''}
           </div>
-          ${branch.canAdd ? `<button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
+          ${branch.id === "diary" ? `<div class="mem-leaf-actions">
+            <button class="mem-leaf-rewrite" onclick="event.stopPropagation();rewriteDiaryLeaf('${item.id}','${item.dateStr || ""}')" title="再写一次">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 4v6h-6"/></svg>
+            </button>
+            <button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
+            </button>
+          </div>` : branch.canAdd ? `<button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
           </button>` : ''}
         </div>`;
@@ -4920,6 +5059,13 @@ async function deleteMemoryLeaf(id, branch) {
     await window.Memory.removeReading(id);
   } else if (branch === "archive") {
     await window.Memory.removeArchive(id);
+  } else if (branch === "diary") {
+    if (window.Memory.removeDiary) {
+      await window.Memory.removeDiary(id);
+    } else {
+      const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
+      if (client) await client.from('diary_entries').delete().eq('id', parseInt(id, 10));
+    }
   } else {
     // summary / short_term — 直接用 Supabase client 删
     const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
@@ -4932,6 +5078,23 @@ async function deleteMemoryLeaf(id, branch) {
   }
   renderMemoryTree();
   showToast("已删除");
+}
+
+async function rewriteDiaryLeaf(id, dateStr) {
+  if (!dateStr) return showToast("找不到这天的日期");
+  if (!window.Memory?.isReady?.()) return showToast("云端记忆还没连上");
+  if (!confirm(`重新写 ${dateStr} 的日记？`)) return;
+  showToast("正在重新写这天的日记...");
+  clearDiaryFailureCooling(dateStr);
+  if (window.Memory.removeDiary) await window.Memory.removeDiary(id);
+  else {
+    const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
+    if (client) await client.from('diary_entries').delete().eq('id', parseInt(id, 10));
+  }
+  if (getLastDiaryDate() === dateStr) localStorage.removeItem(DIARY_LAST_DATE_LS);
+  const ok = await runDayEndWithSplash(dateStr);
+  renderMemoryTree();
+  showToast(ok ? "日记已重新写好" : "这次没写成，稍后可再试");
 }
 
 function formatMemoryTime(ts) {

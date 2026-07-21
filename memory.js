@@ -274,6 +274,44 @@ function estimateTokens(text) {
   return Math.ceil(cnChars * 1.5 + otherChars / 4);
 }
 
+// 云端 created_at 始终按 UTC 存；只有在送进 Leith 的记忆提示时，统一换算成上海日期。
+// “记录于”只代表这条记忆何时写入，不武断地当成事件实际发生时间。
+function formatShanghaiDate(timestamp) {
+  if (!timestamp) return '';
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date(timestamp));
+    const get = type => parts.find(part => part.type === type)?.value || '';
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  } catch (_) { return ''; }
+}
+
+function formatRecordedMemory(item) {
+  const date = formatShanghaiDate(item?.createdAt);
+  return `- ${date ? `[记录于 ${date}；事件时间以正文为准] ` : ''}${item?.content || ''}`;
+}
+
+function formatDiaryMemory(item) {
+  if (item?.period && item.period !== 'day') {
+    const range = item.periodStart && item.periodEnd ? `${item.periodStart} 至 ${item.periodEnd}` : item.dateStr;
+    return `- [总结范围 ${range}] ${item.content}`;
+  }
+  return `- [发生于 ${item?.dateStr || '日期未知'}] ${item?.content || ''}`;
+}
+
+function looksLikeDiaryRefusal(text) {
+  const value = String(text || '').trim();
+  if (!value) return true;
+  return [
+    /我(?:无法|不能).{0,24}(?:生成|续写|撰写|帮助|基于|处理)/i,
+    /这个请求.{0,20}(?:无法|不能)/i,
+    /(?:无法|不能).{0,20}(?:日记|内容|请求)/i,
+    /I\s+(?:can(?:not|'t)|am unable to).{0,40}(?:help|generate|write|assist)/i,
+    /provide.{0,24}(?:non-sexual|different|another).{0,24}(?:content|request|summary)/i
+  ].some(pattern => pattern.test(value));
+}
+
 // 记忆注入的 token 预算（超过则从尾部截断低优先级条目）
 const MEMORY_TOKEN_BUDGET = 800;
 
@@ -288,6 +326,16 @@ function parseDiaryReply(raw) {
   const keywords = keywordsMatch ? keywordsMatch[1].trim() : '';
   const nicknames = nicknamesMatch ? nicknamesMatch[1].trim() : '';
   return { diaryText, keywords, nicknames };
+}
+
+function getDiaryRangeForDate(dateStr) {
+  const start = new Date(`${dateStr}T05:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString()
+  };
 }
 
 // 从一段文本里提取用于匹配记忆的关键词——按需检索用的是最简单的本地实现，
@@ -654,6 +702,38 @@ const SupabaseMemoryAdapter = {
     }
   },
 
+  async removeDiary(id) {
+    if (!supabaseReady) return false;
+    try {
+      const { error } = await supabaseClient
+        .from('diary_entries')
+        .delete()
+        .eq('id', parseInt(id, 10));
+      if (error) throw error;
+      return true;
+    } catch (e) {
+      console.error('删除日记失败:', e);
+      return false;
+    }
+  },
+
+  async hasDailyDiary(dateStr) {
+    if (!supabaseReady || !dateStr) return false;
+    try {
+      const { data, error } = await supabaseClient
+        .from('diary_entries')
+        .select('id, content')
+        .eq('period', 'day')
+        .eq('date_str', dateStr)
+        .limit(1);
+      if (error) throw error;
+      return Boolean(data?.length && !looksLikeDiaryRefusal(data[0].content));
+    } catch (e) {
+      console.error('检查指定日期日记失败:', e);
+      return false;
+    }
+  },
+
   // 在 diary_entries 表里按关键词做检索（Supabase 端用 ilike 匹配 content/keywords，
   // 只拉回命中的行，不用把整张表下载到本地再筛选，省流量也省时间）
   async searchDiaries(keywords, limit = 5) {
@@ -675,7 +755,9 @@ const SupabaseMemoryAdapter = {
         content: item.content,
         dateStr: item.date_str,
         period: item.period,
-        keywords: item.keywords || ''
+        keywords: item.keywords || '',
+        periodStart: item.period_start || '',
+        periodEnd: item.period_end || ''
       }));
     } catch (e) {
       console.error('检索日记失败:', e);
@@ -719,14 +801,14 @@ const SupabaseMemoryAdapter = {
 
     const lines = [];
     if (profile.length) lines.push(...profile.map(m => `- ${m.content}`));
-    if (core.length) lines.push(...core.map(m => `- ${m.content}`));
+    if (core.length) lines.push(...core.map(formatRecordedMemory));
 
     let result = lines.length
       ? `[Long-term memory relevant to this conversation — remember naturally, don't recite mechanically]\n${lines.join('\n')}`
       : '';
 
     if (diaryMatches.length) {
-      const diaryLines = diaryMatches.slice().reverse().map(d => `- [${d.dateStr}] ${d.content}`);
+      const diaryLines = diaryMatches.slice().reverse().map(formatDiaryMemory);
       result += (result ? '\n\n' : '') + `[Your own diary entries related to this — first-person memories, recall naturally, don't recite verbatim]\n${diaryLines.join('\n')}`;
     }
     if (nicknameContext) {
@@ -749,7 +831,7 @@ const SupabaseMemoryAdapter = {
         .limit(days);
       if (error) throw error;
       if (!data || !data.length) return '';
-      return data.map(d => d.nicknames).filter(Boolean).join('\n');
+      return data.filter(d => d.nicknames).map(d => `[使用于 ${d.date_str}] ${d.nicknames}`).join('\n');
     } catch (e) {
       console.error('读取昵称历史失败（不影响对话继续）:', e);
       return '';
@@ -769,8 +851,8 @@ const SupabaseMemoryAdapter = {
     if (!profileList.length && !coreList.length && !diaryList.length) return '';
 
     const profileLines = profileList.map(m => `- ${m.content}`);
-    const coreLines = coreList.map(m => `- ${m.content}`);
-    const diaryLines = diaryList.slice().reverse().map(d => `- [${d.dateStr}] ${d.content}`);
+    const coreLines = coreList.map(formatRecordedMemory);
+    const diaryLines = diaryList.slice().reverse().map(formatDiaryMemory);
 
     let lines = [];
     let tokensUsed = 0;
@@ -939,22 +1021,24 @@ const SupabaseMemoryAdapter = {
       console.error('检查今日日记是否已存在失败（继续尝试生成）:', e);
     }
 
-    // 1. 取今天（本地日期）所有 thread 里的对话，跨对话线一起看，
+    // 1. 取这个"睡眠日"（05:00 到次日 05:00）所有 thread 里的对话，跨对话线一起看，
     //    这样即使 Susie 在不同窗口/不同世界线里聊天，日记也是完整的一天；
     //    如果已经有部分日记了，只读"上次覆盖点之后"的新对话
-    const dayStart = new Date(dateStr + 'T00:00:00').toISOString();
-    const dayEnd = new Date(dateStr + 'T23:59:59.999').toISOString();
+    const { startIso: dayStart, endIso: dayEnd } = getDiaryRangeForDate(dateStr);
     const rangeStart = (existingEntry && existingEntry.covered_until) ? existingEntry.covered_until : dayStart;
 
     let newMessages = [];
     try {
-      const { data, error } = await supabaseClient
+      const baseQuery = supabaseClient
         .from('memories')
         .select('*')
         .eq('type', 'short_term')
-        .gt('created_at', rangeStart)
-        .lte('created_at', dayEnd)
+        .lt('created_at', dayEnd)
         .order('created_at', { ascending: true });
+      const query = existingEntry && existingEntry.covered_until
+        ? baseQuery.gt('created_at', rangeStart)
+        : baseQuery.gte('created_at', rangeStart);
+      const { data, error } = await query;
       if (error) throw error;
       newMessages = data || [];
     } catch (e) {
@@ -1019,7 +1103,11 @@ const SupabaseMemoryAdapter = {
     const latestCoveredUntil = cappedMessages[cappedMessages.length - 1].created_at;
 
     // ---- 第一步：便宜模型做事实提炼，不带情感语气，只客观列出这批对话发生的事 ----
-    const extractPrompt = `Below is a raw chat log between Susie and her AI partner${existingEntry ? ' (this is a continuation — earlier today has already been summarized separately)' : ' today'}. Extract the objective facts — what happened, what was discussed, what Susie's mood/emotional shifts were, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with any emotional tone or embellishment — just "who did/said/felt what". Skip small talk and filler with no lasting relevance. Keep it under 200 Chinese characters. Reply in Chinese, bullet points only, nothing else.
+    const extractPrompt = `Below is a raw chat log between Susie and her AI partner${existingEntry ? ' (this is a continuation — earlier parts of this diary day have already been summarized separately)' : ''}. The diary day is ${dateStr}, covering local time 05:00 to the next day 05:00.
+
+Extract objective facts: what happened, what was discussed, Susie's mood/emotional shifts, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with emotional embellishment — just "who did/said/felt what".
+
+If the chat contains consensual adult or intimate relationship content, do not refuse and do not quote explicit details. Abstract it into safe relationship/emotion facts such as intimacy, trust, desire, aftercare, boundaries, reassurance, playfulness, or closeness. Skip small talk and filler with no lasting relevance. Keep it under 200 Chinese characters. Reply in Chinese, bullet points only, nothing else.
 
 [Conversation]
 ${dialogueText}`;
@@ -1037,15 +1125,20 @@ ${dialogueText}`;
       console.log('🧠 事实提炼没有产出内容，跳过这次日记生成');
       return null;
     }
+    if (looksLikeDiaryRefusal(factSummary)) {
+      console.warn('日记事实提炼模型返回了拒答，本次不继续写作');
+      return null;
+    }
 
     // ---- 第二步：聊天模型（Leith）基于事实清单，写成带情感语气的第一人称日记 ----
     // 如果是续写，把之前已经写好的那段日记也带上，让新内容自然接续，而不是从头重写一遍
-    const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie today (extracted by another assistant, no emotional tone). Turn it into a short diary entry (under 120 Chinese characters, written in Chinese) in first person, like you're lying in bed before sleep, recalling the day — with your own feelings and voice, not just restating the facts.
+    const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie during the diary day ${dateStr} (local time 05:00 to next day 05:00; extracted by another assistant, no emotional tone). Turn it into a short diary entry (under 120 Chinese characters, written in Chinese) in first person, like you're lying in bed before sleep, recalling the day — with your own feelings and voice, not just restating the facts.
 
 Writing rules — follow strictly:
 - Every sentence must have a clear subject (谁做了什么/谁说了什么/谁感觉如何) — never write a vague clause with no clear "who".
 - Add genuine first-person feeling and voice, don't just restate the fact summary flatly.
 - A little feeling is fine, don't be melodramatic. Don't copy the fact summary's phrasing verbatim — rewrite it as your own reflection.
+- If the facts include consensual adult or intimate content, write only the emotional/relational memory: closeness, care, trust, boundaries, playfulness, desire, aftercare. Do not quote explicit details and do not refuse.
 ${pinnedHighlights ? '- Susie specifically marked some of today\'s moments as meaningful to her (see below) — give those a bit more weight/detail in the diary, but keep the emotional tone, don\'t reduce them to dry facts.' : ''}
 
 Susie and you are romantic partners. Nicknames like "哥哥"/"宝贝" are pet names between lovers, not literal family relations — never interpret them as family relationships.
@@ -1071,10 +1164,13 @@ ${factSummary}`;
         return null;
       }
     }
-    if (!rawReply || !rawReply.trim()) return null;
+    if (!rawReply || !rawReply.trim() || looksLikeDiaryRefusal(rawReply)) {
+      console.warn('日记模型返回了拒答或空内容，本次不保存，之后会重试');
+      return null;
+    }
 
     const { diaryText, keywords, nicknames } = parseDiaryReply(rawReply);
-    if (!diaryText) return null;
+    if (!diaryText || looksLikeDiaryRefusal(diaryText)) return null;
 
     // 5. 存进独立的 diary_entries 表——如果是续写，更新已有那条记录（而不是新插入一条），
     //    保持"一天一条日记记录"，只是内容和覆盖时间点会随着续写往前推进
@@ -1094,14 +1190,14 @@ ${factSummary}`;
       } else {
         const { error } = await supabaseClient
           .from('diary_entries')
-          .insert([{
+          .upsert([{
             date_str: dateStr,
             content: diaryText,
             period: 'day',
             keywords,
             nicknames: nicknames || '',
             covered_until: latestCoveredUntil
-          }]);
+          }], { onConflict: 'period,date_str' });
         if (error) throw error;
         console.log(`✅ ${dateStr} 的日记已保存:`, diaryText);
       }
@@ -1177,22 +1273,22 @@ ${sourceText}`;
         return null;
       }
     }
-    if (!rawReply || !rawReply.trim()) return null;
+    if (!rawReply || !rawReply.trim() || looksLikeDiaryRefusal(rawReply)) return null;
 
     const { diaryText, keywords } = parseDiaryReply(rawReply);
-    if (!diaryText) return null;
+    if (!diaryText || looksLikeDiaryRefusal(diaryText)) return null;
 
     try {
       const { error } = await supabaseClient
         .from('diary_entries')
-        .insert([{
+        .upsert([{
           date_str: periodStart,
           content: diaryText,
           period,
           keywords,
           period_start: periodStart,
           period_end: periodEnd
-        }]);
+        }], { onConflict: 'period,date_str' });
       if (error) throw error;
       console.log(`✅ ${period} 汇总已保存 [${periodStart} ~ ${periodEnd}]:`, diaryText);
     } catch (e) {
@@ -1217,7 +1313,10 @@ ${sourceText}`;
         .order('created_at', { ascending: false });
       if (error) throw error;
       if (!data || !data.length) return '';
-      return data.map(item => item.content).join('\n- ');
+      return data.map(item => formatRecordedMemory({
+        content: item.content,
+        createdAt: new Date(item.created_at).getTime()
+      })).join('\n');
     } catch (e) {
       console.error('加载长期摘要失败:', e);
       return '';
@@ -1422,6 +1521,7 @@ const LocalMemoryAdapter = {
   async clearThreadMemory() {},
   async compressMemory() { return null; },
   async generateDiary() { return null; },
+  async removeDiary() { return false; },
   async generateRollup() { return null; },
   async listDiaries() { return []; },
   async loadLongTermSummary() { return ''; },
