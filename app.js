@@ -26,6 +26,10 @@ const LS = {
   worldShelfItems: "companion_world_shelf_v1",      // [{id, name, emoji, price, consumable, expiresInDays}] 全局普通货架
   worldShelfBought: "companion_world_shelf_bought_v1", // { [threadId]: [{itemId, boughtAt, boughtBy, used}] } 普通货架购买记录（含消耗状态）
   worldNightstand: "companion_world_nightstand_v1", // { [threadId]: [{id, name, emoji, price, boughtAt}] } 床头柜
+  closetShopItems: "companion_closet_shop_items_v1",
+  closetOwnedItems: "companion_closet_owned_items_v1",
+  closetOutfit: "companion_closet_outfit_v1",
+  foldedDates: "companion_folded_dates_v1",
   // 共读小说
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
   readingLinks: "companion_reading_links_v1", // [{id, url, note, addedAt}]
@@ -46,11 +50,12 @@ const DEFAULT_PROVIDERS = [
 // MINI 版极简、永远带上，只让 Leith 知道"有这几个标签、可以偶尔主动送礼/买东西"，
 // 保留"惊喜"能力，即使这轮聊天完全没提购物话题也不会丢失这个行为；
 // FULL 版是完整机制说明，只有聊天内容明显跟购物/礼物相关时才附加，减少平时的固定开销。
-const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift or buy something for yourself using [LGIFT:item]/[ABUY:item]/[SBUY:item] tags (full syntax rules included automatically when relevant).`;
+const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, or buy clothes for Susie using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item] tags (full syntax rules included automatically when relevant).`;
 const WORLD_RULES_FULL = `[World rules]
 [LGIFT:item] Gift limited item to user -> deduct from limited fund, item delists into gift list
 [ABUY:item] Buy adult item -> deduct from allowance, item goes to nightstand
 [SBUY:item] Buy shelf item -> deduct from allowance, same mechanic
+[CBUY:item] Buy clothing for Susie -> deduct from allowance, item leaves clothing shelf and goes to wardrobe
 [USE:item] Mark a consumable as used when user implies it's been used -> auto-consume from nightstand
 Item name must match a keyword; insufficient balance fails; tags go at the end of the reply`;
 
@@ -219,6 +224,10 @@ const CLOUD_SYNC_STATIC_KEYS = new Set([
   LS.worldShelfItems,
   LS.worldShelfBought,
   LS.worldNightstand,
+  LS.closetShopItems,
+  LS.closetOwnedItems,
+  LS.closetOutfit,
+  LS.foldedDates,
   LS.readingBooks,
   LS.readingLinks,
   LS.diaryNotes,
@@ -280,6 +289,7 @@ function refreshUiAfterCloudStateRestore() {
   if (activeApp.id === 'page-app-theater') renderTheaterRoomList();
   if (activeApp.id === 'page-app-health') renderHealthPage();
   if (activeApp.id === 'page-app-diarybook') renderDiaryBook();
+  if (activeApp.id === 'page-app-closet') renderClosetPage();
 }
 
 async function restoreCloudAppState() {
@@ -440,7 +450,7 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|USE):[^\]]+\]/g, "").trim();
+  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|USE):[^\]]+\]/g, "").trim();
   const segments = [];
   const tagPattern = /<(thinking|think)>/ig;
   let cursor = 0;
@@ -514,6 +524,7 @@ function openApp(appPageId) {
   if (appPageId === "page-app-theater") renderTheaterRoomList();
   if (appPageId === "page-app-health") renderHealthPage();
   if (appPageId === "page-app-diarybook") renderDiaryBook();
+  if (appPageId === "page-app-closet") renderClosetPage();
 }
 
 // 关闭 app 页面，回到桌面
@@ -747,6 +758,202 @@ function findAdultItem(itemName) {
   return found;
 }
 
+// ===== 衣装货架 / 衣帽间 =====
+const CLOSET_SLOT_LABELS = {
+  hair: "发型", top: "上衣", bottom: "下装", dress: "裙子", shoes: "鞋子",
+  accessory: "首饰", hat: "帽子", bag: "包"
+};
+const DEFAULT_CLOSET_ITEMS = [
+  { id: "closet-default-1", name: "雾蓝针织开衫", emoji: "🧶", price: 36, slot: "top", visual: "cardigan", color: "#9fb3bd", accent: "#eef2f0", style: "通勤、温柔、下雨天", note: "想看你穿得软一点" },
+  { id: "closet-default-2", name: "奶油白男友衬衫", emoji: "👔", price: 42, slot: "top", visual: "boyfriend-shirt", color: "#f4eadc", accent: "#d6bfa5", style: "男友衬衫、居家、清晨", note: "像偷穿了我的衬衫" },
+  { id: "closet-default-3", name: "灰粉短卫衣", emoji: "🧥", price: 39, slot: "top", visual: "hoodie", color: "#caa7aa", accent: "#eee2df", style: "休闲、撒娇、周末", note: "很适合懒懒地窝着" },
+  { id: "closet-default-4", name: "黑色百褶短裙", emoji: "🖤", price: 45, slot: "bottom", visual: "pleated-skirt", color: "#2f2d31", accent: "#59545c", style: "短裙、学院、显腿长", note: "有一点乖，也有一点坏" },
+  { id: "closet-default-5", name: "浅卡其短裤", emoji: "🩳", price: 32, slot: "bottom", visual: "shorts", color: "#c7ad8e", accent: "#8f765a", style: "短裤、出门、轻快", note: "像要背包出门晒太阳" },
+  { id: "closet-default-6", name: "月白吊带长裙", emoji: "🤍", price: 68, slot: "dress", visual: "slip-dress", color: "#f4ead8", accent: "#d8bfa3", style: "长裙、温柔、约会", note: "很安静，但我会多看两眼" },
+  { id: "closet-default-7", name: "酒红丝绒短裙", emoji: "🍷", price: 62, slot: "dress", visual: "mini-dress", color: "#8e3f4a", accent: "#e8c3bd", style: "短裙、晚霞、亲密", note: "像傍晚的秘密" },
+  { id: "closet-default-8", name: "雾灰玛丽珍鞋", emoji: "👞", price: 38, slot: "shoes", visual: "mary-jane", color: "#8b8584", accent: "#dad1ca", style: "鞋子、日常、乖巧", note: "走路会很轻" },
+  { id: "closet-default-9", name: "黑色乐福鞋", emoji: "🥿", price: 40, slot: "shoes", visual: "loafers", color: "#343033", accent: "#6f686b", style: "通勤、书包、利落", note: "配圆框眼镜很好看" },
+  { id: "closet-default-10", name: "珍珠细项链", emoji: "📿", price: 28, slot: "accessory", visual: "pearl-necklace", color: "#f6efe3", accent: "#d6bfa5", style: "首饰、细节、温柔", note: "小小一圈亮光" },
+  { id: "closet-default-11", name: "贝雷帽", emoji: "🧢", price: 34, slot: "hat", visual: "beret", color: "#6f6870", accent: "#a99da3", style: "帽子、秋天、文艺", note: "像会突然去看展" },
+  { id: "closet-default-12", name: "通勤帆布包", emoji: "👜", price: 48, slot: "bag", visual: "tote", color: "#d7c1a2", accent: "#8f765a", style: "包、通勤、书本", note: "可以装下今天的小情绪" }
+];
+
+function inferClosetVisual(item) {
+  const text = `${item.name || ""} ${item.style || ""}`;
+  if (item.slot === "hat") return "beret";
+  if (item.slot === "bag") return "tote";
+  if (item.slot === "accessory") return "pearl-necklace";
+  if (item.slot === "shoes") return text.includes("乐福") ? "loafers" : "mary-jane";
+  if (item.slot === "dress") return text.includes("短") || text.includes("酒红") ? "mini-dress" : "slip-dress";
+  if (item.slot === "bottom") return text.includes("裤") ? "shorts" : "pleated-skirt";
+  if (text.includes("衬衫")) return "boyfriend-shirt";
+  if (text.includes("卫衣")) return "hoodie";
+  return "cardigan";
+}
+
+function normalizeClosetItem(item) {
+  const fromDefault = DEFAULT_CLOSET_ITEMS.find(d => d.id === item.id || d.name === item.name) || {};
+  return {
+    ...fromDefault,
+    ...item,
+    visual: item.visual || fromDefault.visual || inferClosetVisual(item),
+    color: item.color || fromDefault.color || "#c8b7ad",
+    accent: item.accent || fromDefault.accent || "#f4eadc"
+  };
+}
+
+function normalizeClosetList(items) {
+  return (items || []).map(normalizeClosetItem);
+}
+
+function getClosetShopItems() {
+  const items = loadJSON(LS.closetShopItems, null);
+  if (items === null) {
+    saveJSON(LS.closetShopItems, DEFAULT_CLOSET_ITEMS);
+    return DEFAULT_CLOSET_ITEMS;
+  }
+  const normalized = normalizeClosetList(items);
+  if (JSON.stringify(normalized) !== JSON.stringify(items)) saveJSON(LS.closetShopItems, normalized);
+  return normalized;
+}
+
+function setClosetShopItems(items) {
+  saveJSON(LS.closetShopItems, items);
+}
+
+function getClosetOwnedItems() {
+  const items = normalizeClosetList(loadJSON(LS.closetOwnedItems, []));
+  return items;
+}
+
+function setClosetOwnedItems(items) {
+  saveJSON(LS.closetOwnedItems, items);
+}
+
+function getClosetOutfit() {
+  return loadJSON(LS.closetOutfit, {});
+}
+
+function setClosetOutfit(outfit) {
+  saveJSON(LS.closetOutfit, outfit);
+}
+
+function addClosetItem(item) {
+  const items = getClosetShopItems();
+  items.push({
+    id: uid(), name: item.name, emoji: item.emoji || "👗", price: item.price,
+    slot: item.slot || "top", color: item.color || "#c8b7ad",
+    accent: item.accent || "#f4eadc", visual: item.visual || inferClosetVisual(item),
+    style: item.style || "", note: item.note || "", addedAt: Date.now()
+  });
+  setClosetShopItems(items);
+}
+
+function findClosetShopItem(itemName) {
+  const items = getClosetShopItems();
+  let found = items.find(i => i.name === itemName);
+  if (!found) found = items.find(i => i.name.includes(itemName) || itemName.includes(i.name));
+  return found;
+}
+
+function buyClosetItem(itemId, boughtBy = "user", threadId = getActiveThreadId()) {
+  const shop = getClosetShopItems();
+  const item = shop.find(i => i.id === itemId);
+  if (!item) return null;
+  setClosetShopItems(shop.filter(i => i.id !== itemId));
+  const owned = getClosetOwnedItems();
+  const ownedItem = { ...item, ownedId: uid(), boughtBy, boughtAt: Date.now(), threadId };
+  owned.push(ownedItem);
+  setClosetOwnedItems(owned);
+  return ownedItem;
+}
+
+function damageClosetItem(ownedId) {
+  const owned = getClosetOwnedItems();
+  const item = owned.find(i => i.ownedId === ownedId);
+  if (!item) return false;
+  setClosetOwnedItems(owned.filter(i => i.ownedId !== ownedId));
+  const outfit = getClosetOutfit();
+  Object.keys(outfit).forEach(slot => { if (outfit[slot] === ownedId) delete outfit[slot]; });
+  setClosetOutfit(outfit);
+  const { ownedId: _ownedId, boughtAt: _boughtAt, boughtBy: _boughtBy, threadId: _threadId, ...shopItem } = item;
+  setClosetShopItems([...getClosetShopItems(), { ...shopItem, returnedAt: Date.now() }]);
+  return true;
+}
+
+function equipClosetItem(ownedId) {
+  const item = getClosetOwnedItems().find(i => i.ownedId === ownedId);
+  if (!item) return false;
+  const outfit = getClosetOutfit();
+  if (item.slot === "dress") {
+    delete outfit.top;
+    delete outfit.bottom;
+  } else if (item.slot === "top" || item.slot === "bottom") {
+    delete outfit.dress;
+  }
+  outfit[item.slot] = ownedId;
+  setClosetOutfit(outfit);
+  return true;
+}
+
+function unequipClosetSlot(slot) {
+  const outfit = getClosetOutfit();
+  delete outfit[slot];
+  setClosetOutfit(outfit);
+}
+
+function getEquippedClosetItems() {
+  const owned = getClosetOwnedItems();
+  const outfit = getClosetOutfit();
+  return Object.entries(outfit)
+    .map(([slot, ownedId]) => ({ slot, item: owned.find(i => i.ownedId === ownedId) }))
+    .filter(x => x.item);
+}
+
+function buildClosetPromptLine() {
+  const owned = getClosetOwnedItems();
+  const shop = getClosetShopItems();
+  const equipped = getEquippedClosetItems().map(x => x.item.name);
+  const ownedNames = owned.slice(-12).map(i => `${i.name}/${CLOSET_SLOT_LABELS[i.slot] || i.slot}`);
+  const shopNames = shop.slice(0, 12).map(i => `${i.name}¥${i.price}`);
+  if (!ownedNames.length && !shopNames.length) return "";
+  return `Wardrobe worn: ${equipped.length ? equipped.join("、") : "none"}; owned: ${ownedNames.join("、") || "none"}; clothing shelf: ${shopNames.join("、") || "none"}`;
+}
+
+// ===== 折角日期（轻量纪念日，不做完整日历）=====
+function getFoldedDates() {
+  return loadJSON(LS.foldedDates, []);
+}
+
+function setFoldedDates(items) {
+  saveJSON(LS.foldedDates, items);
+}
+
+function addFoldedDate(date, name, note) {
+  const items = getFoldedDates();
+  items.push({ id: uid(), date, name, note: note || "", remindDays: 3, addedAt: Date.now() });
+  setFoldedDates(items.sort((a, b) => a.date.localeCompare(b.date)));
+}
+
+function removeFoldedDate(id) {
+  setFoldedDates(getFoldedDates().filter(item => item.id !== id));
+}
+
+function daysUntilDate(dateStr) {
+  const today = new Date(formatLocalDate() + "T00:00:00").getTime();
+  const target = new Date(dateStr + "T00:00:00").getTime();
+  return Math.round((target - today) / 86400000);
+}
+
+function buildFoldedDatesPromptLine() {
+  const upcoming = getFoldedDates()
+    .map(item => ({ ...item, days: daysUntilDate(item.date) }))
+    .filter(item => item.days >= 0 && item.days <= (item.remindDays ?? 3))
+    .slice(0, 4);
+  if (!upcoming.length) return "";
+  return `Folded dates nearby: ${upcoming.map(item => `${item.name} ${item.days === 0 ? "today" : `in ${item.days} day(s)`}${item.note ? ` (${item.note})` : ""}`).join("; ")}. Mention naturally only if it feels warm, not as a calendar alert.`;
+}
+
 // ===== 床头柜（每个对话独立）=====
 // 现在货架/成人用品区的每一次购买，不管是不是消耗品，都会摆进床头柜；
 // 结构：{ [threadId]: [{ id, recordId, lsKey, itemId, name, emoji, price, consumable, expiresInDays, boughtBy, boughtAt }] }
@@ -898,6 +1105,7 @@ function renderShopPage() {
   const limitedItems = getLimitedItems();
   const nightstand = getNightstand(threadId);
   const allowanceCfg = getAllowanceConfig();
+  const closetItems = getClosetShopItems();
 
   // 钱包（Leith零花钱）
   $("#walletAmount").innerText = `¥${balance}`;
@@ -934,6 +1142,7 @@ function renderShopPage() {
     threadId, emptyEmoji: "🛍️", emptyText: "货架空空的",
     removeFn: removeShelfItem, notifyFn: null
   });
+  renderClosetShopSection(closetItems);
   renderPurchasableSection({
     gridId: "adultGrid", items: getAdultItems(), lsKey: LS.worldAdultBought,
     threadId, emptyEmoji: "🔞", emptyText: "还没有商品",
@@ -1016,6 +1225,44 @@ function renderShopPage() {
       });
     });
   }
+}
+
+function renderClosetShopSection(items) {
+  const grid = $("#closetShopGrid");
+  if (!grid) return;
+  if (!items.length) {
+    grid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">👗</div><p>衣装都已经进衣帽间了</p></div>`;
+    return;
+  }
+  grid.innerHTML = items.map(item => `
+    <div class="inventory-item">
+      <div class="closet-item-preview">${renderClosetVisual(item, "preview")}</div>
+      <div>${escapeHtml(item.name)}</div>
+      <div class="item-name">${CLOSET_SLOT_LABELS[item.slot] || item.slot} · ¥${item.price}</div>
+      <div class="item-name">${escapeHtml(item.style || "")}</div>
+      <div style="display:flex;gap:4px;margin-top:4px;">
+        <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-closet-buy="${item.id}">购买</button>
+        <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-closet-del="${item.id}">下架</button>
+      </div>
+    </div>
+  `).join("");
+  grid.querySelectorAll("[data-closet-buy]").forEach(btn => {
+    btn.onclick = () => {
+      const item = buyClosetItem(btn.dataset.closetBuy, "user");
+      if (!item) return;
+      showToast(`已放进衣帽间：${item.emoji} ${item.name}`);
+      renderShopPage();
+      if ($("#closetOwnedGrid")) renderClosetPage();
+    };
+  });
+  grid.querySelectorAll("[data-closet-del]").forEach(btn => {
+    btn.onclick = () => {
+      if (!confirm("确定下架这件衣装？")) return;
+      setClosetShopItems(getClosetShopItems().filter(i => i.id !== btn.dataset.closetDel));
+      renderShopPage();
+      showToast("已下架");
+    };
+  });
 }
 
 // 你买成人用品后，在对话框生成旁白并自动发给 Leith
@@ -1277,6 +1524,41 @@ function initAddShelfBtn() {
 }
 function initAddAdultBtn() {
   $("#addAdultBtn").addEventListener("click", () => openAddItemModal("adult"));
+}
+
+function initAddClosetBtn() {
+  const btn = $("#addClosetBtn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const name = prompt("衣装名字？比如：雾蓝针织开衫");
+    if (!name) return;
+    const slot = prompt("部位：top上衣 / bottom下装 / dress裙子 / shoes鞋子 / accessory首饰 / hat帽子 / bag包", "top");
+    if (!slot) return;
+    const price = parseInt(prompt("价格？", "36"), 10);
+    if (isNaN(price) || price <= 0) return showToast("价格要填数字");
+    const color = prompt("主色 HEX，比如 #9fb3bd", "#c8b7ad") || "#c8b7ad";
+    const style = prompt("风格标签，比如：通勤、温柔、下雨天", "") || "";
+    const note = prompt("Leith 的备注（可空）", "") || "";
+    const visual = prompt("版型（可空，会自动猜）：cardigan / boyfriend-shirt / hoodie / pleated-skirt / shorts / slip-dress / mini-dress / mary-jane / loafers / pearl-necklace / beret / tote", "") || "";
+    addClosetItem({ name: name.trim(), price, slot: slot.trim(), color: color.trim(), style: style.trim(), note: note.trim(), visual: visual.trim() });
+    renderShopPage();
+    showToast("衣装已上架");
+  });
+}
+
+function initShopFolds() {
+  const shop = $("#page-app-shop");
+  if (!shop) return;
+  shop.querySelectorAll(".inventory-section").forEach((section, index) => {
+    const h3 = section.querySelector("h3");
+    if (!h3 || h3.dataset.foldBound === "1") return;
+    h3.dataset.foldBound = "1";
+    if (index > 1) section.classList.add("collapsed");
+    h3.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      section.classList.toggle("collapsed");
+    });
+  });
 }
 
 
@@ -3047,13 +3329,13 @@ function initHealthApp() {
 // 小世界状态（精简版：只报数据，不含规则）
 // 判断最近聊天内容是否跟"购物/礼物/床头柜"相关——命中才附加完整的世界规则说明和状态，
 // 覆盖两种情况：泛化的购物词汇，以及聊到了货架/成人用品区里具体某件商品的名字
-const SHOP_TOPIC_WORDS = ['买', '购', '花钱', '零花钱', '礼物', '送我', '送你', '送她', '床头柜', '钱包', '余额', '消耗', '用掉', '坏了', '损坏', '下架', '限定', '基金', 'buy', 'gift'];
+const SHOP_TOPIC_WORDS = ['买', '购', '花钱', '零花钱', '礼物', '送我', '送你', '送她', '床头柜', '钱包', '余额', '消耗', '用掉', '坏了', '损坏', '下架', '限定', '基金', '衣服', '裙子', '短裙', '短裤', '衬衫', '卫衣', '鞋', '帽子', '首饰', '衣帽间', '穿搭', 'buy', 'gift'];
 function isShopTopicRelevant(recentText) {
   if (!recentText) return false;
   if (SHOP_TOPIC_WORDS.some(w => recentText.includes(w))) return true;
   // 具体商品名命中也算相关（比如聊到"鲜花""奶茶"这类已经上架的商品名）
   try {
-    const allItemNames = [...getShelfItems(), ...getAdultItems(), ...getLimitedItems()].map(i => i.name).filter(Boolean);
+    const allItemNames = [...getShelfItems(), ...getAdultItems(), ...getLimitedItems(), ...getClosetShopItems(), ...getClosetOwnedItems()].map(i => i.name).filter(Boolean);
     return allItemNames.some(name => name.length >= 2 && recentText.includes(name));
   } catch (e) {
     return false;
@@ -3069,6 +3351,8 @@ function buildWorldPromptBlock() {
   const adultItems = getAdultItems();
   const shelfItems = getShelfItems();
   const nightstand = getNightstand(threadId);
+  const closetLine = buildClosetPromptLine();
+  const foldedLine = buildFoldedDatesPromptLine();
 
   const gifts = giftRecords.length ? giftRecords.map(g => `${g.emoji}${g.name}`).join("、") : "none";
   const limited = limitedItems.length ? limitedItems.map(i => `${i.name}¥${i.price}`).join("、") : "none";
@@ -3077,7 +3361,7 @@ function buildWorldPromptBlock() {
   const shelf = shelfItems.length ? shelfItems.map(i => `${i.name}¥${i.price}`).join("、") : "none";
   const ns = nightstand.length ? nightstand.map(i => `${i.emoji}${i.name}`).join("、") : "empty";
 
-  return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}  Nightstand: ${ns}\nGifted: ${gifts}\nLimited items: ${limited}\nAdult items available: ${adult}\nShelf items available: ${shelf}`;
+  return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}  Nightstand: ${ns}\nGifted: ${gifts}\nLimited items: ${limited}\nAdult items available: ${adult}\nShelf items available: ${shelf}${closetLine ? `\n${closetLine}` : ""}${foldedLine ? `\n${foldedLine}` : ""}`;
 }
 
 // 极简版世界状态：只报"零花钱余额 + 可买的商品名和价格"，不含床头柜/礼物记录这些细节，
@@ -3090,11 +3374,13 @@ function buildWorldPromptBlockMini() {
   const limitedItems = getLimitedItems();
   const adultItems = getAdultItems();
   const shelfItems = getShelfItems();
+  const closetLine = buildClosetPromptLine();
+  const foldedLine = buildFoldedDatesPromptLine();
 
-  const allNames = [...limitedItems, ...adultItems, ...shelfItems].map(i => i.name);
+  const allNames = [...limitedItems, ...adultItems, ...shelfItems, ...getClosetShopItems()].map(i => i.name);
 
-  if (!allNames.length && balance <= 0 && savings <= 0) return "";
-  return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}${allNames.length ? `  Items: ${allNames.join("、")}` : ""}`;
+  if (!allNames.length && balance <= 0 && savings <= 0 && !closetLine && !foldedLine) return "";
+  return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}${allNames.length ? `  Items: ${allNames.join("、")}` : ""}${closetLine ? `\n${closetLine}` : ""}${foldedLine ? `\n${foldedLine}` : ""}`;
 }
 
 // 解析 AI 回复里的 [BUY:...] [LGIFT:...] [ABUY:...] [SBUY:...] [USE:...] 标记
@@ -3104,6 +3390,7 @@ function parseAIActions(text) {
   const lgiftRegex = /\[LGIFT:([^\]]+)\]/g;
   const abuyRegex = /\[ABUY:([^\]]+)\]/g;
   const sbuyRegex = /\[SBUY:([^\]]+)\]/g;
+  const cbuyRegex = /\[CBUY:([^\]]+)\]/g;
   const useRegex = /\[USE:([^\]]+)\]/g;
 
   let match;
@@ -3118,6 +3405,9 @@ function parseAIActions(text) {
   }
   while ((match = sbuyRegex.exec(text)) !== null) {
     actions.push({ type: "sbuy", itemName: match[1].trim() });
+  }
+  while ((match = cbuyRegex.exec(text)) !== null) {
+    actions.push({ type: "cbuy", itemName: match[1].trim() });
   }
   while ((match = useRegex.exec(text)) !== null) {
     actions.push({ type: "use", itemName: match[1].trim() });
@@ -3186,6 +3476,22 @@ function handleAIActions(actions) {
       insertNarration(threadId, `🛍️ Leith买了 ${shelfItem.emoji} ${shelfItem.name}，花费¥${shelfItem.price}。零钱包：¥${balance2} → ¥${balance2 - shelfItem.price}`);
       showToast(`Leith 买了 ${shelfItem.emoji} ${shelfItem.name}（¥${shelfItem.price}）`);
       needRefresh = true;
+    } else if (action.type === "cbuy") {
+      const closetItem = findClosetShopItem(action.itemName);
+      if (!closetItem) {
+        showToast(`Leith 想买"${action.itemName}"但衣装货架没有`);
+        return;
+      }
+      const balance3 = getWallet(threadId);
+      if (balance3 < closetItem.price) {
+        showToast(`Leith 想买 ${closetItem.name} 但钱包余额不足`);
+        return;
+      }
+      setWallet(threadId, balance3 - closetItem.price);
+      const owned = buyClosetItem(closetItem.id, "leith", threadId);
+      insertNarration(threadId, `👗 Leith买了衣装 ${owned.emoji || "👗"} ${owned.name}，放进了衣帽间。零钱包：¥${balance3} → ¥${balance3 - closetItem.price}`);
+      showToast(`Leith 买了 ${owned.emoji || "👗"} ${owned.name}（¥${closetItem.price}）`);
+      needRefresh = true;
     } else if (action.type === "use") {
       // AI 在对话里判断某件消耗品"用掉了"，自动消耗床头柜里最早的一份（先买的先用）
       let item = findShelfItem(action.itemName);
@@ -3206,6 +3512,7 @@ function handleAIActions(actions) {
     }
   });
   if (needRefresh && document.getElementById("page-app-shop") && document.getElementById("page-app-shop").classList.contains("active")) renderShopPage();
+  if (needRefresh && document.getElementById("page-app-closet") && document.getElementById("page-app-closet").classList.contains("active")) renderClosetPage();
 }
 
 // Leith 送礼提示弹窗
@@ -5216,6 +5523,155 @@ function initDiaryBookControls() {
   };
 }
 
+function closetColor(value, fallback = "#c8b7ad") {
+  const text = String(value || "").trim();
+  return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(text) ? text : fallback;
+}
+
+function renderClosetVisual(item, mode = "doll") {
+  if (!item) return "";
+  const c = closetColor(item.color);
+  const a = closetColor(item.accent, "#f4eadc");
+  const stroke = "rgba(55,43,42,.24)";
+  const visual = item.visual || inferClosetVisual(item);
+  const doll = {
+    "cardigan": `<path d="M49 92h42l9 58H40z" fill="${a}" stroke="${stroke}"/><path d="M47 94c-13 13-17 38-12 61" fill="none" stroke="${c}" stroke-width="13" stroke-linecap="round"/><path d="M93 94c13 13 17 38 12 61" fill="none" stroke="${c}" stroke-width="13" stroke-linecap="round"/><path d="M55 92l15 57 15-57" fill="${c}" opacity=".86"/><path d="M70 98v47" stroke="rgba(255,255,255,.45)" stroke-width="2"/><circle cx="70" cy="117" r="1.6" fill="rgba(70,55,52,.38)"/><circle cx="70" cy="130" r="1.6" fill="rgba(70,55,52,.38)"/>`,
+    "boyfriend-shirt": `<path d="M47 91h46l9 60H38z" fill="${c}" stroke="${stroke}"/><path d="M57 91l13 15 13-15" fill="${a}" stroke="${stroke}"/><path d="M70 104v45" stroke="${a}" stroke-width="2.4"/><path d="M42 100c-11 15-14 35-9 57M98 100c11 15 14 35 9 57" fill="none" stroke="${c}" stroke-width="12" stroke-linecap="round"/><path d="M43 151c14 6 39 7 55 0" fill="none" stroke="${stroke}" stroke-width="1.4"/>`,
+    "hoodie": `<path d="M48 96c5-13 39-13 44 0l9 56H39z" fill="${c}" stroke="${stroke}"/><path d="M56 96c4-9 24-9 28 0 0 9-28 9-28 0z" fill="${a}" opacity=".55"/><path d="M43 103c-13 15-14 35-8 54M97 103c13 15 14 35 8 54" fill="none" stroke="${c}" stroke-width="14" stroke-linecap="round"/><path d="M59 122h22" stroke="${a}" stroke-width="2" stroke-linecap="round"/><path d="M61 103l-5 14M79 103l5 14" stroke="${a}" stroke-width="1.8" stroke-linecap="round"/>`,
+    "pleated-skirt": `<path d="M43 145h54l13 44c-22 8-56 8-80 0z" fill="${c}" stroke="${stroke}"/><path d="M53 149l-8 39M65 148l-3 43M77 148l4 43M89 149l9 39" stroke="${a}" stroke-opacity=".42" stroke-width="1.5"/><path d="M43 145h54" stroke="${a}" stroke-width="4"/>`,
+    "shorts": `<path d="M46 145h48l5 39H75l-5-24-5 24H41z" fill="${c}" stroke="${stroke}"/><path d="M70 147v16" stroke="${a}" stroke-opacity=".5" stroke-width="2"/><path d="M51 153h12M77 153h12" stroke="${a}" stroke-opacity=".45" stroke-width="1.5"/>`,
+    "slip-dress": `<path d="M55 92h30l8 50 22 66c-27 9-63 9-90 0l22-66z" fill="${c}" stroke="${stroke}"/><path d="M55 92l15 18 15-18" fill="${a}" opacity=".42"/><path d="M54 93L43 78M86 93l11-15" stroke="${c}" stroke-width="2.2" stroke-linecap="round"/><path d="M43 150c18 9 37 9 54 0" fill="none" stroke="${a}" stroke-opacity=".45" stroke-width="1.6"/>`,
+    "mini-dress": `<path d="M48 93h44l8 49 14 43c-26 11-62 11-88 0l14-43z" fill="${c}" stroke="${stroke}"/><path d="M50 95c11 10 29 10 40 0" fill="none" stroke="${a}" stroke-width="3"/><path d="M40 106c-9 13-11 31-6 48M100 106c9 13 11 31 6 48" fill="none" stroke="${c}" stroke-width="10" stroke-linecap="round"/><path d="M43 144h54" stroke="${a}" stroke-opacity=".36" stroke-width="4"/>`,
+    "mary-jane": `<path d="M40 205h30c2 5-1 10-8 10H39c-3-3-3-7 1-10zM70 205h30c4 3 4 7 1 10H78c-7 0-10-5-8-10z" fill="${c}" stroke="${stroke}"/><path d="M48 205c4 4 10 4 15 0M78 205c4 4 10 4 15 0" fill="none" stroke="${a}" stroke-width="2"/>`,
+    "loafers": `<path d="M39 204h31c4 4 2 11-6 11H39c-5-4-5-8 0-11zM70 204h31c5 3 5 7 0 11H76c-8 0-10-7-6-11z" fill="${c}" stroke="${stroke}"/><path d="M48 207h14M79 207h14" stroke="${a}" stroke-opacity=".45" stroke-width="2"/>`,
+    "pearl-necklace": `<path d="M55 89c8 9 22 9 30 0" fill="none" stroke="${a}" stroke-width="2"/><circle cx="70" cy="96" r="4.5" fill="${c}" stroke="${stroke}"/><circle cx="61" cy="92" r="2.2" fill="${c}"/><circle cx="79" cy="92" r="2.2" fill="${c}"/>`,
+    "beret": `<path d="M36 35c17-18 51-20 70 0 4 10-13 18-37 18-23 0-39-7-33-18z" fill="${c}" stroke="${stroke}"/><path d="M77 24c7-6 15-8 23-5" fill="none" stroke="${a}" stroke-width="3" stroke-linecap="round"/>`,
+    "tote": `<path d="M104 126c16 8 20 38 10 54" fill="none" stroke="${a}" stroke-width="9" stroke-linecap="round"/><rect x="101" y="151" width="27" height="38" rx="8" fill="${c}" stroke="${stroke}"/><path d="M108 162h13" stroke="${a}" stroke-opacity=".55" stroke-width="2"/>`
+  };
+  if (mode === "doll") return doll[visual] || "";
+  const preview = {
+    "cardigan": `<path d="M22 18h36l8 48H14z" fill="${a}" stroke="${stroke}"/><path d="M22 21c-10 8-13 24-11 39M58 21c10 8 13 24 11 39" fill="none" stroke="${c}" stroke-width="9" stroke-linecap="round"/><path d="M28 18l12 46 12-46" fill="${c}"/><path d="M40 24v36" stroke="rgba(255,255,255,.5)" stroke-width="2"/>`,
+    "boyfriend-shirt": `<path d="M18 17h44l9 50H9z" fill="${c}" stroke="${stroke}"/><path d="M28 17l12 13 12-13" fill="${a}"/><path d="M40 30v35" stroke="${a}" stroke-width="2"/><path d="M17 25c-8 10-10 22-7 37M63 25c8 10 10 22 7 37" fill="none" stroke="${c}" stroke-width="8" stroke-linecap="round"/>`,
+    "hoodie": `<path d="M18 25c3-16 41-16 44 0l8 42H10z" fill="${c}" stroke="${stroke}"/><path d="M27 25c4-10 22-10 26 0 0 8-26 8-26 0z" fill="${a}" opacity=".55"/><path d="M18 29c-9 10-10 22-7 34M62 29c9 10 10 22 7 34" fill="none" stroke="${c}" stroke-width="9" stroke-linecap="round"/><path d="M30 44h20" stroke="${a}" stroke-width="2"/>`,
+    "pleated-skirt": `<path d="M15 21h50l11 43c-22 9-51 9-72 0z" fill="${c}" stroke="${stroke}"/><path d="M26 24l-7 39M38 23l-2 42M50 23l4 42M62 24l8 39" stroke="${a}" stroke-opacity=".5" stroke-width="1.6"/><path d="M15 21h50" stroke="${a}" stroke-width="4"/>`,
+    "shorts": `<path d="M14 22h52l5 39H47l-7-21-7 21H9z" fill="${c}" stroke="${stroke}"/><path d="M40 24v16" stroke="${a}" stroke-opacity=".5" stroke-width="2"/><path d="M19 31h12M49 31h12" stroke="${a}" stroke-opacity=".45" stroke-width="1.5"/>`,
+    "slip-dress": `<path d="M27 15h26l8 30 14 28c-22 8-49 8-70 0l14-28z" fill="${c}" stroke="${stroke}"/><path d="M27 15l13 14 13-14" fill="${a}" opacity=".45"/><path d="M27 15L18 5M53 15l9-10" stroke="${c}" stroke-width="2" stroke-linecap="round"/>`,
+    "mini-dress": `<path d="M18 16h44l6 29 12 24c-24 9-56 9-80 0l12-24z" fill="${c}" stroke="${stroke}"/><path d="M20 18c11 9 29 9 40 0" fill="none" stroke="${a}" stroke-width="3"/><path d="M14 25c-7 9-8 21-5 33M66 25c7 9 8 21 5 33" fill="none" stroke="${c}" stroke-width="8" stroke-linecap="round"/>`,
+    "mary-jane": `<path d="M7 36h29c3 7-1 14-10 14H8c-5-4-5-10-1-14zM44 36h29c4 4 5 10 0 14H55c-9 0-13-7-11-14z" fill="${c}" stroke="${stroke}"/><path d="M15 36c4 4 10 4 15 0M52 36c4 4 10 4 15 0" fill="none" stroke="${a}" stroke-width="2"/>`,
+    "loafers": `<path d="M7 35h30c4 6 1 14-9 14H7c-5-4-5-10 0-14zM43 35h30c5 4 5 10 0 14H52c-10 0-13-8-9-14z" fill="${c}" stroke="${stroke}"/><path d="M15 39h16M51 39h16" stroke="${a}" stroke-opacity=".45" stroke-width="2"/>`,
+    "pearl-necklace": `<path d="M20 24c10 14 30 14 40 0" fill="none" stroke="${a}" stroke-width="3"/><circle cx="40" cy="41" r="6" fill="${c}" stroke="${stroke}"/><circle cx="29" cy="33" r="3" fill="${c}"/><circle cx="51" cy="33" r="3" fill="${c}"/>`,
+    "beret": `<path d="M12 35c14-24 42-26 58 0 4 13-10 22-30 22s-34-9-28-22z" fill="${c}" stroke="${stroke}"/><path d="M45 17c8-6 16-7 23-3" fill="none" stroke="${a}" stroke-width="3" stroke-linecap="round"/>`,
+    "tote": `<path d="M28 20c0-10 24-10 24 0" fill="none" stroke="${a}" stroke-width="6" stroke-linecap="round"/><rect x="20" y="25" width="40" height="42" rx="9" fill="${c}" stroke="${stroke}"/><path d="M29 40h22" stroke="${a}" stroke-opacity=".55" stroke-width="3"/>`
+  };
+  return `<svg class="closet-item-svg" viewBox="0 0 80 80" aria-hidden="true">${preview[visual] || preview.cardigan}</svg>`;
+}
+
+function renderPaperDollSvg() {
+  const equipped = Object.fromEntries(getEquippedClosetItems().map(x => [x.slot, x.item]));
+  const top = equipped.top;
+  const bottom = equipped.bottom;
+  const dress = equipped.dress;
+  const shoes = equipped.shoes;
+  const accessory = equipped.accessory;
+  const hat = equipped.hat;
+  const bag = equipped.bag;
+  const defaultTop = { name: "奶油白居家衫", color: "#f7eee0", accent: "#d9c9b6", visual: "boyfriend-shirt" };
+  const defaultBottom = { name: "柔雾短裤", color: "#d8cfc2", accent: "#f4eadc", visual: "shorts" };
+  const defaultShoes = { name: "雾灰居家鞋", color: "#9a9290", accent: "#dcd4cc", visual: "mary-jane" };
+  return `<svg class="paper-doll" viewBox="0 0 140 260" role="img" aria-label="Susie 的纸娃娃">
+    <defs><linearGradient id="skinDoll" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#ffe5c7"/><stop offset="1" stop-color="#f3c9ad"/></linearGradient></defs>
+    <ellipse cx="70" cy="242" rx="36" ry="8" fill="rgba(0,0,0,.14)"/>
+    ${bag ? renderClosetVisual(bag, "doll") : ""}
+    <path d="M45 82c-10 16-13 47-6 69" fill="none" stroke="#2d2728" stroke-width="18" stroke-linecap="round"/>
+    <path d="M95 82c10 16 13 47 6 69" fill="none" stroke="#2d2728" stroke-width="18" stroke-linecap="round"/>
+    <path d="M46 80c-12 23-12 61 5 88M94 80c12 23 12 61-5 88" fill="none" stroke="#3a3233" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="70" cy="60" r="35" fill="url(#skinDoll)"/>
+    <path d="M34 62c3-29 19-48 39-48 23 0 39 18 36 51-8-15-22-26-40-27-15 0-27 9-35 24z" fill="#2b2526"/>
+    <path d="M43 43c19-24 54-18 65 11-18-11-41-14-65-11z" fill="#342d2d"/>
+    <path d="M49 55c-8 2-13 10-15 21M91 55c8 2 13 10 15 21" fill="none" stroke="#282324" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="56" cy="62" r="9" fill="none" stroke="#2a292b" stroke-width="2.5"/><circle cx="84" cy="62" r="9" fill="none" stroke="#2a292b" stroke-width="2.5"/><path d="M65 62h10" stroke="#2a292b" stroke-width="2"/>
+    <path d="M58 79c7 4 17 4 24 0" fill="none" stroke="#c98a86" stroke-width="2" stroke-linecap="round"/>
+    <path d="M47 100c-18 20-18 47-10 64M93 100c18 20 18 47 10 64" fill="none" stroke="url(#skinDoll)" stroke-width="9" stroke-linecap="round"/>
+    ${dress ? renderClosetVisual(dress, "doll") : `${renderClosetVisual(top || defaultTop, "doll")}${renderClosetVisual(bottom || defaultBottom, "doll")}`}
+    ${renderClosetVisual(shoes || defaultShoes, "doll")}
+    ${accessory ? renderClosetVisual(accessory, "doll") : ""}
+    ${hat ? renderClosetVisual(hat, "doll") : ""}
+  </svg>`;
+}
+
+function renderClosetPage() {
+  const mount = $("#paperDollMount");
+  if (mount) mount.innerHTML = renderPaperDollSvg();
+  const equipped = getEquippedClosetItems();
+  const outfitText = $("#closetOutfitText");
+  if (outfitText) outfitText.innerText = equipped.length ? equipped.map(x => `${CLOSET_SLOT_LABELS[x.slot] || x.slot}：${x.item.name}`).join("\n") : "还没有换衣服";
+  const grid = $("#closetOwnedGrid");
+  if (grid) {
+    const owned = getClosetOwnedItems();
+    if (!owned.length) {
+      grid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">👗</div><p>衣帽间还是空的，去购物里买几件吧</p></div>`;
+    } else {
+      const outfit = getClosetOutfit();
+      grid.innerHTML = owned.map(item => {
+        const isEquipped = outfit[item.slot] === item.ownedId;
+        return `<div class="closet-card">
+          <div class="closet-card-preview">${renderClosetVisual(item, "preview")}</div>
+          <div class="closet-card-top"><span class="closet-swatch" style="background:${escapeHtml(item.color || "#c8b7ad")}"></span><div class="closet-card-name">${item.emoji || "👗"} ${escapeHtml(item.name)}</div></div>
+          <div class="closet-card-meta">${CLOSET_SLOT_LABELS[item.slot] || item.slot}${item.style ? ` · ${escapeHtml(item.style)}` : ""}${item.note ? `<br>${escapeHtml(item.note)}` : ""}</div>
+          <div class="closet-card-actions"><button class="btn ${isEquipped ? "btn-ghost" : "btn-primary"}" data-equip="${item.ownedId}">${isEquipped ? "已穿" : "穿上"}</button><button class="btn btn-danger" data-damage="${item.ownedId}">损坏</button></div>
+        </div>`;
+      }).join("");
+      grid.querySelectorAll("[data-equip]").forEach(btn => {
+        btn.onclick = () => { equipClosetItem(btn.dataset.equip); renderClosetPage(); showToast("已换上"); };
+      });
+      grid.querySelectorAll("[data-damage]").forEach(btn => {
+        btn.onclick = () => {
+          if (!confirm("确定这件衣装损坏了吗？会回到购物里的衣装货架。")) return;
+          damageClosetItem(btn.dataset.damage);
+          renderClosetPage();
+          showToast("已放回衣装货架");
+        };
+      });
+    }
+  }
+  renderFoldedDates();
+}
+
+function renderFoldedDates() {
+  const list = $("#foldedDateList");
+  if (!list) return;
+  const items = getFoldedDates();
+  if (!items.length) {
+    list.innerHTML = `<div class="world-empty" style="padding:24px 10px;"><div class="emoji">⌁</div><p>还没有折角日期</p></div>`;
+    return;
+  }
+  list.innerHTML = items.map(item => {
+    const days = daysUntilDate(item.date);
+    const dayText = days === 0 ? "今天" : days > 0 ? `${days}天后` : `${Math.abs(days)}天前`;
+    return `<div class="folded-date-item">
+      <div><div class="folded-date-name">${escapeHtml(item.name)}</div><div class="folded-date-meta">${escapeHtml(item.date)} · ${dayText}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</div></div>
+      <button class="msg-delete-btn" data-fold-del="${item.id}" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg></button>
+    </div>`;
+  }).join("");
+  list.querySelectorAll("[data-fold-del]").forEach(btn => {
+    btn.onclick = () => { removeFoldedDate(btn.dataset.foldDel); renderFoldedDates(); showToast("已删除"); };
+  });
+}
+
+function initClosetApp() {
+  const btn = $("#addFoldedDateBtn");
+  if (btn) btn.onclick = () => {
+    const date = prompt("日期？格式 YYYY-MM-DD", formatLocalDate());
+    if (!date) return;
+    const name = prompt("这一天叫什么？比如：第一次共读");
+    if (!name) return;
+    const note = prompt("Leith 的一句备注（可空）", "") || "";
+    addFoldedDate(date.trim(), name.trim(), note.trim());
+    renderClosetPage();
+    showToast("已折角");
+  };
+}
+
 function formatMemoryTime(ts) {
   const d = new Date(ts);
   const now = new Date();
@@ -6398,6 +6854,8 @@ initAddSavingsBtn();
 initAddLimitedBtn();
 initAddShelfBtn();
 initAddAdultBtn();
+initAddClosetBtn();
+initShopFolds();
 initAddItemModal();
 initConfig();
 initTheater();
@@ -6407,6 +6865,7 @@ initWidget();
 initReading();
 initAttachments();
 initHealthApp();
+initClosetApp();
 initHealthCheck();
 tryOpenSharedBookFromUrl();
 tryOpenSharedLinkFromUrl();

@@ -810,7 +810,11 @@
   .wallet-actions{display:flex;gap:6px;}
 
   .inventory-section{margin-top:4px;}
-  .inventory-section h3{font-size:13px;color:var(--paper-dim);margin:0 0 10px;font-weight:500;}
+  .inventory-section h3{font-size:13px;color:var(--paper-dim);margin:0 0 10px;font-weight:500;cursor:pointer;user-select:none;min-height:22px;}
+  .inventory-section h3::after{content:"⌄";float:right;margin-right:4px;color:var(--paper-dim);transition:transform .18s ease;}
+  .inventory-section h3 button{float:right;margin-right:22px;pointer-events:auto;}
+  .inventory-section.collapsed h3::after{transform:rotate(-90deg);}
+  .inventory-section.collapsed p,.inventory-section.collapsed .inventory-grid{display:none;}
   .inventory-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
   .inventory-item{
     background:var(--bg-input);border:1px solid var(--line);
@@ -821,6 +825,12 @@
   .inventory-item:hover{border-color:var(--accent-dim);}
   .inventory-item .item-emoji{font-size:26px;margin-bottom:4px;}
   .inventory-item .item-name{font-size:11px;color:var(--paper-dim);}
+  .closet-item-preview,.closet-card-preview{
+    height:72px;margin:0 0 7px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 50% 20%,rgba(255,255,255,.18),rgba(255,255,255,.04) 58%,transparent 72%);
+  }
+  .closet-item-svg{width:74px;height:74px;display:block;filter:drop-shadow(0 4px 8px rgba(0,0,0,.12));}
 
   .world-empty{margin:auto;text-align:center;color:var(--paper-dim);padding:40px 20px;}
   .world-empty .emoji{font-size:42px;margin-bottom:12px;opacity:.8;}
@@ -1104,6 +1114,38 @@
   .diarybook-controls{display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .diarybook-controls .btn{min-width:0;}
   .diarybook-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+
+  /* ===== 衣帽间 ===== */
+  .closet-stage{
+    border:1px solid var(--line);border-radius:18px;padding:16px;
+    background:linear-gradient(150deg,var(--bg-elevated),var(--accent-glow));
+    display:grid;grid-template-columns:140px 1fr;gap:14px;align-items:center;
+  }
+  .paper-doll{width:140px;height:260px;margin:auto;display:block;filter:drop-shadow(0 10px 18px rgba(0,0,0,.14));}
+  .closet-status{font-size:12px;color:var(--paper-dim);line-height:1.8;}
+  .closet-status strong{display:block;color:var(--paper);font:600 16px var(--serif);margin-bottom:4px;}
+  .closet-section-title{font-size:12px;color:var(--paper-dim);margin:14px 0 8px;}
+  .closet-owned-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+  .closet-card{
+    border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--bg-input);
+    min-width:0;
+  }
+  .closet-card-preview{height:82px;background:linear-gradient(145deg,rgba(255,255,255,.08),rgba(255,255,255,.025));}
+  .closet-card-preview .closet-item-svg{width:80px;height:80px;}
+  .closet-card-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .closet-swatch{width:22px;height:22px;border-radius:7px;border:1px solid rgba(255,255,255,.28);flex-shrink:0;}
+  .closet-card-name{font-size:13px;color:var(--paper);line-height:1.35;}
+  .closet-card-meta{font-size:10px;color:var(--paper-dim);line-height:1.5;margin-bottom:8px;}
+  .closet-card-actions{display:flex;gap:5px;}
+  .closet-card-actions .btn{font-size:10px;padding:4px 7px;flex:1;}
+  .folded-date-list{display:flex;flex-direction:column;gap:8px;}
+  .folded-date-item{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--bg-input);display:flex;justify-content:space-between;gap:8px;align-items:center;}
+  .folded-date-name{font-size:13px;color:var(--paper);}
+  .folded-date-meta{font-size:10.5px;color:var(--paper-dim);margin-top:3px;}
+  @media (max-width:390px){
+    .closet-stage{grid-template-columns:1fr;}
+    .closet-owned-grid{grid-template-columns:1fr;}
+  }
 
   /* 添加记忆弹窗 */
   .memory-add-modal{
@@ -1652,11 +1694,11 @@
           </div>
           <div class="app-icon-label">日记本</div>
         </div>
-        <div class="app-icon" onclick="openApp('page-app-widget')">
-          <div class="app-icon-img" style="color:var(--accent-2);background:linear-gradient(150deg,rgba(224,184,124,.16),var(--bg-elevated) 75%);">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+        <div class="app-icon" onclick="openApp('page-app-closet')">
+          <div class="app-icon-img" style="color:var(--rose);background:linear-gradient(150deg,rgba(174,129,145,.14),var(--bg-elevated) 75%);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3l4 3 4-3 3 4-3 2v12H8V9L5 7l3-4z"/><path d="M10 6c.6.7 1.3 1 2 1s1.4-.3 2-1"/></svg>
           </div>
-          <div class="app-icon-label">小组件</div>
+          <div class="app-icon-label">衣帽间</div>
         </div>
         <div class="app-icon" onclick="openApp('page-app-reading')">
           <div class="app-icon-img" style="color:var(--paper-dim);background:linear-gradient(150deg,rgba(139,143,196,.12),var(--bg-elevated) 75%);">
@@ -1721,6 +1763,16 @@
           <div class="world-empty" style="grid-column:1/-1;">
             <div class="emoji">🛍️</div>
             <p>货架空空的</p>
+          </div>
+        </div>
+      </div>
+      <div class="inventory-section">
+        <h3>👗 衣装货架 <button class="btn btn-primary btn-sm" id="addClosetBtn" style="float:right;margin-top:-3px;">+ 上架</button></h3>
+        <p style="font-size:11px;color:var(--paper-dim);margin:0 0 10px;">Leith 可以买给你，买完会放进衣帽间；损坏后会回到这里。</p>
+        <div class="inventory-grid" id="closetShopGrid">
+          <div class="world-empty" style="grid-column:1/-1;">
+            <div class="emoji">👗</div>
+            <p>还没有衣装</p>
           </div>
         </div>
       </div>
@@ -1889,6 +1941,31 @@
       </div>
     </div>
   </div><!-- /app-diarybook -->
+
+  <!-- ===== App: 衣帽间 ===== -->
+  <div class="app-page" id="page-app-closet">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">👗 衣帽间</span>
+    </div>
+    <div class="app-body">
+      <div class="closet-stage">
+        <div id="paperDollMount"></div>
+        <div class="closet-status">
+          <strong>Susie 的今日穿搭</strong>
+          <div id="closetOutfitText">还没有换衣服</div>
+          <div class="helper-text" style="margin-top:8px;">Leith 能看到这里的穿搭和衣橱摘要；损坏的衣装会回到购物里的衣装货架。</div>
+        </div>
+      </div>
+      <div class="closet-section-title">已经在衣帽间</div>
+      <div class="closet-owned-grid" id="closetOwnedGrid"></div>
+      <div class="closet-section-title">折角日期</div>
+      <div class="folded-date-list" id="foldedDateList"></div>
+      <button class="btn btn-ghost btn-block" id="addFoldedDateBtn" style="margin-top:10px;">+ 记一个重要日子</button>
+    </div>
+  </div><!-- /app-closet -->
 
   <!-- ===== App: 小组件 ===== -->
   <div class="app-page" id="page-app-widget">
