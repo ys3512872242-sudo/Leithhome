@@ -3499,7 +3499,7 @@ function getDiaryModel() {
   return customModel || $("#modelSelect").value;
 }
 
-async function tryGenerateDiaryNowFor(dateStr) {
+async function tryGenerateDiaryNowFor(dateStr, options = {}) {
   if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return null;
   const provider = getActiveProvider();
   const apiKey = localStorage.getItem(LS.apiKey);
@@ -3518,12 +3518,12 @@ async function tryGenerateDiaryNowFor(dateStr) {
     callLLMForSummary({ provider, apiKey, model: writeModel, temp: 0.8, prompt });
 
   const pinnedHighlights = await getPinnedHighlightsForDate(dateStr);
-  const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr, pinnedHighlights);
+  const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr, pinnedHighlights, options);
 
   if (result && result.skipped) return false;
   if (result && result.dateStr) {
     setLastDiaryDate(result.dateStr);
-    return true;
+    return result.hasMore ? "partial" : true;
   }
   return null;
 }
@@ -5086,15 +5086,16 @@ async function rewriteDiaryLeaf(id, dateStr) {
   if (!confirm(`重新写 ${dateStr} 的日记？`)) return;
   showToast("正在重新写这天的日记...");
   clearDiaryFailureCooling(dateStr);
-  if (window.Memory.removeDiary) await window.Memory.removeDiary(id);
-  else {
-    const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
-    if (client) await client.from('diary_entries').delete().eq('id', parseInt(id, 10));
-  }
   if (getLastDiaryDate() === dateStr) localStorage.removeItem(DIARY_LAST_DATE_LS);
-  const ok = await runDayEndWithSplash(dateStr);
+  showDiarySplash();
+  let ok = null;
+  try {
+    ok = await tryGenerateDiaryNowFor(dateStr, { forceRewrite: true });
+  } finally {
+    hideDiarySplash();
+  }
   renderMemoryTree();
-  showToast(ok ? "日记已重新写好" : "这次没写成，稍后可再试");
+  showToast(ok === "partial" ? "日记已重写一部分，内容太长可再点一次继续" : ok ? "日记已重新写好" : "这次没写成，稍后可再试");
 }
 
 function formatMemoryTime(ts) {

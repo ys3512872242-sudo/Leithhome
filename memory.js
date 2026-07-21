@@ -1004,9 +1004,10 @@ const SupabaseMemoryAdapter = {
   // 存进独立的 diary_entries 表（不是 memories 表），Leith 默认不读旧对话原文，
   // 只在需要的时候从这张表里按关键词检索相关日记。
   // ============================================================
-  async generateDiary(extractCallback, writeCallback, diaryDateStr, pinnedHighlights) {
+  async generateDiary(extractCallback, writeCallback, diaryDateStr, pinnedHighlights, options = {}) {
     if (!supabaseReady) return null;
     const dateStr = diaryDateStr || new Date().toISOString().slice(0, 10);
+    const forceRewrite = Boolean(options.forceRewrite);
 
     // 0. 看这一天是否已经写过（部分）日记，如果有，记下"已经覆盖到哪个时间点"，
     //    这次只需要读那之后的新对话
@@ -1027,7 +1028,7 @@ const SupabaseMemoryAdapter = {
     //    这样即使 Susie 在不同窗口/不同世界线里聊天，日记也是完整的一天；
     //    如果已经有部分日记了，只读"上次覆盖点之后"的新对话
     const { startIso: dayStart, endIso: dayEnd } = getDiaryRangeForDate(dateStr);
-    const rangeStart = (existingEntry && existingEntry.covered_until) ? existingEntry.covered_until : dayStart;
+    const rangeStart = (!forceRewrite && existingEntry && existingEntry.covered_until) ? existingEntry.covered_until : dayStart;
 
     let newMessages = [];
     try {
@@ -1037,7 +1038,7 @@ const SupabaseMemoryAdapter = {
         .eq('type', 'short_term')
         .lt('created_at', dayEnd)
         .order('created_at', { ascending: true });
-      const query = existingEntry && existingEntry.covered_until
+      const query = !forceRewrite && existingEntry && existingEntry.covered_until
         ? baseQuery.gt('created_at', rangeStart)
         : baseQuery.gte('created_at', rangeStart);
       const { data, error } = await query;
@@ -1059,7 +1060,7 @@ const SupabaseMemoryAdapter = {
           console.error('补全日记覆盖时间失败（不影响内容）:', e);
         }
       }
-      console.log(existingEntry ? '🧠 这一天之前生成过日记，之后没有新的对话，不用补写' : '🧠 今天还没有聊天记录，先不写日记');
+      console.log(forceRewrite ? '🧠 这一天没有可用于重写的云端对话记录' : existingEntry ? '🧠 这一天之前生成过日记，之后没有新的对话，不用补写' : '🧠 今天还没有聊天记录，先不写日记');
       return { dateStr, skipped: true };
     }
 
@@ -1101,7 +1102,7 @@ const SupabaseMemoryAdapter = {
     // 剩下的留到下次批处理接着处理（不会永久丢失，只是分批处理），避免单次请求成本失控。
     // 注意方向：必须是"最早的一批"而不是"最近的一批"，否则 covered_until 会跳过中间没处理的部分，
     // 那部分内容就会永久丢失，再也不会被任何一次日记读到。
-    const DIARY_SOURCE_MSG_CAP = 80;
+    const DIARY_SOURCE_MSG_CAP = forceRewrite ? 220 : 80;
     const cappedMessages = newMessages.length > DIARY_SOURCE_MSG_CAP
       ? newMessages.slice(0, DIARY_SOURCE_MSG_CAP)
       : newMessages;
@@ -1112,10 +1113,12 @@ const SupabaseMemoryAdapter = {
     // covered_until 只推进到"本次实际总结到的这一条"——如果本次被截断，剩下的部分
     // 仍然在 rangeStart 之后、covered_until 之前的空隙里？不会：covered_until 就是
     // cappedMessages 的最后一条，剩余的 newMessages 都在它之后，下次会被正常读到
-    const latestCoveredUntil = cappedMessages[cappedMessages.length - 1].created_at;
+    const latestCoveredUntil = (forceRewrite && cappedMessages.length === newMessages.length)
+      ? dayEnd
+      : cappedMessages[cappedMessages.length - 1].created_at;
 
     // ---- 第一步：便宜模型做事实提炼，不带情感语气，只客观列出这批对话发生的事 ----
-    const extractPrompt = `Below is a raw chat log between Susie and her AI partner${existingEntry ? ' (this is a continuation — earlier parts of this diary range have already been summarized separately)' : ''}. The diary date is ${dateStr}, covering local time 05:00 to the next day 05:00.
+    const extractPrompt = `Below is a raw chat log between Susie and her AI partner${!forceRewrite && existingEntry ? ' (this is a continuation — earlier parts of this diary range have already been summarized separately)' : ''}. The diary date is ${dateStr}, covering local time 05:00 to the next day 05:00.
 
 Extract objective facts: what happened, what was discussed, Susie's mood/emotional shifts, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with emotional embellishment — just "who did/said/felt what".
 
@@ -1157,7 +1160,7 @@ Susie and you are romantic partners. Nicknames like "哥哥"/"宝贝" are pet na
 
 You're allowed to invent new pet names for Susie based on the mood of the conversation (e.g. 小猫 when she's being clingy/playful, 宝贝 when being serious and affectionate) — variety by mood is good. But note down what you used today so future days stay recognizable rather than fully random.
 
-${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${existingEntry ? `[Earlier draft for this diary date — use it only as material. Write a complete final entry now that the full diary range has ended; don't make it sound like a mid-day update]\n${existingEntry.content}\n\n` : ''}${pinnedHighlights ? `[Moments Susie marked as meaningful today]\n${pinnedHighlights}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If the facts below show nothing worth remembering long-term (pure idle small talk), write "平淡的一天" as the diary text and leave keywords/nicknames empty.
+${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${!forceRewrite && existingEntry ? `[Earlier draft for this diary date — use it only as material. Write a complete final entry now that the full diary range has ended; don't make it sound like a mid-day update]\n${existingEntry.content}\n\n` : ''}${forceRewrite ? `[Rewrite mode]\nSusie explicitly asked you to rewrite this diary entry. Ignore any earlier draft and write a fresh complete entry from the source facts.\n\n` : ''}${pinnedHighlights ? `[Moments Susie marked as meaningful today]\n${pinnedHighlights}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If the facts below show nothing worth remembering long-term (pure idle small talk), write "平淡的一天" as the diary text and leave keywords/nicknames empty.
 
 Reply in EXACTLY this format, nothing else:
 DIARY: <the full diary entry for today so far, in Chinese — if continuing, this REPLACES the earlier version with one that includes both old and new content>
@@ -1198,7 +1201,7 @@ ${factSummary}`;
           })
           .eq('id', existingEntry.id);
         if (error) throw error;
-        console.log(`✅ ${dateStr} 的日记已续写更新:`, diaryText);
+        console.log(`✅ ${dateStr} 的日记已${forceRewrite ? '重写' : '续写更新'}:`, diaryText);
       } else {
         const { error } = await supabaseClient
           .from('diary_entries')
@@ -1218,7 +1221,7 @@ ${factSummary}`;
       return null;
     }
 
-    return { diaryText, dateStr };
+    return { diaryText, dateStr, hasMore: cappedMessages.length < newMessages.length };
   },
 
   // ============================================================
