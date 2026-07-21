@@ -29,6 +29,7 @@ const LS = {
   // 共读小说
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
   readingLinks: "companion_reading_links_v1", // [{id, url, note, addedAt}]
+  diaryNotes: "companion_diary_notes_v1",
 };
 
 const DEFAULT_PROVIDERS = [
@@ -220,6 +221,7 @@ const CLOUD_SYNC_STATIC_KEYS = new Set([
   LS.worldNightstand,
   LS.readingBooks,
   LS.readingLinks,
+  LS.diaryNotes,
   'companion_theater_rooms_v1',
   'companion_health_records_v1'
 ]);
@@ -277,6 +279,7 @@ function refreshUiAfterCloudStateRestore() {
   if (activeApp.id === 'page-app-reading') showReadingLibrary();
   if (activeApp.id === 'page-app-theater') renderTheaterRoomList();
   if (activeApp.id === 'page-app-health') renderHealthPage();
+  if (activeApp.id === 'page-app-diarybook') renderDiaryBook();
 }
 
 async function restoreCloudAppState() {
@@ -510,6 +513,7 @@ function openApp(appPageId) {
   if (appPageId === "page-app-reading") showReadingLibrary();
   if (appPageId === "page-app-theater") renderTheaterRoomList();
   if (appPageId === "page-app-health") renderHealthPage();
+  if (appPageId === "page-app-diarybook") renderDiaryBook();
 }
 
 // 关闭 app 页面，回到桌面
@@ -3284,6 +3288,25 @@ function getDiaryRangeMs(dateStr) {
   return { start, end: start + 24 * 60 * 60 * 1000 };
 }
 
+function collectLocalDiarySourceMessages(dateStr) {
+  const { start, end } = getDiaryRangeMs(dateStr);
+  const rows = [];
+  getThreads().forEach(thread => {
+    getThreadMessages(thread.id).forEach(message => {
+      if (!message || message._isNarration || !message.content || !Number.isFinite(message._ts)) return;
+      if (message._ts < start || message._ts >= end) return;
+      rows.push({
+        role: message.role === "assistant" ? "assistant" : "user",
+        content: String(message.content || ""),
+        created_at: new Date(message._ts).toISOString(),
+        thread_id: thread.id,
+        source: "local"
+      });
+    });
+  });
+  return rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+}
+
 function getCurrentDiaryDateStr(now = new Date()) {
   const shifted = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() - 5, now.getMinutes(), now.getSeconds(), now.getMilliseconds());
   return formatLocalDate(shifted);
@@ -3518,7 +3541,11 @@ async function tryGenerateDiaryNowFor(dateStr, options = {}) {
     callLLMForSummary({ provider, apiKey, model: writeModel, temp: 0.8, prompt });
 
   const pinnedHighlights = await getPinnedHighlightsForDate(dateStr);
-  const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr, pinnedHighlights, options);
+  const finalOptions = { ...options };
+  if (finalOptions.forceRewrite && !Array.isArray(finalOptions.sourceMessages)) {
+    finalOptions.sourceMessages = collectLocalDiarySourceMessages(dateStr);
+  }
+  const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr, pinnedHighlights, finalOptions);
 
   if (result && result.skipped) return false;
   if (result && result.dateStr) {
@@ -5084,7 +5111,16 @@ async function rewriteDiaryLeaf(id, dateStr) {
   if (!dateStr) return showToast("找不到这天的日期");
   if (!window.Memory?.isReady?.()) return showToast("云端记忆还没连上");
   if (!confirm(`重新写 ${dateStr} 的日记？`)) return;
-  showToast("正在重新写这天的日记...");
+  return await rewriteDiaryByDate(dateStr);
+}
+
+async function rewriteDiaryByDate(dateStr) {
+  if (!dateStr) return false;
+  if (!window.Memory?.isReady?.()) {
+    showToast("云端记忆还没连上");
+    return false;
+  }
+  showToast(`正在重写 ${dateStr} 的日记...`);
   clearDiaryFailureCooling(dateStr);
   if (getLastDiaryDate() === dateStr) localStorage.removeItem(DIARY_LAST_DATE_LS);
   showDiarySplash();
@@ -5094,8 +5130,90 @@ async function rewriteDiaryLeaf(id, dateStr) {
   } finally {
     hideDiarySplash();
   }
-  renderMemoryTree();
+  if ($("#memoryTree")) renderMemoryTree();
+  if ($("#diaryBookPage")) await renderDiaryBook();
   showToast(ok === "partial" ? "日记已重写一部分，内容太长可再点一次继续" : ok ? "日记已重新写好" : "这次没写成，稍后可再试");
+  return Boolean(ok);
+}
+
+let diaryBookEntries = [];
+let diaryBookIndex = 0;
+
+function getDiaryBookNotes() {
+  return loadJSON(LS.diaryNotes, {});
+}
+
+function setDiaryBookNote(dateStr, text) {
+  const notes = getDiaryBookNotes();
+  if (text && text.trim()) notes[dateStr] = { text: text.trim(), updatedAt: Date.now() };
+  else delete notes[dateStr];
+  saveJSON(LS.diaryNotes, notes);
+}
+
+async function renderDiaryBook() {
+  const page = $("#diaryBookPage");
+  if (!page) return;
+  if (!window.Memory || !window.Memory.listDiaries || !window.Memory.isReady?.()) {
+    page.innerHTML = `<div class="diarybook-empty">云端记忆还没连上，日记本暂时打不开。</div>`;
+    return;
+  }
+  page.innerHTML = `<div class="diarybook-empty">正在翻开日记本...</div>`;
+  diaryBookEntries = await window.Memory.listDiaries(120);
+  if (diaryBookIndex >= diaryBookEntries.length) diaryBookIndex = Math.max(0, diaryBookEntries.length - 1);
+  renderDiaryBookPage();
+}
+
+function renderDiaryBookPage() {
+  const page = $("#diaryBookPage");
+  const label = $("#diaryBookPageLabel");
+  if (!page) return;
+  if (!diaryBookEntries.length) {
+    page.innerHTML = `<div class="diarybook-empty">还没有日记。等 Leith 写下第一天，这里就会多一页。</div>`;
+    if (label) label.innerText = "0 / 0";
+    return;
+  }
+  const entry = diaryBookEntries[diaryBookIndex];
+  const note = getDiaryBookNotes()[entry.dateStr]?.text || "";
+  page.innerHTML = `<div class="diarybook-page">
+    <div class="diarybook-date">${escapeHtml(entry.dateStr)}</div>
+    <div class="diarybook-content">${escapeHtml(entry.content || "平淡的一天")}</div>
+    ${note ? `<div class="diarybook-note">${escapeHtml(note)}</div>` : ""}
+    <div class="diarybook-sign">Leith · ${escapeHtml(entry.dateStr)}</div>
+  </div>`;
+  if (label) label.innerText = `${diaryBookIndex + 1} / ${diaryBookEntries.length}`;
+}
+
+function initDiaryBookControls() {
+  const prev = $("#diaryBookPrevBtn");
+  const next = $("#diaryBookNextBtn");
+  const annotate = $("#diaryBookAnnotateBtn");
+  const rewrite = $("#diaryBookRewriteBtn");
+  if (prev) prev.onclick = () => {
+    if (!diaryBookEntries.length) return;
+    diaryBookIndex = Math.min(diaryBookEntries.length - 1, diaryBookIndex + 1);
+    renderDiaryBookPage();
+  };
+  if (next) next.onclick = () => {
+    if (!diaryBookEntries.length) return;
+    diaryBookIndex = Math.max(0, diaryBookIndex - 1);
+    renderDiaryBookPage();
+  };
+  if (annotate) annotate.onclick = () => {
+    const entry = diaryBookEntries[diaryBookIndex];
+    if (!entry) return showToast("还没有可批注的日记");
+    const old = getDiaryBookNotes()[entry.dateStr]?.text || "";
+    const text = prompt("给这页写一句批注；留空会删除批注。", old);
+    if (text === null) return;
+    setDiaryBookNote(entry.dateStr, text);
+    renderDiaryBookPage();
+    showToast(text.trim() ? "批注已写好" : "批注已删除");
+  };
+  if (rewrite) rewrite.onclick = async () => {
+    const entry = diaryBookEntries[diaryBookIndex];
+    if (!entry) return showToast("还没有可重写的日记");
+    if (!confirm(`重新生成 ${entry.dateStr} 这一页？`)) return;
+    await rewriteDiaryByDate(entry.dateStr);
+  };
 }
 
 function formatMemoryTime(ts) {
@@ -6284,6 +6402,7 @@ initAddItemModal();
 initConfig();
 initTheater();
 initMemoryApp();
+initDiaryBookControls();
 initWidget();
 initReading();
 initAttachments();

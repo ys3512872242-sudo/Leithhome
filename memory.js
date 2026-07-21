@@ -338,6 +338,26 @@ function getDiaryRangeForDate(dateStr) {
   };
 }
 
+function mergeDiarySourceMessages(cloudMessages, extraMessages) {
+  const seen = new Set();
+  return [...(cloudMessages || []), ...(extraMessages || [])]
+    .map(item => ({
+      ...item,
+      role: item.role === 'assistant' ? 'assistant' : 'user',
+      content: String(item.content || '').trim(),
+      created_at: item.created_at || item.createdAt || new Date().toISOString()
+    }))
+    .filter(item => item.content)
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .filter(item => {
+      const minute = Math.floor(new Date(item.created_at).getTime() / 60000);
+      const key = `${minute}|${item.role}|${item.content.slice(0, 160)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 // 从一段文本里提取用于匹配记忆的关键词——按需检索用的是最简单的本地实现，
 // 不额外调用 AI，直接切出候选词交给 Supabase 做 ilike/全文匹配
 const STOPWORDS = new Set(['的','了','是','我','你','他','她','它','们','这','那','就','都','和','也','在','有','个','不','要','很','啊','吧','吗','呢','嗯','哦','一个','什么','怎么','为什么','可以','没有','还是','但是','因为','所以','而且','如果','这个','那个']);
@@ -1046,7 +1066,11 @@ const SupabaseMemoryAdapter = {
       newMessages = data || [];
     } catch (e) {
       console.error('读取今日对话失败:', e);
-      return null;
+      if (!options.sourceMessages || !options.sourceMessages.length) return null;
+      newMessages = [];
+    }
+    if (options.sourceMessages && options.sourceMessages.length) {
+      newMessages = mergeDiarySourceMessages(newMessages, options.sourceMessages);
     }
 
     if (!newMessages.length) {
