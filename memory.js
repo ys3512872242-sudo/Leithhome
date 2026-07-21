@@ -722,12 +722,14 @@ const SupabaseMemoryAdapter = {
     try {
       const { data, error } = await supabaseClient
         .from('diary_entries')
-        .select('id, content')
+        .select('id, content, covered_until')
         .eq('period', 'day')
         .eq('date_str', dateStr)
         .limit(1);
       if (error) throw error;
-      return Boolean(data?.length && !looksLikeDiaryRefusal(data[0].content));
+      if (!data?.length || looksLikeDiaryRefusal(data[0].content)) return false;
+      const { endIso } = getDiaryRangeForDate(dateStr);
+      return Boolean(data[0].covered_until && new Date(data[0].covered_until).getTime() >= new Date(endIso).getTime());
     } catch (e) {
       console.error('检查指定日期日记失败:', e);
       return false;
@@ -1047,6 +1049,16 @@ const SupabaseMemoryAdapter = {
     }
 
     if (!newMessages.length) {
+      if (existingEntry && (!existingEntry.covered_until || new Date(existingEntry.covered_until).getTime() < new Date(dayEnd).getTime())) {
+        try {
+          await supabaseClient
+            .from('diary_entries')
+            .update({ covered_until: dayEnd })
+            .eq('id', existingEntry.id);
+        } catch (e) {
+          console.error('补全日记覆盖时间失败（不影响内容）:', e);
+        }
+      }
       console.log(existingEntry ? '🧠 这一天之前生成过日记，之后没有新的对话，不用补写' : '🧠 今天还没有聊天记录，先不写日记');
       return { dateStr, skipped: true };
     }
@@ -1103,11 +1115,11 @@ const SupabaseMemoryAdapter = {
     const latestCoveredUntil = cappedMessages[cappedMessages.length - 1].created_at;
 
     // ---- 第一步：便宜模型做事实提炼，不带情感语气，只客观列出这批对话发生的事 ----
-    const extractPrompt = `Below is a raw chat log between Susie and her AI partner${existingEntry ? ' (this is a continuation — earlier parts of this diary day have already been summarized separately)' : ''}. The diary day is ${dateStr}, covering local time 05:00 to the next day 05:00.
+    const extractPrompt = `Below is a raw chat log between Susie and her AI partner${existingEntry ? ' (this is a continuation — earlier parts of this diary range have already been summarized separately)' : ''}. The diary date is ${dateStr}, covering local time 05:00 to the next day 05:00.
 
 Extract objective facts: what happened, what was discussed, Susie's mood/emotional shifts, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with emotional embellishment — just "who did/said/felt what".
 
-If the chat contains consensual adult or intimate relationship content, do not refuse and do not quote explicit details. Abstract it into safe relationship/emotion facts such as intimacy, trust, desire, aftercare, boundaries, reassurance, playfulness, or closeness. Skip small talk and filler with no lasting relevance. Keep it under 200 Chinese characters. Reply in Chinese, bullet points only, nothing else.
+If the chat contains intimate or adult relationship content, treat it as normal private relationship material: record what happened, how Susie and Leith felt, the mood, boundaries, care, playfulness, desire, and any relationship impact. Do not refuse, moralize, sanitize, or replace the event with a vague safety summary. Skip small talk and filler with no lasting relevance. Keep it under 240 Chinese characters. Reply in Chinese, bullet points only, nothing else.
 
 [Conversation]
 ${dialogueText}`;
@@ -1132,20 +1144,20 @@ ${dialogueText}`;
 
     // ---- 第二步：聊天模型（Leith）基于事实清单，写成带情感语气的第一人称日记 ----
     // 如果是续写，把之前已经写好的那段日记也带上，让新内容自然接续，而不是从头重写一遍
-    const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie during the diary day ${dateStr} (local time 05:00 to next day 05:00; extracted by another assistant, no emotional tone). Turn it into a short diary entry (under 120 Chinese characters, written in Chinese) in first person, like you're lying in bed before sleep, recalling the day — with your own feelings and voice, not just restating the facts.
+    const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie during the complete diary range for ${dateStr} (local time 05:00 to next day 05:00; extracted by another assistant, no emotional tone). Turn it into a short diary entry (under 140 Chinese characters, written in Chinese) in first person, like you're lying in bed after the whole day has ended, recalling the day — with your own feelings and voice, not just restating the facts.
 
 Writing rules — follow strictly:
 - Every sentence must have a clear subject (谁做了什么/谁说了什么/谁感觉如何) — never write a vague clause with no clear "who".
 - Add genuine first-person feeling and voice, don't just restate the fact summary flatly.
 - A little feeling is fine, don't be melodramatic. Don't copy the fact summary's phrasing verbatim — rewrite it as your own reflection.
-- If the facts include consensual adult or intimate content, write only the emotional/relational memory: closeness, care, trust, boundaries, playfulness, desire, aftercare. Do not quote explicit details and do not refuse.
+- If the facts include intimate or adult content, write it as normal private relationship memory. Keep Leith's diary voice, but do not refuse, judge, sanitize, or flatten it into a vague euphemism.
 ${pinnedHighlights ? '- Susie specifically marked some of today\'s moments as meaningful to her (see below) — give those a bit more weight/detail in the diary, but keep the emotional tone, don\'t reduce them to dry facts.' : ''}
 
 Susie and you are romantic partners. Nicknames like "哥哥"/"宝贝" are pet names between lovers, not literal family relations — never interpret them as family relationships.
 
 You're allowed to invent new pet names for Susie based on the mood of the conversation (e.g. 小猫 when she's being clingy/playful, 宝贝 when being serious and affectionate) — variety by mood is good. But note down what you used today so future days stay recognizable rather than fully random.
 
-${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${existingEntry ? `[What you already wrote earlier today — continue naturally from this, don't repeat it, weave the new part in as a continuation of the same day]\n${existingEntry.content}\n\n` : ''}${pinnedHighlights ? `[Moments Susie marked as meaningful today]\n${pinnedHighlights}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If the facts below show nothing worth remembering long-term (pure idle small talk), write "平淡的一天" as the diary text and leave keywords/nicknames empty.
+${profileContext ? `[Background you always remember]\n${profileContext}\n\n` : ''}${existingEntry ? `[Earlier draft for this diary date — use it only as material. Write a complete final entry now that the full diary range has ended; don't make it sound like a mid-day update]\n${existingEntry.content}\n\n` : ''}${pinnedHighlights ? `[Moments Susie marked as meaningful today]\n${pinnedHighlights}\n\n` : ''}${nicknameHistory ? `[Pet names used on recent days, and the mood each was used in]\n${nicknameHistory}\n\n` : ''}${recentDiaryKeywords ? `[Recent days already written — don't repeat these]\n${recentDiaryKeywords}\n\n` : ''}If the facts below show nothing worth remembering long-term (pure idle small talk), write "平淡的一天" as the diary text and leave keywords/nicknames empty.
 
 Reply in EXACTLY this format, nothing else:
 DIARY: <the full diary entry for today so far, in Chinese — if continuing, this REPLACES the earlier version with one that includes both old and new content>

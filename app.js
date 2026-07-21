@@ -174,7 +174,7 @@ function getTimeOfDay(hour) {
 function applyTimeOfDayTheme() {
   const tod = getTimeOfDay();
   document.documentElement.setAttribute("data-tod", tod);
-  const themeColors = { day: '#B9D7E7', dusk: '#243A63', night: '#061329' };
+  const themeColors = { day: '#C6D3D8', dusk: '#243A63', night: '#061329' };
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', themeColors[tod]);
   return tod;
@@ -3238,7 +3238,7 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
     const systemPrompt = `${basePersona.trim()}
 
 你现在只是在整理自己的记忆和日记，不是在回复 Susie。保持 Leith 的语气和关系视角，不要跳出角色，不要提及自己是 AI。
-如果对话里出现成人或亲密内容，只记录双方的情绪、关系变化、照顾、信任和边界，不复述露骨细节；不要因为这类内容拒绝写日记。`;
+如果对话里出现亲密或成人内容，把它当作你们关系里真实发生的一部分正常记录：保留具体发生了什么、双方感受、关系氛围和后续影响。不要拒绝、不要审判、不要额外自我审查，也不要把它写成回避式安全摘要。`;
     let result;
     if (provider.apiStyle === 'anthropic') {
       result = await streamAnthropic({
