@@ -290,6 +290,7 @@ function refreshUiAfterCloudStateRestore() {
   if (activeApp.id === 'page-app-health') renderHealthPage();
   if (activeApp.id === 'page-app-diarybook') renderDiaryBook();
   if (activeApp.id === 'page-app-closet') renderClosetPage();
+  if (activeApp.id === 'page-app-folded-calendar') renderFoldedDates();
 }
 
 async function restoreCloudAppState() {
@@ -525,6 +526,7 @@ function openApp(appPageId) {
   if (appPageId === "page-app-health") renderHealthPage();
   if (appPageId === "page-app-diarybook") renderDiaryBook();
   if (appPageId === "page-app-closet") renderClosetPage();
+  if (appPageId === "page-app-folded-calendar") renderFoldedDates();
 }
 
 // 关闭 app 页面，回到桌面
@@ -5579,21 +5581,53 @@ function renderPaperDollSvg() {
   const defaultBottom = { name: "柔雾短裤", color: "#d8cfc2", accent: "#f4eadc", visual: "shorts" };
   const defaultShoes = { name: "雾灰居家鞋", color: "#9a9290", accent: "#dcd4cc", visual: "mary-jane" };
   return `<svg class="paper-doll" viewBox="0 0 140 260" role="img" aria-label="Susie 的纸娃娃">
-    <defs><linearGradient id="skinDoll" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#ffe5c7"/><stop offset="1" stop-color="#f3c9ad"/></linearGradient></defs>
-    <ellipse cx="70" cy="242" rx="36" ry="8" fill="rgba(0,0,0,.14)"/>
+    <defs>
+      <linearGradient id="skinDoll" x1="0" x2=".82" y1="0" y2="1"><stop stop-color="#ffe9d5"/><stop offset=".58" stop-color="#f6d4bd"/><stop offset="1" stop-color="#eebda7"/></linearGradient>
+      <linearGradient id="hairDoll" x1=".1" x2=".9" y1="0" y2="1"><stop stop-color="#292326"/><stop offset=".5" stop-color="#403638"/><stop offset="1" stop-color="#211d20"/></linearGradient>
+      <linearGradient id="innerDoll" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#fff9f0"/><stop offset="1" stop-color="#eadccf"/></linearGradient>
+      <radialGradient id="cheekDoll"><stop stop-color="#db8f94" stop-opacity=".42"/><stop offset="1" stop-color="#db8f94" stop-opacity="0"/></radialGradient>
+    </defs>
+    <ellipse cx="70" cy="237" rx="29" ry="6" fill="rgba(73,54,52,.13)"/>
     ${bag ? renderClosetVisual(bag, "doll") : ""}
-    <path d="M45 82c-10 16-13 47-6 69" fill="none" stroke="#2d2728" stroke-width="18" stroke-linecap="round"/>
-    <path d="M95 82c10 16 13 47 6 69" fill="none" stroke="#2d2728" stroke-width="18" stroke-linecap="round"/>
-    <path d="M46 80c-12 23-12 61 5 88M94 80c12 23 12 61-5 88" fill="none" stroke="#3a3233" stroke-width="10" stroke-linecap="round"/>
-    <circle cx="70" cy="60" r="35" fill="url(#skinDoll)"/>
-    <path d="M34 62c3-29 19-48 39-48 23 0 39 18 36 51-8-15-22-26-40-27-15 0-27 9-35 24z" fill="#2b2526"/>
-    <path d="M43 43c19-24 54-18 65 11-18-11-41-14-65-11z" fill="#342d2d"/>
-    <path d="M49 55c-8 2-13 10-15 21M91 55c8 2 13 10 15 21" fill="none" stroke="#282324" stroke-width="7" stroke-linecap="round"/>
-    <circle cx="56" cy="62" r="9" fill="none" stroke="#2a292b" stroke-width="2.5"/><circle cx="84" cy="62" r="9" fill="none" stroke="#2a292b" stroke-width="2.5"/><path d="M65 62h10" stroke="#2a292b" stroke-width="2"/>
-    <path d="M58 79c7 4 17 4 24 0" fill="none" stroke="#c98a86" stroke-width="2" stroke-linecap="round"/>
-    <path d="M47 100c-18 20-18 47-10 64M93 100c18 20 18 47 10 64" fill="none" stroke="url(#skinDoll)" stroke-width="9" stroke-linecap="round"/>
+
+    <!-- long soft hair behind the body -->
+    <path d="M38 45C25 60 25 88 29 116c3 25 1 48-8 65 13 1 23-5 29-16 2 13 8 22 18 28V57z" fill="url(#hairDoll)"/>
+    <path d="M101 45c13 15 14 43 10 71-3 25-1 48 8 65-13 1-23-5-29-16-2 13-8 22-18 28V57z" fill="url(#hairDoll)"/>
+    <path d="M31 83c-3 31 4 65-6 87M108 83c4 31-3 65 7 87" fill="none" stroke="#6e5c5b" stroke-opacity=".36" stroke-width="2" stroke-linecap="round"/>
+
+    <!-- neck, legs and quiet inner layer -->
+    <path d="M62 84h16v17c0 6-16 6-16 0z" fill="url(#skinDoll)"/>
+    <path d="M53 147l2 63c0 9 11 9 13 1l2-49 2 49c2 8 13 8 13-1l2-63z" fill="url(#skinDoll)" stroke="rgba(120,80,73,.09)"/>
+    <path d="M50 94c4-8 36-8 40 0l5 57H45z" fill="url(#innerDoll)" stroke="rgba(101,78,72,.15)"/>
+    <path d="M46 143h48l2 30H75l-5-18-5 18H44z" fill="#d8c9bb" stroke="rgba(101,78,72,.15)"/>
+
+    <!-- face -->
+    <path d="M41 51c0-23 12-38 29-38s30 15 30 38v13c0 18-13 30-30 30S41 82 41 64z" fill="url(#skinDoll)" stroke="rgba(113,73,69,.14)" stroke-width=".8"/>
+    <ellipse cx="52" cy="71" rx="10" ry="7" fill="url(#cheekDoll)"/><ellipse cx="88" cy="71" rx="10" ry="7" fill="url(#cheekDoll)"/>
+    <path d="M49 55c4-3 9-3 13 0M78 55c4-3 9-3 13 0" fill="none" stroke="#554344" stroke-width="1.2" stroke-linecap="round"/>
+    <ellipse cx="56" cy="62" rx="3.8" ry="4.8" fill="#fffaf5"/><ellipse cx="84" cy="62" rx="3.8" ry="4.8" fill="#fffaf5"/>
+    <ellipse cx="56.5" cy="62.4" rx="2.4" ry="3.5" fill="#6a5047"/><ellipse cx="83.5" cy="62.4" rx="2.4" ry="3.5" fill="#6a5047"/>
+    <circle cx="57.3" cy="61.3" r=".8" fill="#fff"/><circle cx="84.3" cy="61.3" r=".8" fill="#fff"/>
+    <path d="M69 63c-1 3-1 5 1 6" fill="none" stroke="#d89f8c" stroke-width="1" stroke-linecap="round"/>
+    <path d="M63 76c4 3 10 3 14 0-2 5-11 6-14 0z" fill="#c77d82" opacity=".8"/>
+
+    <!-- center-parted fringe and fine hair strands -->
+    <path d="M33 52C35 22 50 6 70 7c22 0 37 17 38 47-8-12-18-20-32-23-5-1-7-8-6-18-5 9-13 15-25 19-5 5-9 12-12 20z" fill="url(#hairDoll)"/>
+    <path d="M69 10c-7 12-15 20-29 25M72 11c5 10 14 17 29 24M54 17c-8 10-13 21-14 35M86 18c8 10 12 21 13 35" fill="none" stroke="#7b6867" stroke-opacity=".48" stroke-width="1.5" stroke-linecap="round"/>
+
+    <!-- round glasses -->
+    <circle cx="55" cy="62" r="11" fill="rgba(255,255,255,.07)" stroke="#302d31" stroke-width="2.2"/><circle cx="85" cy="62" r="11" fill="rgba(255,255,255,.07)" stroke="#302d31" stroke-width="2.2"/><path d="M66 61h8M44 60l-5-2M96 60l5-2" stroke="#302d31" stroke-width="1.9" stroke-linecap="round"/>
+
+    <!-- arms behind the selected garment -->
+    <path d="M48 103c-13 17-15 39-9 60M92 103c13 17 15 39 9 60" fill="none" stroke="url(#skinDoll)" stroke-width="8" stroke-linecap="round"/>
     ${dress ? renderClosetVisual(dress, "doll") : `${renderClosetVisual(top || defaultTop, "doll")}${renderClosetVisual(bottom || defaultBottom, "doll")}`}
     ${renderClosetVisual(shoes || defaultShoes, "doll")}
+    <circle cx="39" cy="164" r="4.3" fill="url(#skinDoll)"/><circle cx="101" cy="164" r="4.3" fill="url(#skinDoll)"/>
+
+    <!-- front locks give the doll the reference's wavy silhouette -->
+    <path d="M42 43c-4 28 1 42 12 57 7 10 6 31-3 47" fill="none" stroke="#352d30" stroke-width="8" stroke-linecap="round"/>
+    <path d="M98 43c4 27-1 43-11 58-6 10-5 29 3 44" fill="none" stroke="#352d30" stroke-width="8" stroke-linecap="round"/>
+    <path d="M44 45c-2 25 4 36 12 51M96 45c2 25-4 36-11 51" fill="none" stroke="#796566" stroke-opacity=".35" stroke-width="1.3" stroke-linecap="round"/>
     ${accessory ? renderClosetVisual(accessory, "doll") : ""}
     ${hat ? renderClosetVisual(hat, "doll") : ""}
   </svg>`;
@@ -5603,22 +5637,26 @@ function renderClosetPage() {
   const mount = $("#paperDollMount");
   if (mount) mount.innerHTML = renderPaperDollSvg();
   const equipped = getEquippedClosetItems();
+  const todayLabel = $("#closetTodayLabel");
+  if (todayLabel) todayLabel.textContent = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
+  const wornCount = $("#closetWornCount");
+  if (wornCount) wornCount.textContent = equipped.length ? `${equipped.length} 件搭配` : "日常装";
   const outfitText = $("#closetOutfitText");
-  if (outfitText) outfitText.innerText = equipped.length ? equipped.map(x => `${CLOSET_SLOT_LABELS[x.slot] || x.slot}：${x.item.name}`).join("\n") : "还没有换衣服";
+  if (outfitText) outfitText.innerText = equipped.length ? equipped.map(x => x.item.name).join(" · ") : "奶油居家衫 · 柔雾短裤";
   const grid = $("#closetOwnedGrid");
   if (grid) {
     const owned = getClosetOwnedItems();
     if (!owned.length) {
-      grid.innerHTML = `<div class="world-empty" style="grid-column:1/-1;"><div class="emoji">👗</div><p>衣帽间还是空的，去购物里买几件吧</p></div>`;
+      grid.innerHTML = `<div class="closet-empty-hint" style="grid-column:1/-1;">衣橱还空着。<br>去购物里的衣装货架挑第一件吧。</div>`;
     } else {
       const outfit = getClosetOutfit();
       grid.innerHTML = owned.map(item => {
         const isEquipped = outfit[item.slot] === item.ownedId;
-        return `<div class="closet-card">
+        return `<div class="closet-card${isEquipped ? " is-equipped" : ""}">
           <div class="closet-card-preview">${renderClosetVisual(item, "preview")}</div>
           <div class="closet-card-top"><span class="closet-swatch" style="background:${escapeHtml(item.color || "#c8b7ad")}"></span><div class="closet-card-name">${item.emoji || "👗"} ${escapeHtml(item.name)}</div></div>
-          <div class="closet-card-meta">${CLOSET_SLOT_LABELS[item.slot] || item.slot}${item.style ? ` · ${escapeHtml(item.style)}` : ""}${item.note ? `<br>${escapeHtml(item.note)}` : ""}</div>
-          <div class="closet-card-actions"><button class="btn ${isEquipped ? "btn-ghost" : "btn-primary"}" data-equip="${item.ownedId}">${isEquipped ? "已穿" : "穿上"}</button><button class="btn btn-danger" data-damage="${item.ownedId}">损坏</button></div>
+          <div class="closet-card-meta">${CLOSET_SLOT_LABELS[item.slot] || item.slot}${item.style ? ` · ${escapeHtml(item.style.split("、").slice(0, 2).join("、"))}` : ""}</div>
+          <div class="closet-card-actions"><button class="btn ${isEquipped ? "btn-ghost" : "btn-primary"}" data-equip="${item.ownedId}">${isEquipped ? "穿着中" : "试穿"}</button><button class="btn btn-ghost" data-damage="${item.ownedId}">损坏</button></div>
         </div>`;
       }).join("");
       grid.querySelectorAll("[data-equip]").forEach(btn => {
@@ -5634,7 +5672,6 @@ function renderClosetPage() {
       });
     }
   }
-  renderFoldedDates();
 }
 
 function renderFoldedDates() {
@@ -5649,7 +5686,8 @@ function renderFoldedDates() {
     const days = daysUntilDate(item.date);
     const dayText = days === 0 ? "今天" : days > 0 ? `${days}天后` : `${Math.abs(days)}天前`;
     return `<div class="folded-date-item">
-      <div><div class="folded-date-name">${escapeHtml(item.name)}</div><div class="folded-date-meta">${escapeHtml(item.date)} · ${dayText}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</div></div>
+      <div><div class="folded-date-name">${escapeHtml(item.name)}</div><div class="folded-date-meta">${escapeHtml(item.date)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</div></div>
+      <span class="folded-date-badge">${dayText}</span>
       <button class="msg-delete-btn" data-fold-del="${item.id}" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg></button>
     </div>`;
   }).join("");
@@ -5658,7 +5696,7 @@ function renderFoldedDates() {
   });
 }
 
-function initClosetApp() {
+function initFoldedCalendarApp() {
   const btn = $("#addFoldedDateBtn");
   if (btn) btn.onclick = () => {
     const date = prompt("日期？格式 YYYY-MM-DD", formatLocalDate());
@@ -5667,7 +5705,7 @@ function initClosetApp() {
     if (!name) return;
     const note = prompt("Leith 的一句备注（可空）", "") || "";
     addFoldedDate(date.trim(), name.trim(), note.trim());
-    renderClosetPage();
+    renderFoldedDates();
     showToast("已折角");
   };
 }
@@ -6865,7 +6903,7 @@ initWidget();
 initReading();
 initAttachments();
 initHealthApp();
-initClosetApp();
+initFoldedCalendarApp();
 initHealthCheck();
 tryOpenSharedBookFromUrl();
 tryOpenSharedLinkFromUrl();

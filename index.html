@@ -1117,34 +1117,56 @@
 
   /* ===== 衣帽间 ===== */
   .closet-stage{
-    border:1px solid var(--line);border-radius:18px;padding:16px;
-    background:linear-gradient(150deg,var(--bg-elevated),var(--accent-glow));
-    display:grid;grid-template-columns:140px 1fr;gap:14px;align-items:center;
+    position:relative;overflow:hidden;border:1px solid rgba(151,123,113,.22);border-radius:28px;
+    padding:14px 14px 16px;background:linear-gradient(160deg,#f8f0e8 0%,#eaded8 56%,#d8c8c3 100%);
+    box-shadow:0 18px 45px rgba(31,25,31,.18),inset 0 1px rgba(255,255,255,.72);
   }
-  .paper-doll{width:140px;height:260px;margin:auto;display:block;filter:drop-shadow(0 10px 18px rgba(0,0,0,.14));}
-  .closet-status{font-size:12px;color:var(--paper-dim);line-height:1.8;}
-  .closet-status strong{display:block;color:var(--paper);font:600 16px var(--serif);margin-bottom:4px;}
-  .closet-section-title{font-size:12px;color:var(--paper-dim);margin:14px 0 8px;}
-  .closet-owned-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+  .closet-stage:before,.closet-stage:after{content:"";position:absolute;border-radius:999px;filter:blur(2px);pointer-events:none;}
+  .closet-stage:before{width:170px;height:170px;right:-62px;top:-66px;background:rgba(255,255,255,.42);}
+  .closet-stage:after{width:130px;height:130px;left:-48px;bottom:-55px;background:rgba(171,137,135,.13);}
+  .closet-mirror-head{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:2px 4px 6px;color:#695650;}
+  .closet-mirror-kicker{font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.66;}
+  .closet-mirror-date{font:500 11px var(--serif);padding:5px 9px;border-radius:999px;background:rgba(255,255,255,.42);border:1px solid rgba(125,99,92,.14);}
+  #paperDollMount{position:relative;z-index:1;display:flex;justify-content:center;min-height:365px;align-items:flex-end;}
+  .paper-doll{width:210px;height:390px;max-width:72vw;margin:-15px auto -8px;display:block;filter:drop-shadow(0 13px 15px rgba(73,54,52,.16));}
+  .closet-status{position:relative;z-index:2;margin-top:-1px;padding:12px 14px;border-radius:18px;background:rgba(255,255,255,.56);border:1px solid rgba(125,99,92,.13);color:#796862;}
+  .closet-status-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;}
+  .closet-status strong{color:#4f403d;font:600 15px var(--serif);}
+  .closet-worn-count{font-size:10px;padding:4px 8px;border-radius:999px;background:#aa8584;color:#fff;white-space:nowrap;}
+  #closetOutfitText{font-size:11px;line-height:1.65;white-space:normal;overflow-wrap:anywhere;}
+  .closet-leith-note{margin-top:5px;font-size:10px;color:#9a8580;white-space:normal;}
+  .closet-section-title{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--paper-dim);margin:18px 2px 9px;}
+  .closet-section-title strong{color:var(--paper);font:600 15px var(--serif);}
+  .closet-owned-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;}
   .closet-card{
-    border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--bg-input);
-    min-width:0;
+    position:relative;border:1px solid var(--line);border-radius:18px;padding:8px;background:linear-gradient(155deg,rgba(255,255,255,.07),var(--bg-input));min-width:0;overflow:hidden;
   }
-  .closet-card-preview{height:82px;background:linear-gradient(145deg,rgba(255,255,255,.08),rgba(255,255,255,.025));}
-  .closet-card-preview .closet-item-svg{width:80px;height:80px;}
-  .closet-card-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
-  .closet-swatch{width:22px;height:22px;border-radius:7px;border:1px solid rgba(255,255,255,.28);flex-shrink:0;}
-  .closet-card-name{font-size:13px;color:var(--paper);line-height:1.35;}
-  .closet-card-meta{font-size:10px;color:var(--paper-dim);line-height:1.5;margin-bottom:8px;}
+  .closet-card.is-equipped{border-color:rgba(198,142,151,.65);box-shadow:0 0 0 1px rgba(198,142,151,.12) inset;}
+  .closet-card-preview{height:104px;border-radius:13px;background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.15),transparent 66%);}
+  .closet-card-preview .closet-item-svg{width:96px;height:96px;}
+  .closet-card-top{display:flex;align-items:center;gap:7px;margin:7px 2px 5px;}
+  .closet-swatch{width:9px;height:9px;border-radius:50%;border:1px solid rgba(255,255,255,.34);flex-shrink:0;}
+  .closet-card-name{font-size:12px;color:var(--paper);line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .closet-card-meta{font-size:9.5px;color:var(--paper-dim);line-height:1.45;margin:0 2px 8px;min-height:14px;}
   .closet-card-actions{display:flex;gap:5px;}
-  .closet-card-actions .btn{font-size:10px;padding:4px 7px;flex:1;}
-  .folded-date-list{display:flex;flex-direction:column;gap:8px;}
-  .folded-date-item{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--bg-input);display:flex;justify-content:space-between;gap:8px;align-items:center;}
-  .folded-date-name{font-size:13px;color:var(--paper);}
-  .folded-date-meta{font-size:10.5px;color:var(--paper-dim);margin-top:3px;}
+  .closet-card-actions .btn{font-size:10px;padding:5px 7px;flex:1;border-radius:10px;}
+  .closet-empty-hint{padding:30px 16px;text-align:center;color:var(--paper-dim);line-height:1.7;border:1px dashed var(--line);border-radius:18px;}
+
+  /* ===== 小日历 / 折角日期 ===== */
+  .folded-calendar-hero{position:relative;overflow:hidden;border-radius:24px;padding:21px 20px;background:linear-gradient(145deg,#eee0da,#d2b8b3);color:#574441;box-shadow:0 16px 38px rgba(35,27,31,.14);}
+  .folded-calendar-hero:after{content:"";position:absolute;right:-25px;bottom:-40px;width:140px;height:140px;border-radius:50%;background:rgba(255,255,255,.28);}
+  .folded-calendar-kicker{font-size:10px;letter-spacing:.2em;opacity:.65;}
+  .folded-calendar-title{font:600 24px var(--serif);margin:8px 0 4px;}
+  .folded-calendar-sub{font-size:11px;opacity:.72;}
+  .folded-date-list{display:flex;flex-direction:column;gap:10px;margin-top:14px;}
+  .folded-date-item{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:17px;padding:14px 14px 13px 17px;background:var(--bg-input);display:flex;justify-content:space-between;gap:10px;align-items:center;}
+  .folded-date-item:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(var(--rose),var(--accent-2));opacity:.7;}
+  .folded-date-name{font:600 14px var(--serif);color:var(--paper);}
+  .folded-date-meta{font-size:10.5px;color:var(--paper-dim);margin-top:5px;line-height:1.5;}
+  .folded-date-badge{font-size:10px;color:var(--rose);white-space:nowrap;margin-right:4px;}
   @media (max-width:390px){
-    .closet-stage{grid-template-columns:1fr;}
-    .closet-owned-grid{grid-template-columns:1fr;}
+    .paper-doll{width:195px;height:362px;}
+    #paperDollMount{min-height:340px;}
   }
 
   /* 添加记忆弹窗 */
@@ -1700,6 +1722,12 @@
           </div>
           <div class="app-icon-label">衣帽间</div>
         </div>
+        <div class="app-icon" onclick="openApp('page-app-folded-calendar')">
+          <div class="app-icon-img" style="color:var(--accent-2);background:linear-gradient(150deg,rgba(211,160,145,.16),var(--bg-elevated) 75%);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="M8 14h3M14 14h2M8 17h2"/></svg>
+          </div>
+          <div class="app-icon-label">小日历</div>
+        </div>
         <div class="app-icon" onclick="openApp('page-app-reading')">
           <div class="app-icon-img" style="color:var(--paper-dim);background:linear-gradient(150deg,rgba(139,143,196,.12),var(--bg-elevated) 75%);">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5C6 4.5 9 4.5 12 6c3-1.5 6-1.5 8-.5v13c-2-1-5-1-8 .5-3-1.5-6-1.5-8-.5v-13z"/><path d="M12 6v13"/></svg>
@@ -1952,20 +1980,40 @@
     </div>
     <div class="app-body">
       <div class="closet-stage">
+        <div class="closet-mirror-head">
+          <span class="closet-mirror-kicker">today's fitting</span>
+          <span class="closet-mirror-date" id="closetTodayLabel">今天</span>
+        </div>
         <div id="paperDollMount"></div>
         <div class="closet-status">
-          <strong>Susie 的今日穿搭</strong>
+          <div class="closet-status-row"><strong>Susie 的今日穿搭</strong><span class="closet-worn-count" id="closetWornCount">日常装</span></div>
           <div id="closetOutfitText">还没有换衣服</div>
-          <div class="helper-text" style="margin-top:8px;">Leith 能看到这里的穿搭和衣橱摘要；损坏的衣装会回到购物里的衣装货架。</div>
+          <div class="closet-leith-note">Leith 能看见今天穿了什么。</div>
         </div>
       </div>
-      <div class="closet-section-title">已经在衣帽间</div>
+      <div class="closet-section-title"><strong>我的衣橱</strong><span>点一下就换上</span></div>
       <div class="closet-owned-grid" id="closetOwnedGrid"></div>
-      <div class="closet-section-title">折角日期</div>
-      <div class="folded-date-list" id="foldedDateList"></div>
-      <button class="btn btn-ghost btn-block" id="addFoldedDateBtn" style="margin-top:10px;">+ 记一个重要日子</button>
     </div>
   </div><!-- /app-closet -->
+
+  <!-- ===== App: 小日历 ===== -->
+  <div class="app-page" id="page-app-folded-calendar">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">🗓️ 小日历</span>
+    </div>
+    <div class="app-body">
+      <div class="folded-calendar-hero">
+        <div class="folded-calendar-kicker">OUR LITTLE DATES</div>
+        <div class="folded-calendar-title">把重要的日子折起来</div>
+        <div class="folded-calendar-sub">不是一整本日历，只替你们记住真正重要的几天。</div>
+      </div>
+      <div class="folded-date-list" id="foldedDateList"></div>
+      <button class="btn btn-primary btn-block" id="addFoldedDateBtn" style="margin-top:12px;">+ 记一个重要日子</button>
+    </div>
+  </div><!-- /app-folded-calendar -->
 
   <!-- ===== App: 小组件 ===== -->
   <div class="app-page" id="page-app-widget">
