@@ -174,6 +174,9 @@ function getTimeOfDay(hour) {
 function applyTimeOfDayTheme() {
   const tod = getTimeOfDay();
   document.documentElement.setAttribute("data-tod", tod);
+  const themeColors = { day: '#8DC9F3', dusk: '#263B68', night: '#061329' };
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', themeColors[tod]);
   return tod;
 }
 
@@ -434,17 +437,44 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const cleaned = text.replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|USE):[^\]]+\]/g, "").trim();
-  const escaped = escapeHtml(cleaned);
-  const parts = escaped.split(/("[^"]*")/g);
-  return parts.map(p => {
-    if (p.startsWith("\"") && p.endsWith("\"")) {
-      return `<span class="dialogue-text">${p}</span>`;
-    } else if (p.trim().length > 0) {
-      return `<span class="action-text">${p}</span>`;
+  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|USE):[^\]]+\]/g, "").trim();
+  const segments = [];
+  const tagPattern = /<(thinking|think)>/ig;
+  let cursor = 0;
+  let match;
+  while ((match = tagPattern.exec(cleaned))) {
+    if (match.index > cursor) segments.push({ type: 'normal', text: cleaned.slice(cursor, match.index) });
+    const closePattern = new RegExp(`<\\/${match[1]}>`, 'ig');
+    closePattern.lastIndex = tagPattern.lastIndex;
+    const close = closePattern.exec(cleaned);
+    if (close) {
+      segments.push({ type: 'thinking', text: cleaned.slice(tagPattern.lastIndex, close.index) });
+      cursor = closePattern.lastIndex;
+      tagPattern.lastIndex = cursor;
+    } else {
+      // 流式输出尚未收到闭合标签时也先收进折叠块，不把原始标签暴露在气泡里。
+      segments.push({ type: 'thinking', text: cleaned.slice(tagPattern.lastIndex) });
+      cursor = cleaned.length;
+      break;
     }
-    return p;
-  }).join("");
+  }
+  if (cursor < cleaned.length) segments.push({ type: 'normal', text: cleaned.slice(cursor) });
+
+  const renderNormal = (value) => {
+    const escaped = escapeHtml(value.replace(/<\/(?:thinking|think)>/ig, ''));
+    const parts = escaped.split(/("[^"]*")/g);
+    return parts.map(p => {
+      if (p.startsWith("\"") && p.endsWith("\"")) return `<span class="dialogue-text">${p}</span>`;
+      if (p.trim().length > 0) return `<span class="action-text">${p}</span>`;
+      return p;
+    }).join("");
+  };
+
+  if (!segments.length) return renderNormal(cleaned);
+  return segments.map(segment => {
+    if (segment.type === 'normal') return renderNormal(segment.text);
+    return `<details class="thinking-block"><summary><span class="thinking-spark">✦</span><span>Leith 的思考</span><span class="thinking-chevron">⌄</span></summary><div class="thinking-content">${escapeHtml(segment.text.trim()).replace(/\n/g, '<br>')}</div></details>`;
+  }).join('');
 }
 
 // ============================================================
@@ -2494,7 +2524,7 @@ function renderTokenBanner() {
   const banner = document.createElement("div");
   banner.className = "token-banner";
   banner.innerHTML = `
-    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。不用担心记忆会丢——每天凌晨5点后，Leith 会把前一天聊过的内容写成一篇日记，长期记得住。如果想现在先整理一下到目前为止聊的内容，可以点下面这个按钮（之后新聊的部分，会在凌晨5点自动接着补上，不会重复）。</div>
+    <div class="token-banner-text">这个对话已经积累了约 <b>${estTokens.toLocaleString()}</b> token。不用担心记忆会丢——第二天第一次打开时，Leith 会把前一天聊过的内容写成一篇日记，长期记得住。如果想现在先整理一下到目前为止聊的内容，可以点下面这个按钮（之后新聊的部分，第二天会自动接着补上，不会重复）。</div>
     <div class="token-banner-actions">
       <button id="tokenBannerCompress">先整理一下现在聊的内容</button>
       <button id="tokenBannerDismiss">知道了</button>
@@ -3160,6 +3190,17 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
 // ============================================================
 const DIARY_LAST_DATE_LS = "companion_diary_last_date_v1";
 
+function formatLocalDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function offsetLocalDate(date, days) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
 function getLastDiaryDate() {
   return localStorage.getItem(DIARY_LAST_DATE_LS) || "";
 }
@@ -3169,37 +3210,29 @@ function setLastDiaryDate(dateStr) {
 
 // 手动触发：把"今天"写成日记（供 token 提示条里的按钮使用）
 async function tryGenerateDiaryNow() {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = formatLocalDate();
   return await tryGenerateDiaryNowFor(todayStr);
 }
 
-// 每天该处理的时候自动检查一次：昨天的日记 + 昨天被标记的"重要记忆"，
-// 统一在本地时间凌晨5点之后触发（你打开App时检查现在是否已过5点、今天是否处理过昨天），
+// 每天第一次打开时自动检查一次：昨天的日记 + 昨天被标记的"重要记忆"，
+// 用户开始输入每日密码时就后台触发；没有旧会话的新设备会在成功解锁后立即触发，
 // 不是真正的后台定时任务——网页应用无法在完全关闭时自主运行，需要你在那之后某次打开App
 // 才会真正执行这次检查，这是所有纯前端应用的共同限制。
-const DIARY_TRIGGER_HOUR = 5;
+let diaryCheckPromise = null;
 
-async function checkAndGenerateDiary() {
+async function checkAndGenerateDiary({ silent = false } = {}) {
+  if (diaryCheckPromise) return diaryCheckPromise;
+  diaryCheckPromise = (async () => {
   const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
+  const todayStr = formatLocalDate(now);
   const lastDone = getLastDiaryDate();
-  if (lastDone === todayStr) return; // 今天已经处理过，不用重复检查
-
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-  // 补写：如果上次记录的日期比"昨天"还早，说明中间有断档（比如好几天没打开App），
-  // 把最近没处理的那天补上（只补"昨天"，避免长期没打开时一次性发起过多请求）
-  if (lastDone && lastDone < yesterday) {
-    await runDayEndWithSplash(yesterday);
-    return;
-  }
-
-  // 本地时间过了凌晨5点，就把"昨天"这一整天处理掉：写日记 + 把昨天标记的内容转成核心记忆
-  if (now.getHours() >= DIARY_TRIGGER_HOUR) {
-    if (getLastDiaryDate() !== yesterday) {
-      await runDayEndWithSplash(yesterday);
-    }
-  }
+  const yesterday = formatLocalDate(offsetLocalDate(now, -1));
+  if (lastDone === yesterday || lastDone === todayStr) return false;
+  if (!window.Memory?.isReady?.()) return false;
+  return silent ? await processDayEnd(yesterday) : await runDayEndWithSplash(yesterday);
+  })();
+  try { return await diaryCheckPromise; }
+  finally { diaryCheckPromise = null; }
 }
 
 // 带开屏的日记处理：只有真的要处理的时候才会短暂出现，营造"翻开日记本"的感觉，
@@ -3207,7 +3240,7 @@ async function checkAndGenerateDiary() {
 async function runDayEndWithSplash(dateStr) {
   showDiarySplash();
   try {
-    await processDayEnd(dateStr);
+    return await processDayEnd(dateStr);
   } finally {
     hideDiarySplash();
   }
@@ -3230,17 +3263,21 @@ function hideDiarySplash() {
 // 不会因为消息太多就只处理一部分、剩下的悄悄拖到第二天才补上
 async function processDayEnd(dateStr) {
   const MAX_ROUNDS = 6; // 保险上限：一天正常不会聊到需要跑6轮（480条消息），避免极端情况死循环
+  let fullyProcessed = false;
   for (let i = 0; i < MAX_ROUNDS; i++) {
     const wroteMore = await tryGenerateDiaryNowFor(dateStr);
-    if (!wroteMore) break; // 没有新内容可处理了，说明这一天已经处理完，可以停下来
+    if (wroteMore === null) return false; // 网络或模型失败时下次仍会重试，不能误标为已完成
+    if (!wroteMore) { fullyProcessed = true; break; }
   }
+  if (!fullyProcessed) return false; // 极端超长对话留到下次继续，避免跳过未处理部分
   await processPinnedMessagesForDate(dateStr);
   setLastDiaryDate(dateStr);
+  return true;
 }
 
 // ============================================================
 // 标记为"重要记忆"：星标本身只是本地打个标记（msg.pinned = true），不花任何 token；
-// 真正处理（压缩存入核心记忆）延后到每天凌晨5点，跟日记一起统一批量处理。
+// 真正处理（压缩存入核心记忆）延后到第二天首次打开，跟日记一起统一批量处理。
 // ============================================================
 
 // 收集"某个本地日期"里，所有线程中被标记过、且还没处理过的消息（跨主对话+所有小剧场房间）
@@ -3280,7 +3317,7 @@ async function getPinnedHighlightsForDate(dateStr) {
   return entries.map(e => `- ${e.content}`).join('\n');
 }
 
-// 凌晨5点批处理：把当天标记过的内容，用聊天模型（不是便宜模型——这里需要保留情感质感，
+// 次日首次打开时批处理：把当天标记过的内容，用聊天模型（不是便宜模型——这里需要保留情感质感，
 // 不是客观事实提炼）压缩成一条核心记忆，语气可以比普通核心记忆更细腻一点，
 // 因为这些是 Susie 明确"希望被记住"的瞬间，不是随手记录的事实
 async function processPinnedMessagesForDate(dateStr) {
@@ -3331,17 +3368,17 @@ function getDiaryModel() {
 }
 
 async function tryGenerateDiaryNowFor(dateStr) {
-  if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return false;
+  if (!window.Memory || !window.Memory.isReady || !window.Memory.isReady()) return null;
   const provider = getActiveProvider();
   const apiKey = localStorage.getItem(LS.apiKey);
-  if (!provider || !apiKey) return false;
+  if (!provider || !apiKey) return null;
 
   // 提炼事实：用"日记专用模型"（便宜模型），只做客观事实整理，不需要用聊天那么贵的模型
   const extractModel = getDiaryModel();
   // 写日记：用平时聊天的那个模型，保证日记是"Leith自己的语气"写出来的，不是便宜模型代笔
   const customModel = ($("#customModelInput").value || "").trim();
   const writeModel = customModel || $("#modelSelect").value;
-  if (!extractModel || !writeModel) return false;
+  if (!extractModel || !writeModel) return null;
 
   const extractCallback = async (prompt) =>
     callLLMForSummary({ provider, apiKey, model: extractModel, temp: 0.3, prompt });
@@ -3351,11 +3388,12 @@ async function tryGenerateDiaryNowFor(dateStr) {
   const pinnedHighlights = await getPinnedHighlightsForDate(dateStr);
   const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr, pinnedHighlights);
 
+  if (result && result.skipped) return false;
   if (result && result.dateStr) {
     setLastDiaryDate(result.dateStr);
     return true;
   }
-  return false;
+  return null;
 }
 
 // ============================================================
@@ -4565,7 +4603,9 @@ function renderMemoryGraph(branches) {
     branchPositions.push({ branch, angle, x: bx, y: by });
     appendMemoryGraphEdge(viewport, 0, 0, bx, by, branch.virtual, branch.color, true, index % 2 ? 20 : -20);
 
-    const visibleItems = branch.items.slice(0, 42);
+    // iOS 主屏幕模式保留完整列表，但星云首屏少画一些 SVG 节点，明显降低拖拽时的掉帧。
+    const graphNodeLimit = document.documentElement.classList.contains('standalone-pwa') ? 24 : 42;
+    const visibleItems = branch.items.slice(0, graphNodeLimit);
     visibleItems.forEach((item, itemIndex) => {
       const seedText = `${branch.id}:${item.id || item.createdAt || itemIndex}`;
       let seed = 0;
@@ -4917,7 +4957,8 @@ function initWidget() {
   // 时间更新定时器
   updateWidgetTime();
   if (widgetTimeTimer) clearInterval(widgetTimeTimer);
-  widgetTimeTimer = setInterval(updateWidgetTime, 1000);
+  // 小组件只显示到分钟；每秒重绘在 iOS PWA 中会造成没有视觉收益的持续耗电与合成。
+  widgetTimeTimer = setInterval(() => { if (!document.hidden) updateWidgetTime(); }, 30000);
 
   // 刷新小纸条按钮
   const refreshBtn = $("#refreshNoteBtn");
@@ -6135,14 +6176,26 @@ if ($("#testSupabaseBtn")) {
 window.addEventListener("leith:supabase-ready", async (event) => {
   updateSupabaseStatus();
   if (event.detail && event.detail.ok) {
-    hideMemoryLockScreen();
+    if (!event.detail.dailyLocked) hideMemoryLockScreen();
     await restoreCloudAppState();
     renderMemoryList();
     await restoreCloudConversationIfNeeded();
+    if (!event.detail.dailyLocked) {
+      checkAndGenerateDiary({ silent: true }).catch(e => console.error("日记检查失败:", e));
+    }
   } else if (event.detail && event.detail.locked) {
     if (isSharedReadingEntry()) hideMemoryLockScreen();
     else showMemoryLockScreen();
   }
+});
+
+// 每日锁屏期间：第一位密码输入后，在已有有效会话的保护下悄悄整理昨天；
+// 新设备则会在成功解锁事件后走同一条幂等检查，不会重复生成。
+window.addEventListener('leith:daily-unlock-typing', () => {
+  checkAndGenerateDiary({ silent: true }).catch(e => console.error('后台日记生成失败:', e));
+});
+window.addEventListener('leith:memory-unlocked', () => {
+  checkAndGenerateDiary({ silent: true }).catch(e => console.error('解锁后日记生成失败:', e));
 });
 
 // Supabase 连接是异步的（DOMContentLoaded 触发），延迟刷新状态
@@ -6153,21 +6206,11 @@ setTimeout(updateSupabaseStatus, 5000);
 // 先根据本地记录快速判断"今天有没有可能需要处理"，需要的话立刻显示开屏占位，
 // 实际的检查和处理等云端连接稳定后再执行，执行完再让开屏淡出
 (function scheduleDiaryCheckWithEarlySplash() {
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const lastDone = getLastDiaryDate();
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const mightNeedProcessing = lastDone !== todayStr &&
-    (now.getHours() >= DIARY_TRIGGER_HOUR || (lastDone && lastDone < yesterday));
-
-  if (mightNeedProcessing) showDiarySplash();
-
+  // 云端初始化/每日解锁事件负责首次检查；这里仅作为网络较慢时的兜底。
   setTimeout(() => {
-    checkAndGenerateDiary()
-      .catch(e => console.error("日记检查失败:", e))
-      .finally(() => { if (mightNeedProcessing) hideDiarySplash(); });
+    if (!document.hidden) checkAndGenerateDiary({ silent: true }).catch(e => console.error("日记检查失败:", e));
   }, 6000);
 })();
-setInterval(() => { checkAndGenerateDiary().catch(e => console.error("日记检查失败:", e)); }, 30 * 60 * 1000);
+setInterval(() => { if (!document.hidden) checkAndGenerateDiary({ silent: true }).catch(e => console.error("日记检查失败:", e)); }, 30 * 60 * 1000);
 // 分层汇总检查频率低得多——内部本身已经做了"今天查过就跳过"，这里只要保证每次开App都会过一遍
 setTimeout(() => { checkAndGenerateRollups().catch(e => console.error("日记汇总检查失败:", e)); }, 9000);

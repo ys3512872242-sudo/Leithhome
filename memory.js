@@ -27,11 +27,23 @@
 const SUPABASE_URL = 'https://kiphsgskorznxjdcjsos.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Sk9lyJqWR92A4SIDMHK1IQ_BFbAAf9o';
 const LEITH_SESSION_LS_KEY = 'leith_memory_session_v2';
+const LEITH_DAILY_UNLOCK_LS_KEY = 'leith_daily_unlock_date_v1';
 
 let supabaseClient = null;
 let supabaseReady = false;
 let supabaseConnectError = '';
 let leithLockEnabled = false;
+
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function needsDailyUnlock() {
+  return leithLockEnabled && localStorage.getItem(LEITH_DAILY_UNLOCK_LS_KEY) !== localDateKey();
+}
 
 function getLeithSessionToken() {
   return localStorage.getItem(LEITH_SESSION_LS_KEY) || '';
@@ -133,6 +145,7 @@ async function unlockLeithMemory(passcode) {
     if (!ok) throw new Error(supabaseConnectError || '云端验证失败');
 
     window.Memory = SupabaseMemoryAdapter;
+    localStorage.setItem(LEITH_DAILY_UNLOCK_LS_KEY, localDateKey());
     window.dispatchEvent(new CustomEvent('leith:memory-unlocked'));
     window.dispatchEvent(new CustomEvent('leith:supabase-ready', {
       detail: { ok: true, error: '' }
@@ -168,6 +181,7 @@ async function changeLeithPasscode(currentPasscode, newPasscode) {
 
 function lockLeithMemoryOnThisDevice() {
   localStorage.removeItem(LEITH_SESSION_LS_KEY);
+  localStorage.removeItem(LEITH_DAILY_UNLOCK_LS_KEY);
   supabaseReady = false;
   location.reload();
 }
@@ -183,6 +197,15 @@ function bindLeithUnlockScreen() {
 
   button.dataset.unlockBound = '1';
   button.type = 'button';
+  let diaryPreparationRequested = false;
+
+  // 老设备已有有效云端会话时，第一位密码刚输入就可以在锁屏后面整理昨日日记。
+  // 新设备没有会话权限，仍会在密码验证成功后立即补做，避免绕过云端记忆锁。
+  input.addEventListener('input', () => {
+    if (diaryPreparationRequested || !input.value || !supabaseReady || !needsDailyUnlock()) return;
+    diaryPreparationRequested = true;
+    window.dispatchEvent(new CustomEvent('leith:daily-unlock-typing'));
+  });
 
   const submit = async () => {
     if (button.disabled) return;
@@ -941,7 +964,7 @@ const SupabaseMemoryAdapter = {
 
     if (!newMessages.length) {
       console.log(existingEntry ? '🧠 这一天之前生成过日记，之后没有新的对话，不用补写' : '🧠 今天还没有聊天记录，先不写日记');
-      return null;
+      return { dateStr, skipped: true };
     }
 
     // 2. 人物关系背景，避免昵称被脱离上下文误读
@@ -1462,6 +1485,11 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (typeof renderMemoryList === 'function') {
       renderMemoryList();
     }
+    if (needsDailyUnlock()) {
+      window.dispatchEvent(new CustomEvent('leith:memory-lock-required', {
+        detail: { daily: true, canPrepareDiary: true }
+      }));
+    }
   } else {
     console.warn('🧠 记忆系统使用本地模式（Supabase 未连接）');
     if (supabaseConnectError) {
@@ -1472,7 +1500,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   }
   window.dispatchEvent(new CustomEvent('leith:supabase-ready', {
-    detail: { ok, locked: leithLockEnabled && !ok, error: supabaseConnectError }
+    detail: { ok, locked: leithLockEnabled && !ok, dailyLocked: ok && needsDailyUnlock(), error: supabaseConnectError }
   }));
 });
 

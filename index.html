@@ -10,6 +10,9 @@
     var h = new Date().getHours();
     var tod = (h>=6 && h<17) ? "day" : (h>=17 && h<23) ? "dusk" : "night";
     document.documentElement.setAttribute("data-tod", tod);
+    if ((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true) {
+      document.documentElement.classList.add('standalone-pwa');
+    }
   })();
 </script>
 
@@ -19,7 +22,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Leith·Home">
 <meta name="mobile-web-app-capable" content="yes">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-leith-v2-192.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -31,11 +34,11 @@
      ============================================================ */
   :root, html[data-tod="night"]{
     /* 深夜 · 雾蓝紫，低对比低亮度，越看越安心不刺激 */
-    --bg:#15151C;
-    --bg-deep:#0D0D12;
-    --bg-elevated:#1D1E28;
-    --bg-elevated-2:#252632;
-    --bg-input:#1F2029;
+    --bg:#07152D;
+    --bg-deep:#040B19;
+    --bg-elevated:#10213B;
+    --bg-elevated-2:#172B48;
+    --bg-input:#11253F;
     --surface-glass:rgba(29,30,40,.7);
     --paper:#CBCCD8;
     --paper-dim:#767888;
@@ -54,6 +57,8 @@
     --danger:#C98C8C;
     --danger-glow:rgba(201,140,140,0.12);
     --tod-topbar-bg:rgba(13,13,18,.9);
+    --sky-bg:linear-gradient(180deg,#061329 0%,#0C2547 48%,#17395D 100%);
+    --sky-stars:.75;
 
     --bottom-bar-h: calc(58px + env(safe-area-inset-bottom));
     --radius-sm:8px;--radius-md:13px;--radius-lg:18px;--radius-xl:22px;
@@ -64,8 +69,8 @@
 
   html[data-tod="day"]{
     /* 白天 · 暖白 + 蜜桃粉，明亮但不刺眼 */
-    --bg:#FBF3EE;
-    --bg-deep:#F5E9E1;
+    --bg:#DCEEFF;
+    --bg-deep:#BFDDF4;
     --bg-elevated:#FFFFFF;
     --bg-elevated-2:#FFF8F4;
     --bg-input:#FFFFFF;
@@ -86,7 +91,9 @@
     --line-soft:rgba(74,59,60,.06);
     --danger:#D9695F;
     --danger-glow:rgba(217,105,95,0.1);
-    --tod-topbar-bg:rgba(255,255,255,.92);
+    --tod-topbar-bg:rgba(246,251,255,.84);
+    --sky-bg:linear-gradient(180deg,#8DC9F3 0%,#C4E5F8 46%,#F4F4E8 100%);
+    --sky-stars:0;
 
     --bottom-bar-h: calc(58px + env(safe-area-inset-bottom));
     --radius-sm:8px;--radius-md:13px;--radius-lg:18px;--radius-xl:22px;
@@ -96,30 +103,32 @@
   }
 
   html[data-tod="dusk"]{
-    /* 傍晚 · 浅紫罗兰 + 玫瑰金，暧昧黄昏感 */
-    --bg:#241F30;
-    --bg-deep:#1A1622;
-    --bg-elevated:#302A3D;
-    --bg-elevated-2:#3A3248;
-    --bg-input:#2C2637;
-    --surface-glass:rgba(48,42,61,.72);
-    --paper:#EDE6F0;
-    --paper-dim:#A899B5;
-    --accent:#D68CB0;
-    --accent-2:#E6A8C4;
-    --accent-dim:#8A5470;
-    --accent-glow:rgba(214,140,176,0.18);
-    --moon:#B8A0D0;
-    --moon-dim:#6E5C8A;
-    --moon-glow:rgba(184,160,208,0.15);
-    --violet:#C9A8E0;
-    --amber:#E6C89A;
-    --rose:#E0A8C4;
-    --line:#40374F;
-    --line-soft:#2C2637;
-    --danger:#D6928C;
+    /* 傍晚 · 真正的晚霞：暮蓝、杏橙和一线玫瑰，不再是整屏紫色 */
+    --bg:#263A5C;
+    --bg-deep:#172640;
+    --bg-elevated:#304665;
+    --bg-elevated-2:#3A5272;
+    --bg-input:#2D4261;
+    --surface-glass:rgba(37,55,82,.74);
+    --paper:#FFF4ED;
+    --paper-dim:#D7C5C0;
+    --accent:#FFAD86;
+    --accent-2:#FFD0A8;
+    --accent-dim:#A86F67;
+    --accent-glow:rgba(255,153,118,.20);
+    --moon:#FFD5B1;
+    --moon-dim:#B48485;
+    --moon-glow:rgba(255,196,151,.18);
+    --violet:#B8B0DB;
+    --amber:#FFD09B;
+    --rose:#F7A0A5;
+    --line:rgba(255,226,213,.16);
+    --line-soft:rgba(255,226,213,.08);
+    --danger:#F39B91;
     --danger-glow:rgba(214,146,140,0.12);
-    --tod-topbar-bg:rgba(26,22,34,.9);
+    --tod-topbar-bg:rgba(25,39,62,.84);
+    --sky-bg:linear-gradient(180deg,#263B68 0%,#6D6F91 45%,#E69A91 76%,#F6BF8D 100%);
+    --sky-stars:.18;
 
     --bottom-bar-h: calc(58px + env(safe-area-inset-bottom));
     --radius-sm:8px;--radius-md:13px;--radius-lg:18px;--radius-xl:22px;
@@ -145,13 +154,24 @@
       radial-gradient(ellipse 620px 480px at 12% -8%,var(--accent-glow),transparent 60%),
       radial-gradient(ellipse 700px 560px at 100% 8%,var(--moon-glow),transparent 58%),
       radial-gradient(ellipse 500px 400px at 50% 115%,var(--moon-glow),transparent 60%),
-      var(--bg);
+      var(--sky-bg);
   }
   body::before{
     content:'';position:fixed;inset:0;pointer-events:none;z-index:1;
     opacity:.035;mix-blend-mode:overlay;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
+  body::after{
+    content:'';position:fixed;inset:0;pointer-events:none;z-index:0;opacity:var(--sky-stars);
+    background-image:
+      radial-gradient(circle at 12% 18%,rgba(255,255,255,.95) 0 1px,transparent 1.5px),
+      radial-gradient(circle at 31% 9%,rgba(255,255,255,.7) 0 1px,transparent 1.5px),
+      radial-gradient(circle at 53% 21%,rgba(255,255,255,.8) 0 1px,transparent 1.5px),
+      radial-gradient(circle at 77% 12%,rgba(255,255,255,.9) 0 1px,transparent 1.5px),
+      radial-gradient(circle at 89% 30%,rgba(255,255,255,.65) 0 1px,transparent 1.5px);
+    background-size:220px 180px;animation:skyBreath 6s ease-in-out infinite alternate;
+  }
+  @keyframes skyBreath{from{opacity:calc(var(--sky-stars) * .72)}to{opacity:var(--sky-stars)}}
 
   /* ===== 页面容器 ===== */
   .page{display:none;flex-direction:column;width:100%;position:absolute;top:0;left:0;right:0;bottom:var(--bottom-bar-h);}
@@ -281,6 +301,19 @@
     color:color-mix(in srgb, var(--accent-2) 55%, var(--paper-dim) 45%);
     font-family:var(--sans);font-style:italic;opacity:.82;
   }
+  .thinking-block{margin:7px 0;border:1px solid var(--line);border-radius:11px;background:rgba(127,145,180,.08);overflow:hidden;}
+  .thinking-block summary{list-style:none;display:flex;align-items:center;gap:7px;padding:8px 10px;cursor:pointer;color:var(--paper-dim);font-size:11px;letter-spacing:.35px;user-select:none;-webkit-tap-highlight-color:transparent;}
+  .thinking-block summary::-webkit-details-marker{display:none;}
+  .thinking-spark{color:var(--accent-2);font-size:10px;}
+  .thinking-chevron{margin-left:auto;transition:transform .2s ease;font-size:13px;}
+  .thinking-block[open] .thinking-chevron{transform:rotate(180deg);}
+  .thinking-content{border-top:1px solid var(--line-soft);padding:9px 10px;color:var(--paper-dim);font-size:12px;line-height:1.75;font-style:italic;white-space:normal;}
+
+  /* 主屏幕 PWA 在 iPhone 上减少持续 GPU 合成：静态天空保留，重模糊与呼吸动画收轻。 */
+  html.standalone-pwa .bottom-bar,html.standalone-pwa .topbar{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+  html.standalone-pwa body::before{display:none;}
+  html.standalone-pwa body::after{animation:none;}
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}}
 
   .msg-row.narration{justify-content:center;margin:2px 0;}
   .bubble.narration{
