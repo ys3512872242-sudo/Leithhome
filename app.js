@@ -764,7 +764,7 @@ function findAdultItem(itemName) {
 
 // ===== 衣装货架 / 衣帽间 =====
 const CLOSET_SLOT_LABELS = {
-  hair: "发型", top: "上衣", bottom: "下装", dress: "裙子", shoes: "鞋子",
+  hair: "发型", top: "上衣", bottom: "下装", dress: "连衣裙", socks: "袜子", shoes: "鞋子",
   accessory: "首饰", hat: "帽子", bag: "包"
 };
 
@@ -1576,7 +1576,7 @@ function initAddClosetBtn() {
   btn.addEventListener("click", () => {
     const name = prompt("衣装名字？比如：雾蓝针织开衫");
     if (!name) return;
-    const slot = prompt("部位：top上衣 / bottom下装 / dress裙子 / shoes鞋子 / accessory首饰 / hat帽子 / bag包", "top");
+    const slot = prompt("部位：top上衣 / bottom下装（半身裙或裤子） / dress连衣裙 / socks袜子 / shoes鞋子 / hat帽子", "top");
     if (!slot) return;
     const price = parseInt(prompt("价格？", "36"), 10);
     if (isNaN(price) || price <= 0) return showToast("价格要填数字");
@@ -5730,7 +5730,11 @@ function renderRasterPaperDoll() {
   const base = getBundledWardrobeCatalog().base;
   if (!base?.layers?.length || !base.canvas || !base.crop) return "";
   const equipped = Object.fromEntries(getEquippedClosetItems().map(x => [x.slot, x.item]));
-  const selectedItems = Object.values(equipped).filter(Boolean);
+  const layerPriority = { socks: 10, shoes: 20, bottom: 30, top: 40, dress: 50, accessory: 70, bag: 80, hat: 90 };
+  const selectedItems = Object.entries(equipped)
+    .filter(([, item]) => Boolean(item))
+    .sort(([slotA], [slotB]) => (layerPriority[slotA] || 60) - (layerPriority[slotB] || 60))
+    .map(([, item]) => item);
   if (selectedItems.some(item => !item.asset)) return "";
 
   const canvasWidth = Number(base.canvas[0]) || 1024;
