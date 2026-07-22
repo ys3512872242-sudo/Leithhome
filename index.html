@@ -1144,6 +1144,9 @@
   .closet-card.is-equipped{border-color:rgba(198,142,151,.65);box-shadow:0 0 0 1px rgba(198,142,151,.12) inset;}
   .closet-card-preview{height:104px;border-radius:13px;background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.15),transparent 66%);}
   .closet-card-preview .closet-item-svg{width:96px;height:96px;}
+  .closet-asset-preview{width:100%;height:100%;object-fit:contain;display:block;filter:drop-shadow(0 5px 8px rgba(48,35,37,.15));}
+  .paper-doll-raster{position:relative;height:430px;max-height:58vh;aspect-ratio:var(--doll-ratio,.278);overflow:hidden;margin:-6px auto -2px;filter:drop-shadow(0 13px 15px rgba(73,54,52,.14));}
+  .paper-doll-raster img{position:absolute;max-width:none;display:block;pointer-events:none;}
   .closet-card-top{display:flex;align-items:center;gap:7px;margin:7px 2px 5px;}
   .closet-swatch{width:9px;height:9px;border-radius:50%;border:1px solid rgba(255,255,255,.34);flex-shrink:0;}
   .closet-card-name{font-size:12px;color:var(--paper);line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -2282,7 +2285,8 @@
       <div class="field-group">
         <label class="field-label">模型</label>
         <div class="row-flex"><select id="modelSelect"></select></div>
-        <input type="text" id="customModelInput" placeholder="或手动输入模型名称" style="margin-top:8px;">
+        <input type="text" id="customModelInput" class="hidden" placeholder="填写服务商文档里的精确模型名称" style="margin-top:8px;">
+        <p class="helper-text" id="effectiveModelHint">正在读取实际调用模型…</p>
       </div>
       <div class="field-group">
         <label class="field-label">日记素材整理用的模型（选填）</label>
@@ -2371,6 +2375,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="memory.js"></script>
+<script src="wardrobe/catalog.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

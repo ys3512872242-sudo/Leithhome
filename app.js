@@ -29,6 +29,8 @@ const LS = {
   closetShopItems: "companion_closet_shop_items_v1",
   closetOwnedItems: "companion_closet_owned_items_v1",
   closetOutfit: "companion_closet_outfit_v1",
+  closetCatalogVersion: "companion_closet_catalog_version_v1",
+  closetRasterMigration: "companion_closet_raster_migration_v1",
   foldedDates: "companion_folded_dates_v1",
   // 共读小说
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
@@ -765,6 +767,44 @@ const CLOSET_SLOT_LABELS = {
   hair: "发型", top: "上衣", bottom: "下装", dress: "裙子", shoes: "鞋子",
   accessory: "首饰", hat: "帽子", bag: "包"
 };
+
+function getBundledWardrobeCatalog() {
+  const catalog = window.LEITH_WARDROBE_CATALOG;
+  return catalog && typeof catalog === "object" ? catalog : { version: 0, base: null, items: [] };
+}
+
+function mergeBundledClosetItems(items) {
+  const catalog = getBundledWardrobeCatalog();
+  const catalogVersion = String(catalog.version || 0);
+  const syncedVersion = localStorage.getItem(LS.closetCatalogVersion);
+  if (syncedVersion === catalogVersion) return items;
+  const ownedIds = new Set(loadJSON(LS.closetOwnedItems, []).map(item => item.id));
+  const existingIds = new Set(items.map(item => item.id));
+  const merged = [...items];
+  (catalog.items || []).forEach(item => {
+    if (!item?.id || existingIds.has(item.id) || ownedIds.has(item.id)) return;
+    merged.push(item);
+    existingIds.add(item.id);
+  });
+  localStorage.setItem(LS.closetCatalogVersion, catalogVersion);
+  return merged;
+}
+
+function migrateLegacyClosetItemsForRaster() {
+  const baseId = getBundledWardrobeCatalog().base?.id;
+  if (!baseId || localStorage.getItem(LS.closetRasterMigration) === baseId) return;
+  const shop = loadJSON(LS.closetShopItems, null);
+  if (Array.isArray(shop)) saveJSON(LS.closetShopItems, shop.filter(item => item.asset));
+  const owned = loadJSON(LS.closetOwnedItems, []).filter(item => item.asset);
+  saveJSON(LS.closetOwnedItems, owned);
+  const validOwnedIds = new Set(owned.map(item => item.ownedId));
+  const outfit = loadJSON(LS.closetOutfit, {});
+  Object.keys(outfit).forEach(slot => {
+    if (!validOwnedIds.has(outfit[slot])) delete outfit[slot];
+  });
+  saveJSON(LS.closetOutfit, outfit);
+  localStorage.setItem(LS.closetRasterMigration, baseId);
+}
 const DEFAULT_CLOSET_ITEMS = [
   { id: "closet-default-1", name: "雾蓝针织开衫", emoji: "🧶", price: 36, slot: "top", visual: "cardigan", color: "#9fb3bd", accent: "#eef2f0", style: "通勤、温柔、下雨天", note: "想看你穿得软一点" },
   { id: "closet-default-2", name: "奶油白男友衬衫", emoji: "👔", price: 42, slot: "top", visual: "boyfriend-shirt", color: "#f4eadc", accent: "#d6bfa5", style: "男友衬衫、居家、清晨", note: "像偷穿了我的衬衫" },
@@ -809,12 +849,15 @@ function normalizeClosetList(items) {
 }
 
 function getClosetShopItems() {
+  migrateLegacyClosetItemsForRaster();
   const items = loadJSON(LS.closetShopItems, null);
   if (items === null) {
-    saveJSON(LS.closetShopItems, DEFAULT_CLOSET_ITEMS);
-    return DEFAULT_CLOSET_ITEMS;
+    const defaults = getBundledWardrobeCatalog().base ? [] : DEFAULT_CLOSET_ITEMS;
+    const initial = mergeBundledClosetItems(defaults);
+    saveJSON(LS.closetShopItems, initial);
+    return initial;
   }
-  const normalized = normalizeClosetList(items);
+  const normalized = normalizeClosetList(mergeBundledClosetItems(items));
   if (JSON.stringify(normalized) !== JSON.stringify(items)) saveJSON(LS.closetShopItems, normalized);
   return normalized;
 }
@@ -1300,8 +1343,7 @@ function notifyLeithAdultPurchase(itemName) {
 async function autoRespondToNarration(threadId, bubble, row) {
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getSelectedChatModel();
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
 
   if (!apiKey || !provider || !model) {
@@ -1681,9 +1723,36 @@ function loadActiveThreadIntoChat() {
 // ============================================================
 let providers = loadJSON(LS.providers, DEFAULT_PROVIDERS);
 let activeProviderId = localStorage.getItem(LS.activeProviderId) || (providers[0] && providers[0].id);
+const CUSTOM_MODEL_OPTION = "__leith_custom_model__";
 
 function getActiveProvider() {
   return providers.find(p => p.id === activeProviderId) || providers[0];
+}
+
+function getSelectedChatModel() {
+  const select = $("#modelSelect");
+  if (!select) return "";
+  if (select.value === CUSTOM_MODEL_OPTION) {
+    return ($("#customModelInput")?.value || "").trim();
+  }
+  return select.value || "";
+}
+
+function updateEffectiveModelHint() {
+  const select = $("#modelSelect");
+  const customInput = $("#customModelInput");
+  const hint = $("#effectiveModelHint");
+  if (!select || !customInput) return;
+  const usingCustom = select.value === CUSTOM_MODEL_OPTION;
+  customInput.classList.toggle("hidden", !usingCustom);
+  const model = getSelectedChatModel();
+  const provider = getActiveProvider();
+  if (hint) {
+    hint.innerText = model
+      ? `当前真正调用：${provider?.name || "未选择服务商"} / ${model}`
+      : "请填写要实际调用的自定义模型名称";
+    hint.style.color = model ? "var(--paper-dim)" : "#b85f65";
+  }
 }
 
 function renderProviderList() {
@@ -1785,8 +1854,17 @@ function populateModelSelect() {
     opt.innerText = m;
     sel.appendChild(opt);
   });
+  const customOpt = document.createElement("option");
+  customOpt.value = CUSTOM_MODEL_OPTION;
+  customOpt.innerText = "手动输入其他模型…";
+  sel.appendChild(customOpt);
   const savedModel = localStorage.getItem(LS.model);
-  if (savedModel && active.models.includes(savedModel)) sel.value = savedModel;
+  const savedCustomModel = localStorage.getItem(LS.customModel);
+  if (savedCustomModel) sel.value = CUSTOM_MODEL_OPTION;
+  else if (savedModel && active.models.includes(savedModel)) sel.value = savedModel;
+  else if (active.models.length) sel.value = active.models[0];
+  else sel.value = CUSTOM_MODEL_OPTION;
+  updateEffectiveModelHint();
 }
 
 function updateStatusLabel() {
@@ -1856,18 +1934,34 @@ function initConfig() {
 }
 
 $("#tempInput").addEventListener("input", (e) => { $("#tempVal").innerText = e.target.value; });
+$("#modelSelect").addEventListener("change", () => {
+  // 下拉框选了具体模型后，旧的手动输入值不再拥有“隐形覆盖权”。
+  if ($("#modelSelect").value !== CUSTOM_MODEL_OPTION) {
+    $("#customModelInput").value = "";
+    localStorage.removeItem(LS.customModel);
+  }
+  updateEffectiveModelHint();
+});
+$("#customModelInput").addEventListener("input", updateEffectiveModelHint);
 
 $("#saveConfigBtn").onclick = () => {
   const key = $("#apiKey").value.trim();
   if (!key) return showModal("提示", "API Key 不能为空。");
+  const selectedModel = getSelectedChatModel();
+  if (!selectedModel) return showModal("提示", "请先选择模型，或填写自定义模型名称。");
   localStorage.setItem(LS.apiKey, key);
-  localStorage.setItem(LS.model, $("#modelSelect").value);
-  localStorage.setItem(LS.customModel, $("#customModelInput").value.trim());
+  if ($("#modelSelect").value === CUSTOM_MODEL_OPTION) {
+    localStorage.setItem(LS.customModel, selectedModel);
+  } else {
+    localStorage.setItem(LS.model, selectedModel);
+    localStorage.removeItem(LS.customModel);
+  }
   localStorage.setItem(LS.diaryModel, $("#diaryModelInput").value.trim());
   localStorage.setItem(LS.temp, $("#tempInput").value);
   localStorage.setItem(LS.systemPrompt, $("#systemPromptInput").value);
   updateStatusLabel();
-  showToast("配置已保存");
+  updateEffectiveModelHint();
+  showToast(`配置已保存 · 实际调用 ${selectedModel}`);
   lastHealthState = null; // 换了配置，之前的健康状态不再有参考意义
   consecutiveHealthFails = 0;
   runHealthCheck({ silent: true });
@@ -2408,8 +2502,7 @@ async function regenerateMessage(assistantMsgId) {
 async function regenerateFromMessage(userMsg) {
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getSelectedChatModel();
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
 
   if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
@@ -3578,8 +3671,11 @@ async function callLLMForSummary({ provider, apiKey, model, temp, prompt }) {
 // Leith 以第一人称视角记下这一天，更像"他自己在记东西"
 // ============================================================
 const DIARY_LAST_DATE_LS = "companion_diary_last_date_v1";
-const DIARY_FAILURE_COOLDOWN_LS = "companion_diary_failure_cooldown_v1";
-const DIARY_FAILURE_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+// v1 一次失败会安静等待 6 小时，用户会误以为“根本没有自动写”。
+// v2 只短暂避开连续重复请求；解锁成功时仍会立刻再试。
+const DIARY_FAILURE_COOLDOWN_LS = "companion_diary_failure_cooldown_v2";
+const DIARY_FAILURE_COOLDOWN_MS = 2 * 60 * 1000;
+const DIARY_PENDING_DATES_LS = "companion_diary_pending_dates_v1";
 
 function formatLocalDate(date = new Date()) {
   const year = date.getFullYear();
@@ -3628,7 +3724,7 @@ function getLastCompletedDiaryDateStr(now = new Date()) {
 function getDiaryFailureKey(dateStr) {
   const provider = getActiveProvider();
   const providerKey = provider ? `${provider.id || provider.name || provider.baseUrl || "provider"}|${provider.baseUrl || ""}` : "no-provider";
-  return `${dateStr}|${providerKey}|extract:${getDiaryModel()}|write:${($("#customModelInput").value || "").trim() || $("#modelSelect").value || ""}`;
+  return `${dateStr}|${providerKey}|extract:${getDiaryModel()}|write:${getSelectedChatModel()}`;
 }
 
 function getDiaryFailureCooldown() {
@@ -3661,6 +3757,30 @@ function setLastDiaryDate(dateStr) {
   localStorage.setItem(DIARY_LAST_DATE_LS, dateStr);
 }
 
+function getPendingDiaryDates() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(DIARY_PENDING_DATES_LS) || "[]");
+    return Array.isArray(rows) ? rows.filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort() : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function rememberPendingDiaryDate(dateStr) {
+  const rows = new Set(getPendingDiaryDates());
+  rows.add(dateStr);
+  localStorage.setItem(DIARY_PENDING_DATES_LS, JSON.stringify([...rows].sort()));
+}
+
+function forgetPendingDiaryDate(dateStr) {
+  const rows = getPendingDiaryDates().filter(date => date !== dateStr);
+  localStorage.setItem(DIARY_PENDING_DATES_LS, JSON.stringify(rows));
+}
+
+function emitDiaryStatus(status, dateStr) {
+  window.dispatchEvent(new CustomEvent("leith:diary-status", { detail: { status, dateStr } }));
+}
+
 // 手动触发：把"今天"写成日记（供 token 提示条里的按钮使用）
 async function tryGenerateDiaryNow() {
   const todayStr = getCurrentDiaryDateStr();
@@ -3674,24 +3794,58 @@ async function tryGenerateDiaryNow() {
 // 才会真正执行这次检查，这是所有纯前端应用的共同限制。
 let diaryCheckPromise = null;
 
-async function checkAndGenerateDiary({ silent = false } = {}) {
+async function checkAndGenerateDiary({ silent = false, forceRetry = false } = {}) {
   if (diaryCheckPromise) return diaryCheckPromise;
   diaryCheckPromise = (async () => {
   const now = new Date();
   const lastDone = getLastDiaryDate();
   const yesterday = getLastCompletedDiaryDateStr(now);
+  // 如果某天因断网/模型临时失败没写成，之后跨天打开也先把它补回来。
+  const pending = getPendingDiaryDates().filter(date => date <= yesterday);
+  let targetDate = pending[0] || yesterday;
   if (!window.Memory?.isReady?.()) return false;
+  // 新版第一次安装时本机还没有 pending 标记，因此顺手向前看三天。
+  // 优先补最近的一天；之后的半小时检查/下次打开会继续补更早的漏项。
+  if (!pending.length && window.Memory.hasDailyDiary && window.Memory.hasDiarySource) {
+    for (let daysBack = 0; daysBack < 3; daysBack++) {
+      const candidate = formatLocalDate(offsetLocalDate(new Date(yesterday + "T00:00:00"), -daysBack));
+      if (await window.Memory.hasDailyDiary(candidate)) continue;
+      if (await window.Memory.hasDiarySource(candidate)) {
+        targetDate = candidate;
+        break;
+      }
+    }
+  }
   // 云端日记才是事实来源：避免本地曾标记“写过”，但云端其实是拒答、重复项或已被清理。
   if (window.Memory.hasDailyDiary) {
-    if (await window.Memory.hasDailyDiary(yesterday)) {
-      if (lastDone !== yesterday) setLastDiaryDate(yesterday);
+    if (await window.Memory.hasDailyDiary(targetDate)) {
+      forgetPendingDiaryDate(targetDate);
+      clearDiaryFailureCooling(targetDate);
+      if (lastDone !== targetDate) setLastDiaryDate(targetDate);
       return false;
     }
-  } else if (lastDone === yesterday) {
+  } else if (lastDone === targetDate) {
     return false;
   }
-  if (isDiaryFailureCooling(yesterday)) return false;
-  return silent ? await processDayEnd(yesterday) : await runDayEndWithSplash(yesterday);
+  if (forceRetry) clearDiaryFailureCooling(targetDate);
+  if (isDiaryFailureCooling(targetDate)) return false;
+
+  rememberPendingDiaryDate(targetDate);
+  emitDiaryStatus("writing", targetDate);
+  const ok = silent ? await processDayEnd(targetDate) : await runDayEndWithSplash(targetDate);
+  if (!ok) {
+    emitDiaryStatus("retry", targetDate);
+    return false;
+  }
+
+  // 没有聊天素材时 processDayEnd 也会正常结束，但不应谎报“写好了一篇”。
+  const reallyWritten = window.Memory.hasDailyDiary
+    ? await window.Memory.hasDailyDiary(targetDate)
+    : true;
+  forgetPendingDiaryDate(targetDate);
+  clearDiaryFailureCooling(targetDate);
+  emitDiaryStatus(reallyWritten ? "complete" : "no-source", targetDate);
+  return reallyWritten;
   })();
   try { return await diaryCheckPromise; }
   finally { diaryCheckPromise = null; }
@@ -3794,8 +3948,7 @@ async function processPinnedMessagesForDate(dateStr) {
 
   const provider = getActiveProvider();
   const apiKey = localStorage.getItem(LS.apiKey);
-  const customModel = ($("#customModelInput").value || "").trim();
-  const writeModel = customModel || $("#modelSelect").value;
+  const writeModel = getSelectedChatModel();
   if (!provider || !apiKey || !writeModel) return;
 
   const highlightText = entries.map(e => `- ${e.content}`).join('\n');
@@ -3827,8 +3980,7 @@ ${highlightText}`;
 function getDiaryModel() {
   const diaryModel = ($("#diaryModelInput").value || "").trim();
   if (diaryModel) return diaryModel;
-  const customModel = ($("#customModelInput").value || "").trim();
-  return customModel || $("#modelSelect").value;
+  return getSelectedChatModel();
 }
 
 async function tryGenerateDiaryNowFor(dateStr, options = {}) {
@@ -3840,8 +3992,7 @@ async function tryGenerateDiaryNowFor(dateStr, options = {}) {
   // 提炼事实：用"日记专用模型"（便宜模型），只做客观事实整理，不需要用聊天那么贵的模型
   const extractModel = getDiaryModel();
   // 写日记：用平时聊天的那个模型，保证日记是"Leith自己的语气"写出来的，不是便宜模型代笔
-  const customModel = ($("#customModelInput").value || "").trim();
-  const writeModel = customModel || $("#modelSelect").value;
+  const writeModel = getSelectedChatModel();
   if (!extractModel || !writeModel) return null;
 
   const extractCallback = async (prompt) =>
@@ -3850,8 +4001,10 @@ async function tryGenerateDiaryNowFor(dateStr, options = {}) {
     callLLMForSummary({ provider, apiKey, model: writeModel, temp: 0.8, prompt });
 
   const pinnedHighlights = await getPinnedHighlightsForDate(dateStr);
-  const finalOptions = { ...options };
-  if (finalOptions.forceRewrite && !Array.isArray(finalOptions.sourceMessages)) {
+  const finalOptions = { useRawSourceFallback: true, ...options };
+  // 云端同步稍慢或临时读取失败时，也会把当前浏览器里这一天的对话并进素材；
+  // 新设备没有本地记录时则仍然完全依赖云端，不影响跨浏览器使用。
+  if (!Array.isArray(finalOptions.sourceMessages)) {
     finalOptions.sourceMessages = collectLocalDiarySourceMessages(dateStr);
   }
   const result = await window.Memory.generateDiary(extractCallback, writeCallback, dateStr, pinnedHighlights, finalOptions);
@@ -3859,6 +4012,7 @@ async function tryGenerateDiaryNowFor(dateStr, options = {}) {
   if (result && result.skipped) return false;
   if (result && result.dateStr) {
     setLastDiaryDate(result.dateStr);
+    clearDiaryFailureCooling(result.dateStr);
     return result.hasMore ? "partial" : true;
   }
   return null;
@@ -4065,8 +4219,7 @@ async function runHealthCheck(opts = {}) {
   if (healthChecking) return; // 避免重叠探测
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || ($("#modelSelect") ? $("#modelSelect").value : "");
+  const model = getSelectedChatModel();
 
   if (!apiKey || !provider || !model) {
     setHealthDot(null);
@@ -4154,8 +4307,7 @@ async function sendChat(overrideContent) {
 
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getSelectedChatModel();
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
   // 支持外部传入文本（编辑消息后重新发送用），否则读输入框
   // 注意：按钮点击时 event 会被当第一个参数传进来，要过滤掉
@@ -4791,8 +4943,7 @@ async function sendTheaterMessage() {
 
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getSelectedChatModel();
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.8");
 
   if (!apiKey || !provider || !model) {
@@ -5532,6 +5683,13 @@ function closetColor(value, fallback = "#c8b7ad") {
 
 function renderClosetVisual(item, mode = "doll") {
   if (!item) return "";
+  if (mode !== "doll" && (item.thumbnail || item.asset)) {
+    const src = String(item.thumbnail || item.asset).replace(/["'<>]/g, "");
+    return `<img class="closet-asset-preview" src="${src}" alt="${escapeHtml(item.name || "衣物")}" loading="lazy">`;
+  }
+  // 图片衣物属于 1024px 分层人物坐标系，不能塞进旧 SVG 纸娃娃坐标系；
+  // 有基础人物包时会由 renderRasterPaperDoll 单独叠放。
+  if (mode === "doll" && item.asset) return "";
   const c = closetColor(item.color);
   const a = closetColor(item.accent, "#f4eadc");
   const stroke = "rgba(55,43,42,.24)";
@@ -5566,6 +5724,51 @@ function renderClosetVisual(item, mode = "doll") {
     "tote": `<path d="M28 20c0-10 24-10 24 0" fill="none" stroke="${a}" stroke-width="6" stroke-linecap="round"/><rect x="20" y="25" width="40" height="42" rx="9" fill="${c}" stroke="${stroke}"/><path d="M29 40h22" stroke="${a}" stroke-opacity=".55" stroke-width="3"/>`
   };
   return `<svg class="closet-item-svg" viewBox="0 0 80 80" aria-hidden="true">${preview[visual] || preview.cardigan}</svg>`;
+}
+
+function renderRasterPaperDoll() {
+  const base = getBundledWardrobeCatalog().base;
+  if (!base?.layers?.length || !base.canvas || !base.crop) return "";
+  const equipped = Object.fromEntries(getEquippedClosetItems().map(x => [x.slot, x.item]));
+  const selectedItems = Object.values(equipped).filter(Boolean);
+  if (selectedItems.some(item => !item.asset)) return "";
+
+  const canvasWidth = Number(base.canvas[0]) || 1024;
+  const canvasHeight = Number(base.canvas[1]) || 1024;
+  const crop = base.crop;
+  const cropWidth = Number(crop.width) || canvasWidth;
+  const cropHeight = Number(crop.height) || canvasHeight;
+  const imageStyle = `width:${canvasWidth / cropWidth * 100}%;height:${canvasHeight / cropHeight * 100}%;left:${-Number(crop.x || 0) / cropWidth * 100}%;top:${-Number(crop.y || 0) / cropHeight * 100}%;`;
+  const dress = equipped.dress;
+  const replacements = {
+    topwear: dress || equipped.top,
+    bottomwear: dress ? { skip: true } : equipped.bottom,
+    footwear: equipped.shoes,
+    headwear: equipped.hat,
+  };
+  const placed = new Set();
+  const layers = [];
+  [...base.layers].sort((a, b) => Number(a.order || 0) - Number(b.order || 0)).forEach(layer => {
+    const semantic = String(layer.name || "").toLowerCase().replace(/[\s_-]+/g, "");
+    const replacement = replacements[semantic];
+    if (replacement?.skip) return;
+    if (replacement?.asset) {
+      if (!placed.has(replacement.id)) {
+        layers.push({ asset: replacement.asset, name: replacement.name });
+        placed.add(replacement.id);
+      }
+      return;
+    }
+    layers.push({ asset: layer.asset, name: layer.name });
+  });
+  selectedItems.forEach(item => {
+    if (item.asset && !placed.has(item.id)) layers.push({ asset: item.asset, name: item.name });
+  });
+  const images = layers.map((layer, index) => {
+    const src = String(layer.asset || "").replace(/["'<>]/g, "");
+    return `<img src="${src}" alt="" style="${imageStyle}z-index:${index + 1};">`;
+  }).join("");
+  return `<div class="paper-doll-raster" style="--doll-ratio:${cropWidth / cropHeight};" role="img" aria-label="Susie 的分层人物">${images}</div>`;
 }
 
 function renderPaperDollSvg() {
@@ -5635,7 +5838,7 @@ function renderPaperDollSvg() {
 
 function renderClosetPage() {
   const mount = $("#paperDollMount");
-  if (mount) mount.innerHTML = renderPaperDollSvg();
+  if (mount) mount.innerHTML = renderRasterPaperDoll() || renderPaperDollSvg();
   const equipped = getEquippedClosetItems();
   const todayLabel = $("#closetTodayLabel");
   if (todayLabel) todayLabel.textContent = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
@@ -5887,8 +6090,7 @@ async function generateDailyNote() {
 
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getSelectedChatModel();
 
   if (!apiKey || !provider || !model) {
     if (noteEl) noteEl.innerText = "（配置好服务商后，Leith 会给你写每日小纸条）";
@@ -6756,8 +6958,7 @@ async function sendReadingChat() {
 
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getSelectedChatModel();
   const temp = parseFloat(localStorage.getItem(LS.temp) || "0.7");
   if (!apiKey || !provider || !model) return showModal("提示", "请先在设置里配置好服务商、密钥和模型。");
 
@@ -6845,8 +7046,7 @@ async function autoSaveReadingMemoryIfNeeded() {
 
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
-  const customModel = ($("#customModelInput").value || "").trim();
-  const model = customModel || $("#modelSelect").value;
+  const model = getSelectedChatModel();
   if (!apiKey || !provider || !model) return; // 没配置好就不勉强总结
 
   const book = readingBooks.find(b => b.id === readingActiveBookId);
@@ -6975,7 +7175,17 @@ window.addEventListener('leith:daily-unlock-typing', () => {
   checkAndGenerateDiary({ silent: true }).catch(e => console.error('后台日记生成失败:', e));
 });
 window.addEventListener('leith:memory-unlocked', () => {
-  checkAndGenerateDiary({ silent: true }).catch(e => console.error('解锁后日记生成失败:', e));
+  // 密码确认成功是最可靠的补写时机：即使早先网络/模型失败留下了短暂冷却，也立刻再试。
+  checkAndGenerateDiary({ silent: true, forceRetry: true }).catch(e => console.error('解锁后日记生成失败:', e));
+});
+window.addEventListener('leith:diary-status', (event) => {
+  const status = event.detail?.status;
+  if (status === 'complete') {
+    showToast('📔 Leith 已经写好昨日日记');
+    if ($('#diaryBookPage')) renderDiaryBook().catch(() => {});
+  } else if (status === 'retry') {
+    showToast('日记这次没写成，Leith 会自动再试，不会跳过这一天');
+  }
 });
 
 // Supabase 连接是异步的（DOMContentLoaded 触发），延迟刷新状态
