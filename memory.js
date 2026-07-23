@@ -742,14 +742,15 @@ const SupabaseMemoryAdapter = {
     try {
       const { data, error } = await supabaseClient
         .from('diary_entries')
-        .select('id, content, covered_until')
+        .select('id, content')
         .eq('period', 'day')
         .eq('date_str', dateStr)
         .limit(1);
       if (error) throw error;
-      if (!data?.length || looksLikeDiaryRefusal(data[0].content)) return false;
-      const { endIso } = getDiaryRangeForDate(dateStr);
-      return Boolean(data[0].covered_until && new Date(data[0].covered_until).getTime() >= new Date(endIso).getTime());
+      // 一旦这一天已有有效正文，就视为正式封账。自动流程不得因为
+      // covered_until、设备差异或后来同步到的新消息再次改写它；
+      // 只有用户明确点“重新生成”才允许覆盖。
+      return Boolean(data?.length && !looksLikeDiaryRefusal(data[0].content));
     } catch (e) {
       console.error('检查指定日期日记失败:', e);
       return false;
@@ -1048,8 +1049,8 @@ const SupabaseMemoryAdapter = {
     const dateStr = diaryDateStr || new Date().toISOString().slice(0, 10);
     const forceRewrite = Boolean(options.forceRewrite);
 
-    // 0. 看这一天是否已经写过（部分）日记，如果有，记下"已经覆盖到哪个时间点"，
-    //    这次只需要读那之后的新对话
+    // 0. 每个 05:00—次日 05:00 的日记日只自动写一次。
+    //    已有有效正文就直接跳过；只有显式 forceRewrite 才能覆盖。
     let existingEntry = null;
     try {
       const { data } = await supabaseClient
@@ -1062,12 +1063,16 @@ const SupabaseMemoryAdapter = {
     } catch (e) {
       console.error('检查今日日记是否已存在失败（继续尝试生成）:', e);
     }
+    if (existingEntry && !forceRewrite && !looksLikeDiaryRefusal(existingEntry.content)) {
+      console.log(`🧠 ${dateStr} 的日记已经封账，自动流程不再改写`);
+      return { dateStr, skipped: true, alreadyWritten: true };
+    }
 
     // 1. 取这个"睡眠日"（05:00 到次日 05:00）所有 thread 里的对话，跨对话线一起看，
     //    这样即使 Susie 在不同窗口/不同世界线里聊天，日记也是完整的一天；
-    //    如果已经有部分日记了，只读"上次覆盖点之后"的新对话
+    //    普通写入读取完整时间段；重写也读取同一完整时间段。
     const { startIso: dayStart, endIso: dayEnd } = getDiaryRangeForDate(dateStr);
-    const rangeStart = (!forceRewrite && existingEntry && existingEntry.covered_until) ? existingEntry.covered_until : dayStart;
+    const rangeStart = dayStart;
 
     let newMessages = [];
     try {
@@ -1077,9 +1082,7 @@ const SupabaseMemoryAdapter = {
         .eq('type', 'short_term')
         .lt('created_at', dayEnd)
         .order('created_at', { ascending: true });
-      const query = !forceRewrite && existingEntry && existingEntry.covered_until
-        ? baseQuery.gt('created_at', rangeStart)
-        : baseQuery.gte('created_at', rangeStart);
+      const query = baseQuery.gte('created_at', rangeStart);
       const { data, error } = await query;
       if (error) throw error;
       newMessages = data || [];
@@ -1164,9 +1167,8 @@ const SupabaseMemoryAdapter = {
     // covered_until 只推进到"本次实际总结到的这一条"——如果本次被截断，剩下的部分
     // 仍然在 rangeStart 之后、covered_until 之前的空隙里？不会：covered_until 就是
     // cappedMessages 的最后一条，剩余的 newMessages 都在它之后，下次会被正常读到
-    const latestCoveredUntil = (forceRewrite && cappedMessages.length === newMessages.length)
-      ? dayEnd
-      : cappedMessages[cappedMessages.length - 1].created_at;
+    // 日记只在时间段结束后生成，因此成功保存即代表这一页正式封账。
+    const latestCoveredUntil = dayEnd;
 
     // ---- 第一步：便宜模型做事实提炼，不带情感语气，只客观列出这批对话发生的事 ----
     const extractPrompt = `Below is a raw chat log between Susie and her AI partner${!forceRewrite && existingEntry ? ' (this is a continuation — earlier parts of this diary range have already been summarized separately)' : ''}. The diary date is ${dateStr}, covering local time 05:00 to the next day 05:00.
@@ -1455,6 +1457,22 @@ ${sourceText}`;
     } catch (e) {
       console.error('加载云端桌面状态失败:', e);
       return [];
+    }
+  },
+
+  async loadAppStateKey(stateKey) {
+    if (!supabaseReady || !stateKey) return null;
+    try {
+      const { data, error } = await supabaseClient
+        .from('app_state')
+        .select('state_key,value,updated_at')
+        .eq('state_key', stateKey)
+        .limit(1);
+      if (error) throw error;
+      return data?.[0] || null;
+    } catch (e) {
+      console.error(`读取云端状态失败（${stateKey}）:`, e);
+      return null;
     }
   },
 

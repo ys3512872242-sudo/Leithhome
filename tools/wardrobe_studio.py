@@ -26,6 +26,7 @@ import zlib
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Optional
 from urllib.parse import unquote, urlparse
 
 
@@ -338,6 +339,33 @@ def png_canvas_size(data: bytes) -> tuple[int, int]:
     return width, height
 
 
+def png_has_alpha(data: bytes) -> bool:
+    """Reject opaque RGB exports before they become broken wardrobe assets."""
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 33:
+        return False
+    color_type = data[25]
+    if color_type in (4, 6):
+        return True
+    return b"tRNS" in data
+
+
+def expected_canvas() -> Optional[tuple[int, int]]:
+    catalog = load_catalog()
+    canvas = (catalog.get("base") or {}).get("canvas")
+    if isinstance(canvas, list) and len(canvas) == 2:
+        return int(canvas[0]), int(canvas[1])
+    return None
+
+
+def validate_canvas(width: int, height: int) -> None:
+    expected = expected_canvas()
+    if expected and (width, height) != expected:
+        raise ValueError(
+            f"画布是 {width}×{height}，但 Susie 人物包要求 {expected[0]}×{expected[1]}。"
+            "请保持原始 1024×1024 画布，不要裁边、缩放或只导出衣服包围框。"
+        )
+
+
 def load_catalog() -> dict:
     if CATALOG_JSON.exists():
         try:
@@ -362,6 +390,9 @@ def save_catalog(catalog: dict) -> None:
 def create_session(upload: bytes, filename: str) -> dict:
     if filename.lower().endswith(".png") or upload[:8] == b"\x89PNG\r\n\x1a\n":
         canvas_width, canvas_height = png_canvas_size(upload)
+        validate_canvas(canvas_width, canvas_height)
+        if not png_has_alpha(upload):
+            raise ValueError("PNG 没有透明通道。请导出 RGBA 透明 PNG，只保留衣物，不能带白色或黑色背景。")
         token = uuid.uuid4().hex
         folder = SESSIONS_ROOT / token
         folder.mkdir(parents=True, exist_ok=True)
@@ -392,6 +423,7 @@ def create_session(upload: bytes, filename: str) -> dict:
 
     psd = extract_psd(upload, filename)
     canvas_width, canvas_height, layers = read_psd(psd)
+    validate_canvas(canvas_width, canvas_height)
     token = uuid.uuid4().hex
     folder = SESSIONS_ROOT / token
     folder.mkdir(parents=True, exist_ok=True)

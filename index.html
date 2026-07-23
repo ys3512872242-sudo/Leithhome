@@ -1113,7 +1113,8 @@
   .diarybook-empty{text-align:center;color:var(--paper-dim);padding:56px 20px;font-size:13px;line-height:1.8;}
   .diarybook-controls{display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .diarybook-controls .btn{min-width:0;}
-  .diarybook-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .diarybook-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+  @media(max-width:520px){.diarybook-actions{grid-template-columns:1fr;}}
 
   /* ===== 衣帽间 ===== */
   .closet-stage{
@@ -1967,6 +1968,7 @@
         </div>
         <div class="diarybook-actions">
           <button class="btn btn-ghost btn-block" id="diaryBookAnnotateBtn">批注</button>
+          <button class="btn btn-ghost btn-block" id="diaryBookWriteBtn">写昨日日记</button>
           <button class="btn btn-primary btn-block" id="diaryBookRewriteBtn">重新生成</button>
         </div>
       </div>
@@ -2372,8 +2374,9 @@
 
   <div class="toast" id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- 云端和 PDF 库加载不应该卡住本地 Leith；断网时衣柜也要立即可用。 -->
+<script async src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script async src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="memory.js"></script>
 <script src="wardrobe/catalog.js"></script>
 <script src="app.js"></script>
