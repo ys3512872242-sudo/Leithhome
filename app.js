@@ -31,6 +31,7 @@ const LS = {
   closetOutfit: "companion_closet_outfit_v1",
   closetCatalogVersion: "companion_closet_catalog_version_v1",
   closetRasterMigration: "companion_closet_raster_migration_v1",
+  moodState: "companion_mood_state_v1",
   foldedDates: "companion_folded_dates_v1",
   // 共读小说
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
@@ -52,13 +53,15 @@ const DEFAULT_PROVIDERS = [
 // MINI 版极简、永远带上，只让 Leith 知道"有这几个标签、可以偶尔主动送礼/买东西"，
 // 保留"惊喜"能力，即使这轮聊天完全没提购物话题也不会丢失这个行为；
 // FULL 版是完整机制说明，只有聊天内容明显跟购物/礼物相关时才附加，减少平时的固定开销。
-const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, or buy clothes for Susie using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item] tags (full syntax rules included automatically when relevant).`;
+const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, buy clothes for Susie, or help her change outfits using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item]/[WEAR:item] tags (full syntax rules included automatically when relevant).`;
 const WORLD_RULES_FULL = `[World rules]
 [LGIFT:item] Gift limited item to user -> deduct from limited fund, item delists into gift list
 [ABUY:item] Buy adult item -> deduct from allowance, item goes to nightstand
 [SBUY:item] Buy shelf item -> deduct from allowance, same mechanic
 [CBUY:item] Buy clothing for Susie -> deduct from allowance, item leaves clothing shelf and goes to wardrobe
+[WEAR:item] Put an owned wardrobe item on Susie immediately. If it is still on the clothing shelf, output [CBUY:item][WEAR:item] in that order
 [USE:item] Mark a consumable as used when user implies it's been used -> auto-consume from nightstand
+When Susie asks what to wear, make a concrete choice from the listed wardrobe instead of only describing an imaginary outfit.
 Item name must match a keyword; insufficient balance fails; tags go at the end of the reply`;
 
 // 排版规则：不管用户自定义了什么人设/系统提示词，这条始终生效，
@@ -228,6 +231,7 @@ const CLOUD_SYNC_STATIC_KEYS = new Set([
   LS.worldNightstand,
   LS.closetOwnedItems,
   LS.closetOutfit,
+  LS.moodState,
   LS.foldedDates,
   LS.readingBooks,
   LS.readingLinks,
@@ -486,7 +490,7 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|USE):[^\]]+\]/g, "").trim();
+  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE):[^\]]+\]/g, "").trim();
   const segments = [];
   const tagPattern = /<(thinking|think)>/ig;
   let cursor = 0;
@@ -942,6 +946,13 @@ function findClosetShopItem(itemName) {
   return found;
 }
 
+function findOwnedClosetItem(itemName) {
+  const items = getClosetOwnedItems();
+  let found = items.find(i => i.name === itemName);
+  if (!found) found = items.find(i => i.name.includes(itemName) || itemName.includes(i.name));
+  return found;
+}
+
 function buyClosetItem(itemId, boughtBy = "user", threadId = getActiveThreadId()) {
   const shop = getClosetShopItems();
   const item = shop.find(i => i.id === itemId);
@@ -1004,6 +1015,98 @@ function buildClosetPromptLine() {
   const shopNames = shop.slice(0, 12).map(i => `${i.name}¥${i.price}`);
   if (!ownedNames.length && !shopNames.length) return "";
   return `Wardrobe worn: ${equipped.length ? equipped.join("、") : "none"}; owned: ${ownedNames.join("、") || "none"}; clothing shelf: ${shopNames.join("、") || "none"}`;
+}
+
+// ===== 双人情绪状态（1—7）=====
+const MOOD_FIELDS = [
+  ["joy", "伤心—开心"],
+  ["desire", "要出家—想🔞"],
+  ["anger", "怒气值"],
+  ["grievance", "委屈值"]
+];
+function defaultMoodPerson() { return { joy: 4, desire: 4, anger: 1, grievance: 1 }; }
+function clampMood(value) { return Math.max(1, Math.min(7, Math.round(Number(value) || 4))); }
+function getMoodState() {
+  const saved = loadJSON(LS.moodState, {});
+  return {
+    leith: { ...defaultMoodPerson(), ...(saved.leith || {}) },
+    susie: { ...defaultMoodPerson(), ...(saved.susie || {}) },
+    susieHidden: Boolean(saved.susieHidden),
+    extremeLog: Array.isArray(saved.extremeLog) ? saved.extremeLog.slice(-120) : []
+  };
+}
+function saveMoodState(state, changedPerson = "", previous = null) {
+  if (changedPerson && previous) {
+    const nowPerson = state[changedPerson];
+    MOOD_FIELDS.forEach(([key, label]) => {
+      const value = clampMood(nowPerson[key]);
+      if (value === clampMood(previous[key]) || ![1, 2, 6, 7].includes(value)) return;
+      state.extremeLog.push({
+        id: uid(), at: Date.now(), person: changedPerson, key, label, value
+      });
+    });
+    state.extremeLog = state.extremeLog.slice(-120);
+  }
+  saveJSON(LS.moodState, state);
+  renderMoodBoard();
+}
+function buildMoodPromptBlock() {
+  const state = getMoodState();
+  const l = MOOD_FIELDS.map(([key]) => clampMood(state.leith[key])).join(",");
+  const s = state.susieHidden ? "hidden" : MOOD_FIELDS.map(([key]) => clampMood(state.susie[key])).join(",");
+  return `[Mood j,d,a,g 1-7] L=${l}; S=${s}. Before replying, silently decide whether L should change. If yes append [MOOD:j,d,a,g]; otherwise omit. Never change S.`;
+}
+function getMoodExtremesForDate(dateStr) {
+  const { start, end } = getDiaryRangeMs(dateStr);
+  const rows = getMoodState().extremeLog.filter(row => row.at >= start && row.at < end);
+  if (!rows.length) return "";
+  return rows.map(row => {
+    const who = row.person === "leith" ? "Leith" : "Susie";
+    return `- ${who} 的${row.label}达到 ${row.value}/7`;
+  }).join("\n");
+}
+function renderMoodBoard() {
+  const state = getMoodState();
+  const board = $("#moodBoard");
+  if (!board) return;
+  const summary = $("#moodBoardSummary");
+  if (summary) summary.textContent = `Leith ${state.leith.joy} · Susie ${state.susieHidden ? "隐藏" : state.susie.joy}　${board.classList.contains("collapsed") ? "⌄" : "⌃"}`;
+  const susiePanel = $("#susieMoodPanel");
+  susiePanel?.classList.toggle("is-hidden", state.susieHidden);
+  const hideBtn = $("#susieMoodHideBtn");
+  if (hideBtn) hideBtn.textContent = state.susieHidden ? "恢复可见" : "对 Leith 隐藏";
+  document.querySelectorAll("[data-mood-person]").forEach(container => {
+    const person = container.dataset.moodPerson;
+    const disabled = person === "leith";
+    container.innerHTML = MOOD_FIELDS.map(([key, label]) => `
+      <label class="mood-row"><span>${label}</span>
+        <input type="range" min="1" max="7" value="${clampMood(state[person][key])}" data-mood-input="${person}:${key}" ${disabled ? "disabled" : ""}>
+        <span class="mood-value">${clampMood(state[person][key])}</span>
+      </label>`).join("");
+  });
+  document.querySelectorAll("[data-mood-input^='susie:']").forEach(input => {
+    input.oninput = () => {
+      const [, key] = input.dataset.moodInput.split(":");
+      const next = getMoodState();
+      const previous = { ...next.susie };
+      next.susie[key] = clampMood(input.value);
+      saveMoodState(next, "susie", previous);
+    };
+  });
+}
+function initMoodBoard() {
+  const board = $("#moodBoard");
+  $("#moodBoardToggle")?.addEventListener("click", () => {
+    board.classList.toggle("collapsed");
+    renderMoodBoard();
+  });
+  $("#susieMoodHideBtn")?.addEventListener("click", event => {
+    event.stopPropagation();
+    const state = getMoodState();
+    state.susieHidden = !state.susieHidden;
+    saveMoodState(state);
+  });
+  renderMoodBoard();
 }
 
 // ===== 折角日期（轻量纪念日，不做完整日历）=====
@@ -3519,7 +3622,7 @@ function buildWorldPromptBlockMini() {
   return `[World state] Allowance ¥${balance}  Limited fund ¥${savings}${allNames.length ? `  Items: ${allNames.join("、")}` : ""}${closetLine ? `\n${closetLine}` : ""}${foldedLine ? `\n${foldedLine}` : ""}`;
 }
 
-// 解析 AI 回复里的 [BUY:...] [LGIFT:...] [ABUY:...] [SBUY:...] [USE:...] 标记
+// 解析 AI 回复里的购买、换装与使用动作标记
 function parseAIActions(text) {
   const actions = [];
   const buyRegex = /\[BUY:(\w+):([^\]]+)\]/g;
@@ -3527,6 +3630,7 @@ function parseAIActions(text) {
   const abuyRegex = /\[ABUY:([^\]]+)\]/g;
   const sbuyRegex = /\[SBUY:([^\]]+)\]/g;
   const cbuyRegex = /\[CBUY:([^\]]+)\]/g;
+  const wearRegex = /\[WEAR:([^\]]+)\]/g;
   const useRegex = /\[USE:([^\]]+)\]/g;
 
   let match;
@@ -3544,6 +3648,9 @@ function parseAIActions(text) {
   }
   while ((match = cbuyRegex.exec(text)) !== null) {
     actions.push({ type: "cbuy", itemName: match[1].trim() });
+  }
+  while ((match = wearRegex.exec(text)) !== null) {
+    actions.push({ type: "wear", itemName: match[1].trim() });
   }
   while ((match = useRegex.exec(text)) !== null) {
     actions.push({ type: "use", itemName: match[1].trim() });
@@ -3627,6 +3734,16 @@ function handleAIActions(actions) {
       const owned = buyClosetItem(closetItem.id, "leith", threadId);
       insertNarration(threadId, `👗 Leith买了衣装 ${owned.emoji || "👗"} ${owned.name}，放进了衣帽间。零钱包：¥${balance3} → ¥${balance3 - closetItem.price}`);
       showToast(`Leith 买了 ${owned.emoji || "👗"} ${owned.name}（¥${closetItem.price}）`);
+      needRefresh = true;
+    } else if (action.type === "wear") {
+      const ownedItem = findOwnedClosetItem(action.itemName);
+      if (!ownedItem) {
+        showToast(`衣帽间里还没有“${action.itemName}”`);
+        return;
+      }
+      equipClosetItem(ownedItem.ownedId);
+      insertNarration(threadId, `🪞 Leith 为 Susie 换上了 ${ownedItem.emoji || "👗"} ${ownedItem.name}`);
+      showToast(`已换上 ${ownedItem.emoji || "👗"} ${ownedItem.name}`);
       needRefresh = true;
     } else if (action.type === "use") {
       // AI 在对话里判断某件消耗品"用掉了"，自动消耗床头柜里最早的一份（先买的先用）
