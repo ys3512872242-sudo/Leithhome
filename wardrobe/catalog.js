@@ -1,6 +1,6 @@
 window.LEITH_WARDROBE_CATALOG = {
-  "version": 6,
-  "generatedAt": "2026-07-24T09:26:54+0800",
+  "version": 7,
+  "generatedAt": "2026-07-24T09:57:39+0800",
   "base": {
     "id": "susie-studio-v2",
     "name": "Susie 衣物工作室基础人物",
@@ -84,6 +84,20 @@ window.LEITH_WARDROBE_CATALOG = {
       "style": "雾霾蓝（#79AEE3）的连衣裙，修身显腰，柔软棉质，纯色无花纹，领口白色花边，优雅公主风。",
       "note": "Susie 本地衣物工坊生成",
       "addedAt": 1784856414963
+    },
+    {
+      "id": "susie-hat-garment-7a3743296-20260724-095739",
+      "name": "焦糖棕帽子",
+      "emoji": "👒",
+      "price": 50,
+      "slot": "hat",
+      "asset": "wardrobe/assets/susie-hat-garment-7a3743296-20260724-095739/susie-hat-garment-7a3743296-20260724-095739.png",
+      "thumbnail": "wardrobe/assets/susie-hat-garment-7a3743296-20260724-095739/susie-hat-garment-7a3743296-20260724-095739-thumb.png",
+      "sourcePack": "susie-hat-garment-7a3743296-20260724-095739",
+      "sourceLayer": "焦糖棕帽子",
+      "style": "焦糖棕（#A66E4F）的帽子，贝雷帽，柔软棉质，细格纹，白色花边，优雅公主风。",
+      "note": "Susie 本地衣物工坊生成",
+      "addedAt": 1784858259312
     }
   ]
 };

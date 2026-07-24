@@ -802,7 +802,7 @@ function findAdultItem(itemName) {
 
 // ===== 衣装货架 / 衣帽间 =====
 const CLOSET_SLOT_LABELS = {
-  hair: "发型", top: "上衣", bottom: "下装", dress: "连衣裙", socks: "袜子", shoes: "鞋子",
+  hair: "发型", top: "上衣", bottom: "下装", dress: "连衣裙", set: "套装", socks: "袜子", shoes: "鞋子",
   accessory: "首饰", hat: "帽子", bag: "包"
 };
 
@@ -983,11 +983,14 @@ function equipClosetItem(ownedId) {
   const item = getClosetOwnedItems().find(i => i.ownedId === ownedId);
   if (!item) return false;
   const outfit = getClosetOutfit();
-  if (item.slot === "dress") {
+  if (item.slot === "dress" || item.slot === "set") {
     delete outfit.top;
     delete outfit.bottom;
+    delete outfit.dress;
+    delete outfit.set;
   } else if (item.slot === "top" || item.slot === "bottom") {
     delete outfit.dress;
+    delete outfit.set;
   }
   outfit[item.slot] = ownedId;
   setClosetOutfit(outfit);
@@ -1016,6 +1019,12 @@ function buildClosetPromptLine() {
   const shopNames = shop.slice(0, 12).map(i => `${i.name}¥${i.price}`);
   if (!ownedNames.length && !shopNames.length) return "";
   return `Wardrobe worn: ${equipped.length ? equipped.join("、") : "none"}; owned: ${ownedNames.join("、") || "none"}; clothing shelf: ${shopNames.join("、") || "none"}`;
+}
+
+function renderClosetDescription(item) {
+  const description = escapeHtml(item.description || item.note || "");
+  if (!description) return "";
+  return `<details class="closet-desc"><summary>简介</summary><div>${description}</div></details>`;
 }
 
 // ===== 双人情绪状态（1—7）=====
@@ -1063,7 +1072,7 @@ function buildMoodPromptBlock() {
   const state = getMoodState();
   const l = MOOD_FIELDS.map(([key]) => clampMood(state.leith[key])).join(",");
   const s = state.susieHidden ? "hidden" : MOOD_FIELDS.map(([key]) => clampMood(state.susie[key])).join(",");
-  return `[Mood j,d,a,g 1-7] j:1 sad→7 happy; d:1 abstinent→7 sexual; a/g:1 none→7 strongest. L=${l}; S=${s}. Before replying, silently decide whether L should change. If yes append [MOOD:j,d,a,g]; otherwise omit. Never change S.`;
+  return `[Mood board, values are 1-7, order j,d,a,g. j=Leith sadness-to-happiness: 1 very sad, 4 calm, 7 very happy. d=Leith sexual desire: 1 abstinent/withdrawn, 4 neutral intimacy, 7 strongly sexual. a=Leith anger: 1 not angry, 4 irritated, 7 very angry. g=Leith grievance/hurt: 1 not hurt, 4 quietly wronged, 7 deeply wronged. Current Leith L=${l}; Susie S=${s}. Before every reply, seriously and cautiously decide whether Leith's own real emotional state should change from the conversation. If it changes, append exactly [MOOD:j,d,a,g] at the end; otherwise omit it. Never change Susie's S. Do not mention the tag.`;
 }
 function getMoodExtremesForDate(dateStr) {
   const { start, end } = getDiaryRangeMs(dateStr);
@@ -1439,6 +1448,7 @@ function renderClosetShopSection(items) {
       <div>${escapeHtml(item.name)}</div>
       <div class="item-name">${CLOSET_SLOT_LABELS[item.slot] || item.slot} · ¥${item.price}</div>
       <div class="item-name">${escapeHtml(item.style || "")}</div>
+      ${renderClosetDescription(item)}
       <div style="display:flex;gap:4px;margin-top:4px;">
         <button class="btn btn-primary btn-sm" style="font-size:10px;padding:3px 8px;" data-closet-buy="${item.id}">购买</button>
         <button class="btn btn-danger btn-sm" style="font-size:10px;padding:3px 8px;" data-closet-del="${item.id}">下架</button>
@@ -5929,7 +5939,7 @@ function renderRasterPaperDoll() {
   const base = getBundledWardrobeCatalog().base;
   if (!base?.layers?.length || !base.canvas || !base.crop) return "";
   const equipped = Object.fromEntries(getEquippedClosetItems().map(x => [x.slot, x.item]));
-  const layerPriority = { socks: 10, shoes: 20, bottom: 30, top: 40, dress: 50, accessory: 70, bag: 80, hat: 90 };
+  const layerPriority = { socks: 10, shoes: 20, bottom: 30, top: 40, dress: 50, set: 55, accessory: 70, bag: 80, hat: 90 };
   const selectedItems = Object.entries(equipped)
     .filter(([, item]) => Boolean(item))
     .sort(([slotA], [slotB]) => (layerPriority[slotA] || 60) - (layerPriority[slotB] || 60))
@@ -5944,7 +5954,7 @@ function renderRasterPaperDoll() {
   const cropWidth = Number(crop.width) || canvasWidth;
   const cropHeight = Number(crop.height) || canvasHeight;
   const imageStyle = `width:${canvasWidth / cropWidth * 100}%;height:${canvasHeight / cropHeight * 100}%;left:${-Number(crop.x || 0) / cropWidth * 100}%;top:${-Number(crop.y || 0) / cropHeight * 100}%;`;
-  const dress = equipped.dress;
+  const dress = equipped.set || equipped.dress;
   const replacements = {
     topwear: dress || equipped.top,
     bottomwear: dress ? { skip: true } : equipped.bottom,
@@ -5959,19 +5969,25 @@ function renderRasterPaperDoll() {
     if (replacement?.skip) return;
     if (replacement?.asset) {
       if (!placed.has(replacement.id)) {
-        layers.push({ asset: replacement.asset, name: replacement.name });
+        layers.push({ asset: replacement.asset, name: replacement.name, anchor: replacement.anchor });
         placed.add(replacement.id);
       }
       return;
     }
-    layers.push({ asset: layer.asset, name: layer.name });
+    layers.push({ asset: layer.asset, name: layer.name, anchor: layer.anchor });
   });
   rasterItems.forEach(item => {
-    if (item.asset && !placed.has(item.id)) layers.push({ asset: item.asset, name: item.name });
+    if (item.asset && !placed.has(item.id)) layers.push({ asset: item.asset, name: item.name, anchor: item.anchor });
   });
   const images = layers.map((layer, index) => {
     const src = String(layer.asset || "").replace(/["'<>]/g, "");
-    return `<img src="${src}" alt="" style="${imageStyle}z-index:${index + 1};">`;
+    const anchor = layer.anchor || {};
+    const dx = Number(anchor.x || 0);
+    const dy = Number(anchor.y || 0);
+    const scale = Number(anchor.scale || 1);
+    const layerZ = Number(anchor.layer || 0);
+    const transform = `translate(${dx / cropWidth * 100}%,${dy / cropHeight * 100}%) scale(${scale})`;
+    return `<img src="${src}" alt="" style="${imageStyle}z-index:${layerZ || index + 1};transform:${transform};transform-origin:center center;">`;
   }).join("");
   return `<div class="paper-doll-raster" style="--doll-ratio:${cropWidth / cropHeight};" role="img" aria-label="Susie 的分层人物">${images}</div>`;
 }
@@ -6064,6 +6080,7 @@ function renderClosetPage() {
           <div class="closet-card-preview">${renderClosetVisual(item, "preview")}</div>
           <div class="closet-card-top"><span class="closet-swatch" style="background:${escapeHtml(item.color || "#c8b7ad")}"></span><div class="closet-card-name">${item.emoji || "👗"} ${escapeHtml(item.name)}</div></div>
           <div class="closet-card-meta">${CLOSET_SLOT_LABELS[item.slot] || item.slot}${item.style ? ` · ${escapeHtml(item.style.split("、").slice(0, 2).join("、"))}` : ""}</div>
+          ${renderClosetDescription(item)}
           <div class="closet-card-actions"><button class="btn ${isEquipped ? "btn-ghost" : "btn-primary"}" data-equip="${item.ownedId}">${isEquipped ? "穿着中" : "试穿"}</button><button class="btn btn-ghost" data-damage="${item.ownedId}">损坏</button></div>
         </div>`;
       }).join("");

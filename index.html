@@ -1172,6 +1172,12 @@
   .closet-swatch{width:9px;height:9px;border-radius:50%;border:1px solid rgba(255,255,255,.34);flex-shrink:0;}
   .closet-card-name{font-size:12px;color:var(--paper);line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .closet-card-meta{font-size:9.5px;color:var(--paper-dim);line-height:1.45;margin:0 2px 8px;min-height:14px;}
+  .closet-desc{font-size:10px;color:var(--paper-dim);line-height:1.5;margin:4px 2px 8px;text-align:left;}
+  .closet-desc summary{cursor:pointer;color:var(--accent);list-style:none;}
+  .closet-desc summary::-webkit-details-marker{display:none;}
+  .closet-desc summary::after{content:"展开";font-size:9px;margin-left:5px;color:var(--paper-dim);}
+  .closet-desc[open] summary::after{content:"收起";}
+  .inventory-item .closet-desc{text-align:center;margin:5px 0 7px;}
   .closet-card-actions{display:flex;gap:5px;}
   .closet-card-actions .btn{font-size:10px;padding:5px 7px;flex:1;border-radius:10px;}
   .closet-empty-hint{padding:30px 16px;text-align:center;color:var(--paper-dim);line-height:1.7;border:1px dashed var(--line);border-radius:18px;}
