@@ -282,6 +282,8 @@
   .chat-scroll::-webkit-scrollbar{width:4px;}
   .chat-scroll::-webkit-scrollbar-track{background:transparent;}
   .chat-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
+  .chat-mood-wrap{padding:0 16px 12px;flex-shrink:0;}
+  .chat-mood-wrap .mood-board{box-shadow:0 12px 24px rgba(0,0,0,.12);}
 
   .empty-state{margin:auto;text-align:center;color:var(--paper-dim);padding:40px 20px;}
   .empty-state .mark{font-family:var(--serif-display);font-style:italic;font-size:32px;color:var(--moon);margin-bottom:14px;opacity:.75;}
@@ -1657,6 +1659,25 @@
       </div>
     </div>
 
+    <div class="chat-mood-wrap">
+      <section class="mood-board collapsed" id="moodBoard">
+        <button class="mood-board-head" id="moodBoardToggle" type="button">
+          <span>今日情绪状态</span><small id="moodBoardSummary">Leith 4 · Susie 4　⌄</small>
+        </button>
+        <div class="mood-board-body">
+          <div class="mood-person">
+            <div class="mood-person-title"><span>Leith</span><small>由他自己调节</small></div>
+            <div class="mood-rows" data-mood-person="leith"></div>
+          </div>
+          <div class="mood-person" id="susieMoodPanel">
+            <div class="mood-person-title"><span>Susie</span><button class="mood-hide-btn" id="susieMoodHideBtn" type="button">对 Leith 隐藏</button></div>
+            <div class="mood-rows" data-mood-person="susie"></div>
+            <div class="mood-hidden-note">你的数值已对 Leith 隐藏；再次点击按钮即可恢复可见。</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <div class="sticker-panel" id="stickerPanel">
       <div class="sticker-panel-head">
         <h4>表情包</h4>
@@ -1711,23 +1732,6 @@
           <div class="widget-note" id="widgetNotePreview">点击查看今日小纸条</div>
         </div>
       </div>
-
-      <section class="mood-board collapsed" id="moodBoard">
-        <button class="mood-board-head" id="moodBoardToggle" type="button">
-          <span>今日情绪状态</span><small id="moodBoardSummary">Leith 4 · Susie 4　⌄</small>
-        </button>
-        <div class="mood-board-body">
-          <div class="mood-person">
-            <div class="mood-person-title"><span>Leith</span><small>由他自己调节</small></div>
-            <div class="mood-rows" data-mood-person="leith"></div>
-          </div>
-          <div class="mood-person" id="susieMoodPanel">
-            <div class="mood-person-title"><span>Susie</span><button class="mood-hide-btn" id="susieMoodHideBtn" type="button">对 Leith 隐藏</button></div>
-            <div class="mood-rows" data-mood-person="susie"></div>
-            <div class="mood-hidden-note">你的数值已对 Leith 隐藏；再次点击按钮即可恢复可见。</div>
-          </div>
-        </div>
-      </section>
 
       <!-- App 图标网格 -->
       <div class="app-grid">

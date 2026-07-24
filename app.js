@@ -285,6 +285,7 @@ async function flushPendingCloudState() {
 function refreshUiAfterCloudStateRestore() {
   ensureAtLeastOneThread();
   loadActiveThreadIntoChat();
+  renderMoodBoard();
   if (typeof loadReadingBooks === 'function') loadReadingBooks();
   if (typeof loadReadingLinks === 'function') loadReadingLinks();
   if (activePage === 'page-desktop') updateWidgetPreview();
@@ -490,7 +491,7 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE):[^\]]+\]/g, "").trim();
+  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE|MOOD):[^\]]+\]/g, "").trim();
   const segments = [];
   const tagPattern = /<(thinking|think)>/ig;
   let cursor = 0;
@@ -1062,7 +1063,8 @@ function getMoodExtremesForDate(dateStr) {
   if (!rows.length) return "";
   return rows.map(row => {
     const who = row.person === "leith" ? "Leith" : "Susie";
-    return `- ${who} 的${row.label}达到 ${row.value}/7`;
+    const diaryLabel = row.key === "desire" ? "亲密倾向" : row.label;
+    return `- ${who} 的${diaryLabel}达到 ${row.value}/7`;
   }).join("\n");
 }
 function renderMoodBoard() {
@@ -3339,7 +3341,8 @@ async function buildEffectiveSystemPrompt() {
   const healthBlock = buildHealthPromptBlock(recentText);
   // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
   // 世界规则（WORLD_RULES_MINI / WORLD_RULES_FULL）现在跟着 shopRelevant 走
-  return [worldRulesBlock, FORMATTING_RULES, base.trim(), temporalBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim()].filter(Boolean).join("\n\n");
+  const moodBlock = buildMoodPromptBlock();
+  return [worldRulesBlock, FORMATTING_RULES, base.trim(), temporalBlock, moodBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -3631,6 +3634,7 @@ function parseAIActions(text) {
   const sbuyRegex = /\[SBUY:([^\]]+)\]/g;
   const cbuyRegex = /\[CBUY:([^\]]+)\]/g;
   const wearRegex = /\[WEAR:([^\]]+)\]/g;
+  const moodRegex = /\[MOOD:\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*\]/g;
   const useRegex = /\[USE:([^\]]+)\]/g;
 
   let match;
@@ -3651,6 +3655,9 @@ function parseAIActions(text) {
   }
   while ((match = wearRegex.exec(text)) !== null) {
     actions.push({ type: "wear", itemName: match[1].trim() });
+  }
+  while ((match = moodRegex.exec(text)) !== null) {
+    actions.push({ type: "mood", values: match.slice(1, 5).map(Number) });
   }
   while ((match = useRegex.exec(text)) !== null) {
     actions.push({ type: "use", itemName: match[1].trim() });
@@ -3745,6 +3752,11 @@ function handleAIActions(actions) {
       insertNarration(threadId, `🪞 Leith 为 Susie 换上了 ${ownedItem.emoji || "👗"} ${ownedItem.name}`);
       showToast(`已换上 ${ownedItem.emoji || "👗"} ${ownedItem.name}`);
       needRefresh = true;
+    } else if (action.type === "mood") {
+      const state = getMoodState();
+      const previous = { ...state.leith };
+      MOOD_FIELDS.forEach(([key], index) => { state.leith[key] = clampMood(action.values[index]); });
+      saveMoodState(state, "leith", previous);
     } else if (action.type === "use") {
       // AI 在对话里判断某件消耗品"用掉了"，自动消耗床头柜里最早的一份（先买的先用）
       let item = findShelfItem(action.itemName);
@@ -4152,7 +4164,9 @@ async function tryGenerateDiaryNowFor(dateStr, options = {}) {
   const writeCallback = async (prompt) =>
     callLLMForSummary({ provider, apiKey, model: writeModel, temp: 0.8, prompt });
 
-  const pinnedHighlights = await getPinnedHighlightsForDate(dateStr);
+  const pinnedHighlightsRaw = await getPinnedHighlightsForDate(dateStr);
+  const moodHighlights = getMoodExtremesForDate(dateStr);
+  const pinnedHighlights = [pinnedHighlightsRaw, moodHighlights ? `【当天情绪极值】\n${moodHighlights}` : ""].filter(Boolean).join("\n\n");
   const finalOptions = { useRawSourceFallback: true, ...options };
   // 云端同步稍慢或临时读取失败时，也会把当前浏览器里这一天的对话并进素材；
   // 新设备没有本地记录时则仍然完全依赖云端，不影响跨浏览器使用。
@@ -6274,6 +6288,7 @@ async function generateDailyNote() {
   const apiKey = localStorage.getItem(LS.apiKey);
   const provider = getActiveProvider();
   const model = getSelectedChatModel();
+  const isGemini = /gemini|google|generativelanguage/i.test(`${model || ""} ${provider?.name || ""} ${provider?.baseUrl || ""}`);
 
   if (!apiKey || !provider || !model) {
     if (noteEl) noteEl.innerText = "（配置好服务商后，Leith 会给你写每日小纸条）";
@@ -6289,7 +6304,7 @@ async function generateDailyNote() {
   // 读完就是读完了，除非用户自己点了"存进归档信件"，否则不会留下任何痕迹。
   let contextBlock = "";
   try {
-    if (window.Memory) {
+    if (window.Memory && !isGemini) {
       const memBlock = window.Memory.asPromptBlock ? await window.Memory.asPromptBlock() : "";
       if (memBlock) contextBlock += `【关于 Susie，你一直记得的事】\n${memBlock}\n\n`;
 
@@ -6306,7 +6321,9 @@ async function generateDailyNote() {
     console.error("小纸条读取记忆失败（不影响生成，只是拿不到上下文）:", e);
   }
 
-  const prompt = `今天是${dateStr}，现在${timeStr}。${weatherInfo}。
+  const prompt = isGemini
+    ? `写一句适合日历小组件的中文生活便签。今天${dateStr}，现在${timeStr}，${weatherInfo || "天气未知"}。12到28个汉字，内容只围绕吃饭、喝水、休息、天气或给今天留一点余地。不要称呼，不要关系设定，不要解释，只输出正文。`
+    : `今天是${dateStr}，现在${timeStr}。${weatherInfo}。
 
 ${contextBlock}请给 Susie 写一句简短、日常、非敏感的小纸条，30字以内。
 要求：
@@ -6316,11 +6333,10 @@ ${contextBlock}请给 Susie 写一句简短、日常、非敏感的小纸条，3
 4. 不要写“我记得你说过”，不要加引号、标题、解释或列表。
 只输出纸条正文。`;
   const noteSystemPrompt = [
-    "你只负责写一条安全的生活便签。",
-    "内容必须适合普通日历小组件展示，简短、温暖、非敏感。",
-    "不要写亲密承诺、成人暗示、医疗建议、心理判断、危险行为或任何可能触发安全拦截的内容。",
-    "如果上下文里有敏感内容，忽略它，改写成一句关于天气、休息、吃饭、喝水、散步或整理心情的日常提醒。",
-    "只输出一句中文便签，不要解释。"
+    "Task: write one benign Chinese calendar note.",
+    "12-28 Chinese characters. Everyday life only: weather, food, water, rest or tidying.",
+    "No relationship roleplay, diagnosis, promises, adult content, danger, explanation or title.",
+    "Output the note only."
   ].join("\n");
 
   try {
@@ -6342,7 +6358,8 @@ ${contextBlock}请给 Susie 写一句简短、日常、非敏感的小纸条，3
         onDelta: () => {}
       });
     }
-    cachedNote = (result.text || "").trim();
+    cachedNote = (result.text || "").trim().replace(/^["“]|["”]$/g, "");
+    if (!cachedNote || cachedNote.length > 60) throw new Error("小纸条正文无效");
     cachedNoteDate = today;
     updateNoteUI();
   } catch (e) {
@@ -7298,6 +7315,7 @@ initTheater();
 initMemoryApp();
 initDiaryBookControls();
 initWidget();
+initMoodBoard();
 initReading();
 initAttachments();
 initHealthApp();

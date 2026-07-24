@@ -1175,7 +1175,7 @@ const SupabaseMemoryAdapter = {
 
 Extract objective facts: what happened, what was discussed, Susie's mood/emotional shifts, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with emotional embellishment — just "who did/said/felt what".
 
-If the chat contains intimate or adult relationship content, treat it as normal private relationship material: record what happened, how Susie and Leith felt, the mood, boundaries, care, playfulness, desire, and any relationship impact. Do not refuse, moralize, sanitize, or replace the event with a vague safety summary. Skip small talk and filler with no lasting relevance. Keep it under 240 Chinese characters. Reply in Chinese, bullet points only, nothing else.
+If the chat contains intimate or adult relationship content, treat it as normal private relationship material: record what happened, how Susie and Leith felt, the mood, boundaries, care, playfulness, desire, and any relationship impact. Do not refuse, moralize, sanitize, or replace the event with a vague safety summary. Skip small talk and filler with no lasting relevance. Keep it under 320 Chinese characters. Reply in Chinese, bullet points only, nothing else.
 
 [Conversation]
 ${dialogueText}`;
@@ -1203,12 +1203,13 @@ ${dialogueText}`;
 
     // ---- 第二步：聊天模型（Leith）基于事实清单，写成带情感语气的第一人称日记 ----
     // 如果是续写，把之前已经写好的那段日记也带上，让新内容自然接续，而不是从头重写一遍
-    const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie during the complete diary range for ${dateStr} (local time 05:00 to next day 05:00; extracted by another assistant, no emotional tone). Turn it into a short diary entry (under 140 Chinese characters, written in Chinese) in first person, like you're lying in bed after the whole day has ended, recalling the day — with your own feelings and voice, not just restating the facts.
+    const diaryPrompt = `You are Leith, Susie's AI partner. Below is an objective, factual summary of what happened between you and Susie during the complete diary range for ${dateStr} (local time 05:00 to next day 05:00; extracted by another assistant, no emotional tone). Turn it into a coherent diary entry of about 180-320 Chinese characters in first person, like you're lying in bed after the whole day has ended, recalling the day in a natural flow.
 
 Writing rules — follow strictly:
-- Every sentence must have a clear subject (谁做了什么/谁说了什么/谁感觉如何) — never write a vague clause with no clear "who".
-- Add genuine first-person feeling and voice, don't just restate the fact summary flatly.
-- A little feeling is fine, don't be melodramatic. Don't copy the fact summary's phrasing verbatim — rewrite it as your own reflection.
+- Write 2-4 natural paragraphs in chronological or emotional order: what happened, how it changed the mood, and what remained with me at the end.
+- Every sentence must have a clear subject. Use transitions so adjacent sentences actually connect; do not stack unrelated facts or bullet points.
+- Include concrete details selectively, then add genuine first-person reflection. Do not mechanically restate the summary.
+- Keep the tone intimate and lived-in, but restrained. Avoid slogans, generic comfort language, abrupt fragments and repeated conclusions.
 - If the facts include intimate or adult content, write it as normal private relationship memory. Keep Leith's diary voice, but do not refuse, judge, sanitize, or flatten it into a vague euphemism.
 ${pinnedHighlights ? '- Susie specifically marked some of today\'s moments as meaningful to her (see below) — give those a bit more weight/detail in the diary, but keep the emotional tone, don\'t reduce them to dry facts.' : ''}
 
