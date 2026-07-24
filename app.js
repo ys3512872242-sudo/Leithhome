@@ -1025,6 +1025,12 @@ const MOOD_FIELDS = [
   ["anger", "怒气值"],
   ["grievance", "委屈值"]
 ];
+const MOOD_EXTREME_VALUES = {
+  joy: [1, 2, 7],
+  desire: [6, 7],
+  anger: [6, 7],
+  grievance: [6, 7]
+};
 function defaultMoodPerson() { return { joy: 4, desire: 4, anger: 1, grievance: 1 }; }
 function clampMood(value) { return Math.max(1, Math.min(7, Math.round(Number(value) || 4))); }
 function getMoodState() {
@@ -1033,7 +1039,9 @@ function getMoodState() {
     leith: { ...defaultMoodPerson(), ...(saved.leith || {}) },
     susie: { ...defaultMoodPerson(), ...(saved.susie || {}) },
     susieHidden: Boolean(saved.susieHidden),
-    extremeLog: Array.isArray(saved.extremeLog) ? saved.extremeLog.slice(-120) : []
+    extremeLog: Array.isArray(saved.extremeLog)
+      ? saved.extremeLog.filter(row => MOOD_EXTREME_VALUES[row.key]?.includes(clampMood(row.value))).slice(-120)
+      : []
   };
 }
 function saveMoodState(state, changedPerson = "", previous = null) {
@@ -1041,7 +1049,7 @@ function saveMoodState(state, changedPerson = "", previous = null) {
     const nowPerson = state[changedPerson];
     MOOD_FIELDS.forEach(([key, label]) => {
       const value = clampMood(nowPerson[key]);
-      if (value === clampMood(previous[key]) || ![1, 2, 6, 7].includes(value)) return;
+      if (value === clampMood(previous[key]) || !MOOD_EXTREME_VALUES[key].includes(value)) return;
       state.extremeLog.push({
         id: uid(), at: Date.now(), person: changedPerson, key, label, value
       });
@@ -1055,7 +1063,7 @@ function buildMoodPromptBlock() {
   const state = getMoodState();
   const l = MOOD_FIELDS.map(([key]) => clampMood(state.leith[key])).join(",");
   const s = state.susieHidden ? "hidden" : MOOD_FIELDS.map(([key]) => clampMood(state.susie[key])).join(",");
-  return `[Mood j,d,a,g 1-7] L=${l}; S=${s}. Before replying, silently decide whether L should change. If yes append [MOOD:j,d,a,g]; otherwise omit. Never change S.`;
+  return `[Mood j,d,a,g 1-7] j:1 sad→7 happy; d:1 abstinent→7 sexual; a/g:1 none→7 strongest. L=${l}; S=${s}. Before replying, silently decide whether L should change. If yes append [MOOD:j,d,a,g]; otherwise omit. Never change S.`;
 }
 function getMoodExtremesForDate(dateStr) {
   const { start, end } = getDiaryRangeMs(dateStr);
