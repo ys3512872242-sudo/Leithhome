@@ -1,18 +1,18 @@
 window.LEITH_WARDROBE_CATALOG = {
-  "version": 7,
-  "generatedAt": "2026-07-24T09:57:39+0800",
+  "version": 8,
+  "generatedAt": "2026-07-24T15:20:00+0800",
   "base": {
     "id": "susie-studio-v2",
-    "name": "Susie 衣物工作室基础人物",
+    "name": "Susie 比基尼换装基础人物",
     "canvas": [
       1024,
       1024
     ],
     "crop": {
-      "x": 372,
-      "y": 18,
-      "width": 280,
-      "height": 982
+      "x": 255,
+      "y": 8,
+      "width": 514,
+      "height": 1016
     },
     "layers": [
       {
