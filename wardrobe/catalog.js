@@ -1,6 +1,6 @@
 window.LEITH_WARDROBE_CATALOG = {
-  "version": 9,
-  "generatedAt": "2026-07-24T16:05:00+0800",
+  "version": 10,
+  "generatedAt": "2026-07-24T21:45:00+0800",
   "base": {
     "id": "susie-studio-v2",
     "name": "Susie 比基尼换装基础人物",
