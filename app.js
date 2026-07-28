@@ -53,7 +53,9 @@ const DEFAULT_PROVIDERS = [
 // MINI 版极简、永远带上，只让 Leith 知道"有这几个标签、可以偶尔主动送礼/买东西"，
 // 保留"惊喜"能力，即使这轮聊天完全没提购物话题也不会丢失这个行为；
 // FULL 版是完整机制说明，只有聊天内容明显跟购物/礼物相关时才附加，减少平时的固定开销。
-const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, buy clothes for Susie, or help her change outfits using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item]/[WEAR:item] tags (full syntax rules included automatically when relevant). When an intimate encounter actually happened in the current conversation, append exactly one [LOVE:tag1,tag2] at the end; each optional Chinese tag is at most 5 characters. Never use it for fantasy, discussion, flirting, plans, or consent that has not become an actual event.`;
+const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, buy clothes for Susie, or help her change outfits using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item]/[WEAR:item] tags (full syntax rules included automatically when relevant).
+[Sex record] When Susie and Leith actually had sex or completed an adult sexual act in the current conversation, append exactly one [SEX:tag1,tag2] at the end. This means an event that actually happened, not flirting, sexual discussion, fantasy, role-play, a plan, desire, consent by itself, or a vague romantic/intimate moment. Optional tags describe the sexual position or activity; every tag is at most 5 Chinese characters. Do not mention the hidden tag.
+[Shared calendar] When Leith deliberately wants to add a real calendar date that both can see, append [DATE:YYYY-MM-DD|emoji|title|note]. Use one emoji sticker, a short title, and a short note. Do not add dates casually or invent plans.`;
 const WORLD_RULES_FULL = `[World rules]
 [LGIFT:item] Gift limited item to user -> deduct from limited fund, item delists into gift list
 [ABUY:item] Buy adult item -> deduct from allowance, item goes to nightstand
@@ -297,7 +299,6 @@ function refreshUiAfterCloudStateRestore() {
   if (activeApp.id === 'page-app-health') renderHealthPage();
   if (activeApp.id === 'page-app-diarybook') renderDiaryBook();
   if (activeApp.id === 'page-app-closet') renderClosetPage();
-  if (activeApp.id === 'page-app-folded-calendar') renderFoldedDates();
 }
 
 async function restoreCloudAppState() {
@@ -364,9 +365,16 @@ async function refreshCurrentOutfitFromCloud() {
   return true;
 }
 
-setInterval(() => {
-  refreshCurrentOutfitFromCloud().catch(e => console.error('同步当前穿搭失败:', e));
-}, 5000);
+let outfitSyncTimer = null;
+function scheduleOutfitSync(delay = 30000) {
+  clearTimeout(outfitSyncTimer);
+  if (document.hidden) return;
+  outfitSyncTimer = setTimeout(async () => {
+    await refreshCurrentOutfitFromCloud().catch(e => console.error('同步当前穿搭失败:', e));
+    scheduleOutfitSync(30000);
+  }, delay);
+}
+scheduleOutfitSync();
 
 function showModal(title, msg, buttonText = "知道了") {
   $("#modalTitle").innerText = title;
@@ -491,7 +499,7 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE|MOOD|LOVE):[^\]]+\]/g, "").trim();
+  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE|MOOD|LOVE|SEX|DATE):[^\]]+\]/g, "").trim();
   const segments = [];
   const tagPattern = /<(thinking|think)>/ig;
   let cursor = 0;
@@ -567,7 +575,6 @@ function openApp(appPageId) {
   if (appPageId === "page-app-diarybook") renderDiaryBook();
   if (appPageId === "page-app-love") renderLoveApp();
   if (appPageId === "page-app-closet") renderClosetPage();
-  if (appPageId === "page-app-folded-calendar") renderFoldedDates();
 }
 
 // 关闭 app 页面，回到桌面
@@ -1142,9 +1149,18 @@ function setFoldedDates(items) {
   saveJSON(LS.foldedDates, items);
 }
 
-function addFoldedDate(date, name, note) {
+function addFoldedDate(date, name, note, emoji = "", actor = "user") {
   const items = getFoldedDates();
-  items.push({ id: uid(), date, name, note: note || "", remindDays: 3, addedAt: Date.now() });
+  items.push({
+    id: uid(),
+    date,
+    name: String(name || "我们的日子").slice(0, 30),
+    note: String(note || "").slice(0, 160),
+    emoji: Array.from(String(emoji || "").trim()).slice(0, 2).join(""),
+    actor: actor === "leith" ? "leith" : "user",
+    remindDays: 3,
+    addedAt: Date.now()
+  });
   setFoldedDates(items.sort((a, b) => a.date.localeCompare(b.date)));
 }
 
@@ -1159,12 +1175,15 @@ function daysUntilDate(dateStr) {
 }
 
 function buildFoldedDatesPromptLine() {
-  const upcoming = getFoldedDates()
+  const visibleDates = getFoldedDates()
     .map(item => ({ ...item, days: daysUntilDate(item.date) }))
-    .filter(item => item.days >= 0 && item.days <= (item.remindDays ?? 3))
-    .slice(0, 4);
-  if (!upcoming.length) return "";
-  return `Folded dates nearby: ${upcoming.map(item => `${item.name} ${item.days === 0 ? "today" : `in ${item.days} day(s)`}${item.note ? ` (${item.note})` : ""}`).join("; ")}. Mention naturally only if it feels warm, not as a calendar alert.`;
+    .filter(item => item.days >= -7 && item.days <= 90)
+    .sort((a, b) => Math.abs(a.days) - Math.abs(b.days))
+    .slice(0, 12);
+  if (!visibleDates.length) return "";
+  return `[Shared calendar — entries written by Susie or Leith and visible to both]
+${visibleDates.map(item => `- ${item.date} ${item.emoji || "📌"} ${item.name}${item.note ? ` — ${item.note}` : ""} (${item.actor === "leith" ? "added by Leith" : "added by Susie"})`).join("\n")}
+Treat these as real shared calendar entries. Mention them only when relevant; never pretend a planned date already happened.`;
 }
 
 // ===== 床头柜（每个对话独立）=====
@@ -3659,7 +3678,8 @@ function parseAIActions(text) {
   const wearRegex = /\[WEAR:([^\]]+)\]/g;
   const moodRegex = /\[MOOD:\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*\]/g;
   const useRegex = /\[USE:([^\]]+)\]/g;
-  const loveRegex = /\[LOVE:([^\]]*)\]/g;
+  const loveRegex = /\[(?:LOVE|SEX):([^\]]*)\]/g;
+  const dateRegex = /\[DATE:([^|\]]+)\|([^|\]]*)\|([^|\]]*)\|([^\]]*)\]/g;
 
   let match;
   while ((match = buyRegex.exec(text)) !== null) {
@@ -3689,6 +3709,9 @@ function parseAIActions(text) {
   while ((match = loveRegex.exec(text)) !== null) {
     const tags = match[1].split(/[,，、]/).map(v => Array.from(v.trim()).slice(0, 5).join('')).filter(Boolean);
     actions.push({ type: "love", tags });
+  }
+  while ((match = dateRegex.exec(text)) !== null) {
+    actions.push({ type: "date", date: match[1].trim(), emoji: match[2].trim(), name: match[3].trim(), note: match[4].trim() });
   }
   return actions;
 }
@@ -3805,6 +3828,10 @@ function handleAIActions(actions) {
       window.Memory?.addIntimacy?.(formatLocalDate(), action.tags, "leith").then(ok => {
         if (ok) showToast("♡ Leith 点亮了今天的爱爱记录");
       });
+    } else if (action.type === "date") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(action.date)) return;
+      addFoldedDate(action.date, action.name || "我们的日子", action.note, action.emoji, "leith");
+      showToast("🗓️ Leith 在共享日历贴了一张贴纸");
     }
   });
   if (needRefresh && document.getElementById("page-app-shop") && document.getElementById("page-app-shop").classList.contains("active")) renderShopPage();
@@ -4402,6 +4429,8 @@ function buildContentBlocksForApi(text, attachments, apiStyle) {
 // ============================================================
 const HEALTH_CHECK_INTERVAL = 5 * 60 * 1000; // 5 分钟
 let healthCheckTimer = null;
+let healthResumeTimer = null;
+let appResumeBlockedUntil = 0;
 let healthChecking = false;
 let lastHealthState = null; // 'ok' | 'warn' | 'bad' | null，用于只在状态变化时提示，避免反复打扰
 let consecutiveHealthFails = 0;
@@ -4471,23 +4500,33 @@ async function runHealthCheck(opts = {}) {
 
 function scheduleHealthChecks() {
   clearInterval(healthCheckTimer);
+  if (document.hidden) return;
   healthCheckTimer = setInterval(() => runHealthCheck(), HEALTH_CHECK_INTERVAL);
 }
 
 function initHealthCheck() {
-  // 打开 App 时先测一次
-  runHealthCheck();
+  // 首屏先让界面稳定，避免与云端记忆初始化、天气和日记检查同时抢占主线程。
+  healthResumeTimer = setTimeout(() => { if (!document.hidden) runHealthCheck({ silent: true }); }, 12000);
   scheduleHealthChecks();
 
   // App 从后台切回前台时，如果距上次探测已经有一阵子了，立刻再测一次
   let lastVisibleCheck = Date.now();
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      if (Date.now() - lastVisibleCheck > 60 * 1000) {
-        runHealthCheck();
-      }
+    clearTimeout(healthResumeTimer);
+    if (document.visibilityState === "hidden") {
+      clearInterval(healthCheckTimer);
+      clearTimeout(outfitSyncTimer);
+      widgetWeatherController?.abort();
+      widgetNoteController?.abort();
+    } else {
+      // iOS 刚从熄屏恢复的前几秒只恢复 UI，不立刻请求模型或 Supabase。
+      appResumeBlockedUntil = Date.now() + 15000;
+      healthResumeTimer = setTimeout(() => {
+        if (!document.hidden && Date.now() - lastVisibleCheck > 60 * 1000) runHealthCheck({ silent: true });
+      }, 15000);
       lastVisibleCheck = Date.now();
-      scheduleHealthChecks(); // 重置计时，避免切后台期间攒了很多次探测
+      scheduleHealthChecks();
+      scheduleOutfitSync(10000);
     }
   });
 
@@ -5914,13 +5953,19 @@ async function renderLoveApp() {
   grid.innerHTML = `<div class="helper-text" style="grid-column:1/-1;text-align:center;padding:28px 0;">正在读取...</div>`;
   loveMonthRows = await window.Memory?.listIntimacyMonth?.(monthStr) || [];
   const byDate = new Map(loveMonthRows.map(row => [row.dateStr, row.entries]));
+  const calendarByDate = new Map();
+  getFoldedDates().filter(item => item.date.startsWith(monthStr)).forEach(item => {
+    if (!calendarByDate.has(item.date)) calendarByDate.set(item.date, []);
+    calendarByDate.get(item.date).push(item);
+  });
   const firstWeekday = (loveMonthDate.getDay() + 6) % 7;
   const days = new Date(loveMonthDate.getFullYear(), loveMonthDate.getMonth() + 1, 0).getDate();
   const cells = Array.from({ length: firstWeekday }, () => `<button class="love-day is-empty"></button>`);
   for (let day = 1; day <= days; day++) {
     const dateStr = `${monthStr}-${String(day).padStart(2, "0")}`;
     const count = (byDate.get(dateStr) || []).length;
-    cells.push(`<button class="love-day${dateStr === loveSelectedDate ? " is-selected" : ""}" data-love-date="${dateStr}" data-count="${Math.min(count, 4)}">${day}${count ? `<span class="love-count">×${count}</span>` : ""}</button>`);
+    const sticker = calendarByDate.get(dateStr)?.find(item => item.emoji)?.emoji || "";
+    cells.push(`<button class="love-day${dateStr === loveSelectedDate ? " is-selected" : ""}" data-love-date="${dateStr}" data-count="${Math.min(count, 4)}"><span class="love-day-number">${day}</span>${sticker ? `<span class="love-day-sticker">${escapeHtml(sticker)}</span>` : ""}${count ? `<span class="love-count">×${count}</span>` : ""}</button>`);
   }
   grid.innerHTML = cells.join("");
   grid.querySelectorAll("[data-love-date]").forEach(btn => {
@@ -5932,7 +5977,17 @@ async function renderLoveApp() {
 function renderLoveCalendarSelection() {
   document.querySelectorAll("[data-love-date]").forEach(btn => btn.classList.toggle("is-selected", btn.dataset.loveDate === loveSelectedDate));
   const entries = loveMonthRows.find(row => row.dateStr === loveSelectedDate)?.entries || [];
+  const calendarItems = getFoldedDates().filter(item => item.date === loveSelectedDate);
   $("#loveSelectedTitle").innerText = `${loveSelectedDate} · ${entries.length} 次`;
+  $("#loveCalendarNotes").innerHTML = calendarItems.length ? calendarItems.map(item => `
+    <div class="love-calendar-note">
+      <span class="love-calendar-sticker">${escapeHtml(item.emoji || "📌")}</span>
+      <div><strong>${escapeHtml(item.name || "我们的日子")}</strong>${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}<small>${item.actor === "leith" ? "Leith 添加" : "你添加"}</small></div>
+      <button class="msg-delete-btn" data-love-note-delete="${item.id}" title="删除">×</button>
+    </div>`).join("") : `<div class="helper-text">这一天还没有日期备注或贴纸。</div>`;
+  document.querySelectorAll("[data-love-note-delete]").forEach(btn => {
+    btn.onclick = () => { removeFoldedDate(btn.dataset.loveNoteDelete); renderLoveApp(); };
+  });
   $("#loveOccurrences").innerHTML = entries.length ? entries.map((entry, index) => `
     <div class="love-occurrence">
       <div class="love-occurrence-head"><span>第 ${index + 1} 次</span><span>${entry.actor === "leith" ? "Leith 点亮" : "你点亮"}</span></div>
@@ -5965,6 +6020,18 @@ function initLoveApp() {
     input.value = "";
     await renderLoveApp();
     showToast("♡ 已点亮一次");
+  };
+  $("#loveCalendarAddBtn").onclick = () => {
+    const emoji = $("#loveCalendarEmojiInput").value.trim();
+    const name = $("#loveCalendarTitleInput").value.trim();
+    const note = $("#loveCalendarNoteInput").value.trim();
+    if (!emoji && !name && !note) return showToast("写一点内容或选一个 emoji 吧");
+    addFoldedDate(loveSelectedDate, name || "我们的日子", note, emoji, "user");
+    $("#loveCalendarEmojiInput").value = "";
+    $("#loveCalendarTitleInput").value = "";
+    $("#loveCalendarNoteInput").value = "";
+    renderLoveApp();
+    showToast("🗓️ 已写进共享日历");
   };
 }
 
@@ -6237,6 +6304,10 @@ let widgetTimeTimer = null;
 let cachedWeather = null;
 let cachedNote = null;
 let cachedNoteDate = "";
+let weatherPromise = null;
+let notePromise = null;
+let widgetWeatherController = null;
+let widgetNoteController = null;
 
 function initWidget() {
   // 时间更新定时器
@@ -6259,8 +6330,7 @@ function initWidget() {
   const archiveBtn = $("#archiveNoteBtn");
   if (archiveBtn) archiveBtn.onclick = archiveCurrentDailyNote;
 
-  // 异步获取天气和小纸条
-  fetchWeather();
+  // 桌面初始化保持纯本地；天气和 AI 小纸条只在用户真正打开小组件后加载。
 }
 
 function updateWidgetTime() {
@@ -6283,14 +6353,15 @@ function updateWidgetTime() {
 
 function updateWidgetPreview() {
   updateWidgetTime();
-  if (!cachedWeather) fetchWeather();
-  if (!cachedNote) generateDailyNote();
-
-  // 更新桌面预览卡
+  // 进入“桌面”绝不发网络请求，避免 iOS 从熄屏恢复时与其他后台任务扎堆。
   if (cachedWeather) setWidgetWeatherLine(cachedWeather.icon, `${cachedWeather.desc} · ${cachedWeather.temp}°C`);
+  else setWidgetWeatherLine("○", "打开小组件后加载天气");
   if (cachedNote) {
     const wn = $("#widgetNotePreview");
     if (wn) wn.innerText = cachedNote;
+  } else {
+    const wn = $("#widgetNotePreview");
+    if (wn) wn.innerText = "点击小组件，Leith 再写今日纸条";
   }
 }
 
@@ -6311,6 +6382,9 @@ function setWidgetWeatherLine(emoji, text) {
 }
 
 async function fetchWeather() {
+  if (weatherPromise) return weatherPromise;
+  weatherPromise = (async () => {
+  widgetWeatherController = new AbortController();
   // Open-Meteo 免费 API，无需 key
   // 先尝试获取地理位置
   const getCoords = () => new Promise((resolve) => {
@@ -6328,7 +6402,7 @@ async function fetchWeather() {
 
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current_weather=true&timezone=auto`;
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal: widgetWeatherController.signal });
     if (!resp.ok) throw new Error("天气获取失败");
     const data = await resp.json();
     const cw = data.current_weather;
@@ -6352,6 +6426,9 @@ async function fetchWeather() {
     if (wt) wt.innerText = "天气获取失败";
     setWidgetWeatherLine("⚠️", "天气获取失败");
   }
+  })();
+  try { return await weatherPromise; }
+  finally { weatherPromise = null; widgetWeatherController = null; }
 }
 
 function weatherCodeToIcon(code) {
@@ -6390,6 +6467,14 @@ async function generateDailyNote() {
     updateNoteUI();
     return;
   }
+  if (notePromise) return notePromise;
+  notePromise = generateDailyNoteInner(today);
+  try { return await notePromise; }
+  finally { notePromise = null; }
+}
+
+async function generateDailyNoteInner(today) {
+  widgetNoteController = new AbortController();
 
   const noteEl = $("#widgetNoteText");
   if (noteEl) noteEl.innerText = "正在生成今日小纸条...";
@@ -6456,14 +6541,14 @@ ${contextBlock}请给 Susie 写一句简短、日常、非敏感的小纸条，3
       result = await streamAnthropic({
         provider, apiKey, model, temp,
         systemPrompt: noteSystemPrompt,
-        messages, controller: new AbortController(),
+        messages, controller: widgetNoteController,
         onDelta: () => {}
       });
     } else {
       result = await streamOpenAICompatible({
         provider, apiKey, model, temp,
         systemPrompt: noteSystemPrompt,
-        messages, controller: new AbortController(),
+        messages, controller: widgetNoteController,
         onDelta: () => {}
       });
     }
@@ -6476,6 +6561,8 @@ ${contextBlock}请给 Susie 写一句简短、日常、非敏感的小纸条，3
     cachedNote = weatherInfo ? "今天也慢慢来，先照顾好自己。" : "给今天留一点轻轻的余地。";
     cachedNoteDate = today;
     updateNoteUI();
+  } finally {
+    widgetNoteController = null;
   }
 }
 
@@ -7054,7 +7141,7 @@ function openReadingBook(bookId) {
   clearInterval(partnerProgressTimer);
   if (readingSharedId) {
     fetchPartnerProgress();
-    partnerProgressTimer = setInterval(fetchPartnerProgress, 20000);
+    partnerProgressTimer = setInterval(() => { if (!document.hidden) fetchPartnerProgress(); }, 20000);
   }
 }
 
@@ -7527,6 +7614,10 @@ setTimeout(updateSupabaseStatus, 5000);
     if (!document.hidden) checkAndGenerateDiary({ silent: true }).catch(e => console.error("日记检查失败:", e));
   }, 6000);
 })();
-setInterval(() => { if (!document.hidden) checkAndGenerateDiary({ silent: true }).catch(e => console.error("日记检查失败:", e)); }, 30 * 60 * 1000);
+setInterval(() => {
+  if (!document.hidden && Date.now() >= appResumeBlockedUntil) {
+    checkAndGenerateDiary({ silent: true }).catch(e => console.error("日记检查失败:", e));
+  }
+}, 30 * 60 * 1000);
 // 分层汇总检查频率低得多——内部本身已经做了"今天查过就跳过"，这里只要保证每次开App都会过一遍
 setTimeout(() => { checkAndGenerateRollups().catch(e => console.error("日记汇总检查失败:", e)); }, 9000);

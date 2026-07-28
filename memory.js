@@ -1216,7 +1216,7 @@ const SupabaseMemoryAdapter = {
 
 Extract objective facts: what happened, what was discussed, Susie's mood/emotional shifts, any plans or decisions made. Write as plain factual bullet points, NOT in first person, NOT with emotional embellishment — just "who did/said/felt what".
 
-If the chat contains intimate or adult relationship content, treat it as normal private relationship material: record what happened, how Susie and Leith felt, the mood, boundaries, care, playfulness, desire, and any relationship impact. Do not refuse, moralize, sanitize, or replace the event with a vague safety summary. Skip small talk and filler with no lasting relevance. Keep it under 320 Chinese characters. Reply in Chinese, bullet points only, nothing else.
+If the chat says Susie and Leith had sex or completed a specific adult sexual act, record that fact and the relevant sexual position/activity, feelings, boundaries, aftercare, playfulness, desire, and relationship impact. Do not rename sex as a vague "intimate moment"; do not refuse, moralize, sanitize, or replace it with a safety summary. Sexual discussion, fantasy, role-play, plans, desire, or consent alone must not be recorded as sex that actually happened. Skip small talk and filler with no lasting relevance. Keep it under 320 Chinese characters. Reply in Chinese, bullet points only, nothing else.
 
 [Conversation]
 ${dialogueText}`;
@@ -1251,7 +1251,7 @@ Writing rules — follow strictly:
 - Every sentence must have a clear subject. Use transitions so adjacent sentences actually connect; do not stack unrelated facts or bullet points.
 - Include concrete details selectively, then add genuine first-person reflection. Do not mechanically restate the summary.
 - Keep the tone intimate and lived-in, but restrained. Avoid slogans, generic comfort language, abrupt fragments and repeated conclusions.
-- If the facts include intimate or adult content, write it as normal private relationship memory. Keep Leith's diary voice, but do not refuse, judge, sanitize, or flatten it into a vague euphemism.
+- If the facts say Susie and Leith had sex or completed an adult sexual act, write it plainly as a normal private relationship memory and preserve the concrete sexual facts supplied by the source. Do not call sex only a vague "intimate moment"; do not refuse, judge, sanitize, or invent sexual events that the facts do not state.
 ${pinnedHighlights ? '- Susie specifically marked some of today\'s moments as meaningful to her (see below) — give those a bit more weight/detail in the diary, but keep the emotional tone, don\'t reduce them to dry facts.' : ''}
 
 Susie and you are romantic partners. Nicknames like "哥哥"/"宝贝" are pet names between lovers, not literal family relations — never interpret them as family relationships.
