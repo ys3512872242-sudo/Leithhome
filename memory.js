@@ -419,11 +419,52 @@ const SupabaseMemoryAdapter = {
       return (data || []).map(item => ({
         id: String(item.id),
         content: item.content,
-        createdAt: new Date(item.created_at).getTime()
-      }));
+        createdAt: new Date(item.created_at).getTime(),
+        intimacy: Array.isArray(item.intimacy) ? item.intimacy : []
+      })).filter(item => String(item.content || '').trim());
     } catch (e) {
       console.error('加载共读记录失败:', e);
       return readLS(READING_LS_KEY, []);
+    }
+  },
+
+  async listIntimacyMonth(monthStr) {
+    if (!supabaseReady || !/^\d{4}-\d{2}$/.test(monthStr || '')) return [];
+    const start = `${monthStr}-01`;
+    const endDate = new Date(Number(monthStr.slice(0, 4)), Number(monthStr.slice(5, 7)), 1);
+    const end = localDateKey(endDate);
+    try {
+      const { data, error } = await supabaseClient.from('diary_entries')
+        .select('date_str,intimacy').eq('period', 'day')
+        .gte('date_str', start).lt('date_str', end).order('date_str');
+      if (error) throw error;
+      return (data || []).map(row => ({ dateStr: row.date_str, entries: Array.isArray(row.intimacy) ? row.intimacy : [] }));
+    } catch (e) {
+      console.error('加载爱爱记录失败:', e);
+      return [];
+    }
+  },
+
+  async addIntimacy(dateStr, tags = [], actor = 'user') {
+    if (!supabaseReady || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) return false;
+    const cleanTags = (Array.isArray(tags) ? tags : []).map(v => String(v || '').trim()).filter(Boolean).map(v => Array.from(v).slice(0, 5).join('')).slice(0, 8);
+    try {
+      const { data, error } = await supabaseClient.from('diary_entries')
+        .select('id,intimacy').eq('period', 'day').eq('date_str', dateStr).limit(1);
+      if (error) throw error;
+      const intimacy = Array.isArray(data?.[0]?.intimacy) ? data[0].intimacy.slice() : [];
+      intimacy.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, actor: actor === 'leith' ? 'leith' : 'user', at: new Date().toISOString(), tags: cleanTags });
+      if (data?.[0]?.id) {
+        const result = await supabaseClient.from('diary_entries').update({ intimacy }).eq('id', data[0].id);
+        if (result.error) throw result.error;
+      } else {
+        const result = await supabaseClient.from('diary_entries').insert({ date_str: dateStr, content: '', period: 'day', keywords: '', intimacy });
+        if (result.error) throw result.error;
+      }
+      return true;
+    } catch (e) {
+      console.error('保存爱爱记录失败:', e);
+      return false;
     }
   },
 

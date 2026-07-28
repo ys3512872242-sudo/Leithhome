@@ -53,7 +53,7 @@ const DEFAULT_PROVIDERS = [
 // MINI 版极简、永远带上，只让 Leith 知道"有这几个标签、可以偶尔主动送礼/买东西"，
 // 保留"惊喜"能力，即使这轮聊天完全没提购物话题也不会丢失这个行为；
 // FULL 版是完整机制说明，只有聊天内容明显跟购物/礼物相关时才附加，减少平时的固定开销。
-const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, buy clothes for Susie, or help her change outfits using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item]/[WEAR:item] tags (full syntax rules included automatically when relevant).`;
+const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, buy clothes for Susie, or help her change outfits using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item]/[WEAR:item] tags (full syntax rules included automatically when relevant). When an intimate encounter actually happened in the current conversation, append exactly one [LOVE:tag1,tag2] at the end; each optional Chinese tag is at most 5 characters. Never use it for fantasy, discussion, flirting, plans, or consent that has not become an actual event.`;
 const WORLD_RULES_FULL = `[World rules]
 [LGIFT:item] Gift limited item to user -> deduct from limited fund, item delists into gift list
 [ABUY:item] Buy adult item -> deduct from allowance, item goes to nightstand
@@ -491,7 +491,7 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE|MOOD):[^\]]+\]/g, "").trim();
+  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE|MOOD|LOVE):[^\]]+\]/g, "").trim();
   const segments = [];
   const tagPattern = /<(thinking|think)>/ig;
   let cursor = 0;
@@ -565,6 +565,7 @@ function openApp(appPageId) {
   if (appPageId === "page-app-theater") renderTheaterRoomList();
   if (appPageId === "page-app-health") renderHealthPage();
   if (appPageId === "page-app-diarybook") renderDiaryBook();
+  if (appPageId === "page-app-love") renderLoveApp();
   if (appPageId === "page-app-closet") renderClosetPage();
   if (appPageId === "page-app-folded-calendar") renderFoldedDates();
 }
@@ -572,6 +573,10 @@ function openApp(appPageId) {
 // 关闭 app 页面，回到桌面
 function closeApp() {
   document.querySelectorAll(".app-page").forEach(p => p.classList.remove("active"));
+  // iOS Safari 对隐藏页面的合成图层回收很慢；主动清掉最重的记忆图画布，
+  // 避免反复进入桌面后 backdrop-filter/渐变图层叠加到 WebKit 内存上限。
+  const memoryGraph = document.querySelector("#page-app-memory .memory-graph-wrap");
+  if (memoryGraph) memoryGraph.replaceChildren();
 }
 // App 内点返回按钮触发（而不是手机返回键）
 function closeAppFromUI() { popNavLayerSilently(); closeApp(); }
@@ -3654,6 +3659,7 @@ function parseAIActions(text) {
   const wearRegex = /\[WEAR:([^\]]+)\]/g;
   const moodRegex = /\[MOOD:\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*\]/g;
   const useRegex = /\[USE:([^\]]+)\]/g;
+  const loveRegex = /\[LOVE:([^\]]*)\]/g;
 
   let match;
   while ((match = buyRegex.exec(text)) !== null) {
@@ -3679,6 +3685,10 @@ function parseAIActions(text) {
   }
   while ((match = useRegex.exec(text)) !== null) {
     actions.push({ type: "use", itemName: match[1].trim() });
+  }
+  while ((match = loveRegex.exec(text)) !== null) {
+    const tags = match[1].split(/[,，、]/).map(v => Array.from(v.trim()).slice(0, 5).join('')).filter(Boolean);
+    actions.push({ type: "love", tags });
   }
   return actions;
 }
@@ -3787,11 +3797,14 @@ function handleAIActions(actions) {
         .sort((a, b) => a.boughtAt - b.boughtAt);
       const target = ns[0];
       if (!target) return; // 床头柜里没有可用的了，没什么好消耗的
-
       markPurchaseRecordUsed(threadId, lsKey, target.recordId);
       removeNightstandItem(threadId, target.id);
       insertNarration(threadId, `${item.emoji} ${item.name} 用掉了`);
       needRefresh = true;
+    } else if (action.type === "love") {
+      window.Memory?.addIntimacy?.(formatLocalDate(), action.tags, "leith").then(ok => {
+        if (ok) showToast("♡ Leith 点亮了今天的爱爱记录");
+      });
     }
   });
   if (needRefresh && document.getElementById("page-app-shop") && document.getElementById("page-app-shop").classList.contains("active")) renderShopPage();
@@ -5818,10 +5831,15 @@ function renderDiaryBookPage() {
   }
   const entry = diaryBookEntries[diaryBookIndex];
   const note = getDiaryBookNotes()[entry.dateStr]?.text || "";
+  const intimacy = Array.isArray(entry.intimacy) ? entry.intimacy : [];
+  const tagCounts = new Map();
+  intimacy.flatMap(item => Array.isArray(item.tags) ? item.tags : []).forEach(tag => tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1));
+  const intimacyTags = Array.from(tagCounts.entries()).map(([tag, count]) => `<span class="diarybook-intimacy-tag">${escapeHtml(tag)}${count > 1 ? ` ×${count}` : ''}</span>`).join('');
   page.innerHTML = `<div class="diarybook-page">
     <div class="diarybook-date">${escapeHtml(entry.dateStr)}</div>
     <div class="diarybook-content">${escapeHtml(entry.content || "平淡的一天")}</div>
     ${note ? `<div class="diarybook-note">${escapeHtml(note)}</div>` : ""}
+    ${intimacyTags ? `<div class="diarybook-intimacy"><div class="diarybook-intimacy-title">♡ 当日亲密标签</div><div class="diarybook-intimacy-tags">${intimacyTags}</div></div>` : ""}
     <div class="diarybook-sign">Leith · ${escapeHtml(entry.dateStr)}</div>
   </div>`;
   if (label) label.innerText = `${diaryBookIndex + 1} / ${diaryBookEntries.length}`;
@@ -5881,6 +5899,72 @@ function initDiaryBookControls() {
     if (!entry) return showToast("还没有可重写的日记");
     if (!confirm(`重新生成 ${entry.dateStr} 这一页？`)) return;
     await rewriteDiaryByDate(entry.dateStr);
+  };
+}
+
+let loveMonthDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let loveSelectedDate = formatLocalDate();
+let loveMonthRows = [];
+
+async function renderLoveApp() {
+  const grid = $("#loveCalendarGrid");
+  if (!grid) return;
+  const monthStr = `${loveMonthDate.getFullYear()}-${String(loveMonthDate.getMonth() + 1).padStart(2, "0")}`;
+  $("#loveMonthTitle").innerText = `${loveMonthDate.getFullYear()} 年 ${loveMonthDate.getMonth() + 1} 月`;
+  grid.innerHTML = `<div class="helper-text" style="grid-column:1/-1;text-align:center;padding:28px 0;">正在读取...</div>`;
+  loveMonthRows = await window.Memory?.listIntimacyMonth?.(monthStr) || [];
+  const byDate = new Map(loveMonthRows.map(row => [row.dateStr, row.entries]));
+  const firstWeekday = (loveMonthDate.getDay() + 6) % 7;
+  const days = new Date(loveMonthDate.getFullYear(), loveMonthDate.getMonth() + 1, 0).getDate();
+  const cells = Array.from({ length: firstWeekday }, () => `<button class="love-day is-empty"></button>`);
+  for (let day = 1; day <= days; day++) {
+    const dateStr = `${monthStr}-${String(day).padStart(2, "0")}`;
+    const count = (byDate.get(dateStr) || []).length;
+    cells.push(`<button class="love-day${dateStr === loveSelectedDate ? " is-selected" : ""}" data-love-date="${dateStr}" data-count="${Math.min(count, 4)}">${day}${count ? `<span class="love-count">×${count}</span>` : ""}</button>`);
+  }
+  grid.innerHTML = cells.join("");
+  grid.querySelectorAll("[data-love-date]").forEach(btn => {
+    btn.onclick = () => { loveSelectedDate = btn.dataset.loveDate; renderLoveCalendarSelection(); };
+  });
+  renderLoveCalendarSelection();
+}
+
+function renderLoveCalendarSelection() {
+  document.querySelectorAll("[data-love-date]").forEach(btn => btn.classList.toggle("is-selected", btn.dataset.loveDate === loveSelectedDate));
+  const entries = loveMonthRows.find(row => row.dateStr === loveSelectedDate)?.entries || [];
+  $("#loveSelectedTitle").innerText = `${loveSelectedDate} · ${entries.length} 次`;
+  $("#loveOccurrences").innerHTML = entries.length ? entries.map((entry, index) => `
+    <div class="love-occurrence">
+      <div class="love-occurrence-head"><span>第 ${index + 1} 次</span><span>${entry.actor === "leith" ? "Leith 点亮" : "你点亮"}</span></div>
+      <div class="love-tags">${(entry.tags || []).length ? entry.tags.map(tag => `<span class="love-tag">${escapeHtml(tag)}</span>`).join("") : `<span class="helper-text">没有标签</span>`}</div>
+    </div>`).join("") : `<div class="helper-text">这一天还没有点亮。</div>`;
+}
+
+function initLoveApp() {
+  $("#lovePrevMonthBtn").onclick = () => {
+    loveMonthDate = new Date(loveMonthDate.getFullYear(), loveMonthDate.getMonth() - 1, 1);
+    loveSelectedDate = formatLocalDate(loveMonthDate);
+    renderLoveApp();
+  };
+  $("#loveNextMonthBtn").onclick = () => {
+    loveMonthDate = new Date(loveMonthDate.getFullYear(), loveMonthDate.getMonth() + 1, 1);
+    loveSelectedDate = formatLocalDate(loveMonthDate);
+    renderLoveApp();
+  };
+  $("#loveAddBtn").onclick = async () => {
+    const input = $("#loveTagInput");
+    const tags = (input.value || "").split(/[,，、]/)
+      .map(value => Array.from(value.trim()).slice(0, 5).join(""))
+      .filter(Boolean)
+      .slice(0, 8);
+    const button = $("#loveAddBtn");
+    button.disabled = true;
+    const ok = await window.Memory?.addIntimacy?.(loveSelectedDate, tags, "user");
+    button.disabled = false;
+    if (!ok) return showToast("没有保存成功，请先连接云端记忆");
+    input.value = "";
+    await renderLoveApp();
+    showToast("♡ 已点亮一次");
   };
 }
 
@@ -7339,6 +7423,7 @@ initConfig();
 initTheater();
 initMemoryApp();
 initDiaryBookControls();
+initLoveApp();
 initWidget();
 initMoodBoard();
 initReading();
