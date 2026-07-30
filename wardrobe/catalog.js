@@ -1,6 +1,6 @@
 window.LEITH_WARDROBE_CATALOG = {
-  "version": 10,
-  "generatedAt": "2026-07-24T21:45:00+0800",
+  "version": 11,
+  "generatedAt": "2026-07-29T12:00:00+0800",
   "base": {
     "id": "susie-studio-v2",
     "name": "Susie 比基尼换装基础人物",
@@ -18,7 +18,7 @@ window.LEITH_WARDROBE_CATALOG = {
       {
         "name": "body",
         "order": 0,
-        "asset": "wardrobe/assets/susie-studio-v2/00-susie-studio-base.png"
+        "asset": "wardrobe/assets/characters/susie/body_base/body_base.png"
       },
       {
         "name": "topwear",
