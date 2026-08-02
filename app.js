@@ -823,6 +823,59 @@ function getBundledWardrobeCatalog() {
   return catalog && typeof catalog === "object" ? catalog : { version: 0, base: null, items: [] };
 }
 
+async function syncCloudWardrobeCatalog() {
+  const client = window.getSupabaseClient?.();
+  if (!client) return false;
+  const { data: rows, error } = await client
+    .from("wardrobe_items")
+    .select("id,name,description,price,slot,image_path,z_index,transform,anchors,opacity,updated_at")
+    .eq("enabled", true)
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.warn("私有衣柜读取失败:", error.message);
+    return false;
+  }
+  const items = (await Promise.all((rows || []).map(async row => {
+    const { data, error: imageError } = await client.storage
+      .from("wardrobe-final")
+      .createSignedUrl(row.image_path, 7 * 24 * 60 * 60);
+    if (imageError || !data?.signedUrl) {
+      console.warn("衣服图片读取失败:", row.id, imageError?.message || "没有签名地址");
+      return null;
+    }
+    const transform = row.transform || {};
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description || "",
+      note: row.description || "",
+      price: Number(row.price) || 0,
+      slot: row.slot,
+      asset: data.signedUrl,
+      thumbnail: data.signedUrl,
+      opacity: Number(row.opacity ?? 1),
+      anchor: {
+        ...(row.anchors || {}),
+        x: Number(transform.offset_x || 0),
+        y: Number(transform.offset_y || 0),
+        scale: Number(transform.scale || 1),
+        layer: Number(row.z_index || 20),
+        opacity: Number(row.opacity ?? 1),
+      },
+      cloudWardrobe: true,
+      updatedAt: row.updated_at,
+    };
+  }))).filter(Boolean);
+  const current = getBundledWardrobeCatalog();
+  const version = `cloud-${items.map(item => `${item.id}:${item.updatedAt}`).join("|")}`;
+  window.LEITH_WARDROBE_CATALOG = { ...current, version, items };
+  const ownedIds = new Set(getClosetOwnedItems().map(item => item.id));
+  setClosetShopItems(items.filter(item => !ownedIds.has(item.id)));
+  localStorage.setItem(LS.closetCatalogVersion, version);
+  if (document.getElementById("page-app-closet")?.classList.contains("active")) renderClosetPage();
+  return true;
+}
+
 function mergeBundledClosetItems(items) {
   const catalog = getBundledWardrobeCatalog();
   const catalogVersion = String(catalog.version || 0);
@@ -6137,8 +6190,9 @@ function renderRasterPaperDoll() {
     const dy = Number(anchor.y || 0);
     const scale = Number(anchor.scale || 1);
     const layerZ = Number(anchor.layer || 0);
+    const opacity = Math.max(0, Math.min(1, Number(layer.opacity ?? layer.anchor?.opacity ?? 1)));
     const transform = `translate(${dx / cropWidth * 100}%,${dy / cropHeight * 100}%) scale(${scale})`;
-    return `<img src="${src}" alt="" style="${imageStyle}z-index:${layerZ || index + 1};transform:${transform};transform-origin:center center;">`;
+    return `<img src="${src}" alt="" style="${imageStyle}z-index:${layerZ || index + 1};opacity:${opacity};transform:${transform};transform-origin:center center;">`;
   }).join("");
   return `<div class="paper-doll-raster" style="--doll-ratio:${cropWidth / cropHeight};" role="img" aria-label="Susie 的分层人物">${images}</div>`;
 }
@@ -7569,6 +7623,7 @@ if ($("#testSupabaseBtn")) {
 window.addEventListener("leith:supabase-ready", async (event) => {
   updateSupabaseStatus();
   if (event.detail && event.detail.ok) {
+    await syncCloudWardrobeCatalog();
     if (!event.detail.dailyLocked) hideMemoryLockScreen();
     await restoreCloudAppState();
     renderMemoryList();
