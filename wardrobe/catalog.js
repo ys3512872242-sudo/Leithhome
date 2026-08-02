@@ -1,6 +1,6 @@
 window.LEITH_WARDROBE_CATALOG = {
-  "version": 11,
-  "generatedAt": "2026-07-29T12:00:00+0800",
+  "version": 12,
+  "generatedAt": "2026-08-02T12:43:51+0800",
   "base": {
     "id": "susie-studio-v2",
     "name": "Susie 比基尼换装基础人物",
@@ -98,6 +98,97 @@ window.LEITH_WARDROBE_CATALOG = {
       "style": "焦糖棕（#A66E4F）的帽子，贝雷帽，柔软棉质，细格纹，白色花边，优雅公主风。",
       "note": "Susie 本地衣物工坊生成",
       "addedAt": 1784858259312
+    },
+    {
+      "id": "susie-dress-garment-def0e21a3-20260802-124351",
+      "name": "藏青色臀短裙",
+      "emoji": "👗",
+      "price": 80,
+      "slot": "dress",
+      "asset": "wardrobe/assets/susie-dress-garment-def0e21a3-20260802-124351/susie-dress-garment-def0e21a3-20260802-124351.png",
+      "thumbnail": "wardrobe/assets/susie-dress-garment-def0e21a3-20260802-124351/susie-dress-garment-def0e21a3-20260802-124351-thumb.png",
+      "sourcePack": "susie-dress-garment-def0e21a3-20260802-124351",
+      "sourceLayer": "藏青色臀短裙",
+      "style": "",
+      "description": "藏青色低圆领中袖紧身包臀短裙",
+      "note": "藏青色低圆领中袖紧身包臀短裙",
+      "tags": {
+        "color": "#79AEE3",
+        "colorName": "雾霾蓝",
+        "secondaryColor": "奶油白 #F4EADC",
+        "silhouette": "修身显腰",
+        "material": "",
+        "pattern": "纯色无花纹",
+        "function": "",
+        "season": "",
+        "style": "",
+        "details": "",
+        "fitMode": "fitted",
+        "activeFitAnchors": [
+          "neck",
+          "shoulders",
+          "bust",
+          "waist",
+          "hips"
+        ],
+        "seriesName": "",
+        "seriesPart": ""
+      },
+      "anchor": {
+        "x": 0,
+        "y": 0,
+        "scale": 1,
+        "layer": 45
+      },
+      "editor": {
+        "settings": {
+          "hair_back": {
+            "offset_x": 0,
+            "offset_y": -91,
+            "scale": 0.8,
+            "opacity": 1.0,
+            "visible": true
+          },
+          "body": {
+            "offset_x": 0,
+            "offset_y": 0,
+            "scale": 1.0,
+            "opacity": 1.0,
+            "visible": true
+          },
+          "arms_front": {
+            "offset_x": 0,
+            "offset_y": 0,
+            "scale": 1.0,
+            "opacity": 1.0,
+            "visible": true
+          },
+          "garment": {
+            "offset_x": 0,
+            "offset_y": 0,
+            "scale": 1.0,
+            "opacity": 1.0,
+            "visible": true
+          },
+          "hair_front": {
+            "offset_x": -3,
+            "offset_y": -248,
+            "scale": 0.4,
+            "opacity": 1.0,
+            "visible": true
+          }
+        },
+        "order": [
+          "hair_back",
+          "body",
+          "arms_front",
+          "garment",
+          "hair_front"
+        ],
+        "strokes": [],
+        "redo": []
+      },
+      "addedAt": 1785645831047
     }
   ]
 };
