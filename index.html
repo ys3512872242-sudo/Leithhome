@@ -555,9 +555,12 @@
     font-size:10px;color:var(--accent-2);background:var(--accent-glow);
     padding:2px 10px;border-radius:20px;letter-spacing:.5px;font-weight:500;
   }
-  .memory-del{background:none;border:none;color:var(--paper-dim);cursor:pointer;padding:3px;border-radius:6px;}
+  .memory-card-actions{display:flex;gap:4px;}
+  .memory-edit,.memory-del{background:none;border:none;color:var(--paper-dim);cursor:pointer;padding:3px;border-radius:6px;}
+  .memory-edit:hover{color:var(--accent);background:var(--accent-glow);}
   .memory-del:hover{color:var(--danger);background:var(--danger-glow);}
   .memory-del svg{width:13px;height:13px;}
+  .memory-edit svg{width:13px;height:13px;}
   .memory-content{font-size:13px;line-height:1.7;color:var(--paper);white-space:pre-wrap;}
 
   .sticker-manage-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
@@ -1148,6 +1151,10 @@
   .diarybook-intimacy-title{font:600 12px var(--sans);color:#8c6d62;margin-bottom:8px;}
   .diarybook-intimacy-tags{display:flex;flex-wrap:wrap;gap:6px;}
   .diarybook-intimacy-tag{padding:4px 9px;border-radius:999px;background:rgba(140,109,98,.1);font:11px var(--sans);color:#76594f;}
+  .diarybook-intimacy-row{display:flex;align-items:center;gap:7px;margin:6px 0;}
+  .diarybook-intimacy-row .diarybook-intimacy-tags{flex:1;}
+  .diarybook-intimacy-action{border:0;background:transparent;color:#8c6d62;cursor:pointer;padding:3px 5px;border-radius:6px;}
+  .diarybook-intimacy-action:hover{background:rgba(140,109,98,.1);}
   .love-wrap{display:flex;flex-direction:column;gap:16px;}
   .love-card{background:var(--bg-elevated);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px;}
   .love-month-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}

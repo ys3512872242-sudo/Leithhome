@@ -468,6 +468,60 @@ const SupabaseMemoryAdapter = {
     }
   },
 
+  async updateIntimacy(dateStr, entryId, tags = []) {
+    if (!supabaseReady || !dateStr || !entryId) return false;
+    const cleanTags = (Array.isArray(tags) ? tags : []).map(v => String(v || '').trim()).filter(Boolean).map(v => Array.from(v).slice(0, 12).join('')).slice(0, 8);
+    try {
+      const { data, error } = await supabaseClient.from('diary_entries')
+        .select('id,intimacy').eq('period', 'day').eq('date_str', dateStr).limit(1);
+      if (error) throw error;
+      if (!data?.[0]?.id) return false;
+      const intimacy = (Array.isArray(data[0].intimacy) ? data[0].intimacy : []).map(item =>
+        String(item.id) === String(entryId) ? { ...item, tags: cleanTags } : item
+      );
+      const result = await supabaseClient.from('diary_entries').update({ intimacy }).eq('id', data[0].id);
+      if (result.error) throw result.error;
+      return true;
+    } catch (e) {
+      console.error('修改爱爱记录失败:', e);
+      return false;
+    }
+  },
+
+  async removeIntimacy(dateStr, entryId) {
+    if (!supabaseReady || !dateStr || !entryId) return false;
+    try {
+      const { data, error } = await supabaseClient.from('diary_entries')
+        .select('id,intimacy').eq('period', 'day').eq('date_str', dateStr).limit(1);
+      if (error) throw error;
+      if (!data?.[0]?.id) return false;
+      const intimacy = (Array.isArray(data[0].intimacy) ? data[0].intimacy : [])
+        .filter(item => String(item.id) !== String(entryId));
+      const result = await supabaseClient.from('diary_entries').update({ intimacy }).eq('id', data[0].id);
+      if (result.error) throw result.error;
+      return true;
+    } catch (e) {
+      console.error('删除爱爱记录失败:', e);
+      return false;
+    }
+  },
+
+  async updateStoredItem(id, branch, content) {
+    const clean = String(content || '').trim();
+    if (!clean || !supabaseReady) return false;
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) return false;
+    try {
+      const table = branch === 'diary' ? 'diary_entries' : 'memories';
+      const { error } = await supabaseClient.from(table).update({ content: clean }).eq('id', numId);
+      if (error) throw error;
+      return true;
+    } catch (e) {
+      console.error('修改云端记录失败:', e);
+      return false;
+    }
+  },
+
   async addReading(content, bookName) {
     const trimmed = content.trim();
     const tagged = bookName ? `《${bookName}》${trimmed}` : trimmed;
@@ -552,7 +606,8 @@ const SupabaseMemoryAdapter = {
       return (data || []).map(item => ({
         id: String(item.id),
         content: item.content,
-        createdAt: new Date(item.created_at).getTime()
+        createdAt: new Date(item.created_at).getTime(),
+        intimacy: Array.isArray(item.intimacy) ? item.intimacy : []
       }));
     } catch (e) {
       console.error('加载人设档案失败:', e);
@@ -755,7 +810,8 @@ const SupabaseMemoryAdapter = {
         dateStr: item.date_str,
         keywords: item.keywords || '',
         period: item.period,
-        createdAt: new Date(item.created_at).getTime()
+        createdAt: new Date(item.created_at).getTime(),
+        intimacy: Array.isArray(item.intimacy) ? item.intimacy : []
       }));
     } catch (e) {
       console.error('加载日记失败:', e);

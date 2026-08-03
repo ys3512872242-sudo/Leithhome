@@ -86,20 +86,6 @@ window.LEITH_WARDROBE_CATALOG = {
       "addedAt": 1784856414963
     },
     {
-      "id": "susie-hat-garment-7a3743296-20260724-095739",
-      "name": "焦糖棕帽子",
-      "emoji": "👒",
-      "price": 50,
-      "slot": "hat",
-      "asset": "wardrobe/assets/susie-hat-garment-7a3743296-20260724-095739/susie-hat-garment-7a3743296-20260724-095739.png",
-      "thumbnail": "wardrobe/assets/susie-hat-garment-7a3743296-20260724-095739/susie-hat-garment-7a3743296-20260724-095739-thumb.png",
-      "sourcePack": "susie-hat-garment-7a3743296-20260724-095739",
-      "sourceLayer": "焦糖棕帽子",
-      "style": "焦糖棕（#A66E4F）的帽子，贝雷帽，柔软棉质，细格纹，白色花边，优雅公主风。",
-      "note": "Susie 本地衣物工坊生成",
-      "addedAt": 1784858259312
-    },
-    {
       "id": "susie-dress-garment-def0e21a3-20260802-124351",
       "name": "藏青色臀短裙",
       "emoji": "👗",

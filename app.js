@@ -2255,12 +2255,22 @@ async function renderMemoryList() {
     card.innerHTML = `
       <div class="memory-card-head">
         <span class="memory-tag">核心记忆</span>
-        <button class="memory-del" title="删除">
+        <div class="memory-card-actions"><button class="memory-edit" title="修改">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </button><button class="memory-del" title="删除">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
-        </button>
+        </button></div>
       </div>
       <div class="memory-content">${escapeHtml(m.content)}</div>
     `;
+    card.querySelector(".memory-edit").addEventListener("click", async () => {
+      const next = prompt("修改这条核心记忆：", m.content);
+      if (next === null || !next.trim() || next.trim() === m.content) return;
+      const ok = await window.Memory.updateStoredItem(m.id, "core", next);
+      if (!ok) return showToast("修改失败，请检查云端连接");
+      await renderMemoryList();
+      showToast("核心记忆已同步修改");
+    });
     card.querySelector(".memory-del").addEventListener("click", async () => {
       await window.Memory.remove(m.id);
       renderMemoryList();
@@ -5786,16 +5796,17 @@ async function renderMemoryTree() {
             <div class="mem-leaf-content">${roleLabel ? `<span style="color:${branch.color};font-weight:600;font-family:'Noto Sans SC',sans-serif;font-size:11px;">${roleLabel}：</span>` : ""}${escapeHtml(contentPreview)}</div>
             ${timeStr ? `<div class="mem-leaf-meta">${timeStr}</div>` : ''}
           </div>
-          ${branch.id === "diary" ? `<div class="mem-leaf-actions">
+          <div class="mem-leaf-actions">
+            <button class="mem-leaf-rewrite" onclick="event.stopPropagation();editMemoryLeaf('${item.id}','${branch.id}')" title="修改">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </button>
+          ${branch.id === "diary" ? `
             <button class="mem-leaf-rewrite" onclick="event.stopPropagation();rewriteDiaryLeaf('${item.id}','${item.dateStr || ""}')" title="再写一次">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 4v6h-6"/></svg>
             </button>
-            <button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
-            </button>
-          </div>` : branch.canAdd ? `<button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
+          ` : ''}<button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>
-          </button>` : ''}
+          </button></div>
         </div>`;
       });
     }
@@ -5854,6 +5865,18 @@ async function deleteMemoryLeaf(id, branch) {
   }
   renderMemoryTree();
   showToast("已删除");
+}
+
+async function editMemoryLeaf(id, branch) {
+  const leaf = document.querySelector(`.mem-leaf[data-leaf-id="${CSS.escape(String(id))}"][data-branch="${CSS.escape(String(branch))}"]`);
+  const current = leaf?.querySelector('.mem-leaf-content')?.innerText?.replace(/^(Leith|我)：/, '') || '';
+  const next = prompt("修改这条记录：", current);
+  if (next === null || !next.trim() || next.trim() === current.trim()) return;
+  const ok = await window.Memory?.updateStoredItem?.(id, branch, next);
+  if (!ok) return showToast("修改失败，请检查云端连接");
+  await renderMemoryTree();
+  if (branch === 'diary') await renderDiaryBook();
+  showToast("已直接同步到云端");
 }
 
 async function rewriteDiaryLeaf(id, dateStr) {
@@ -5924,16 +5947,41 @@ function renderDiaryBookPage() {
   const entry = diaryBookEntries[diaryBookIndex];
   const note = getDiaryBookNotes()[entry.dateStr]?.text || "";
   const intimacy = Array.isArray(entry.intimacy) ? entry.intimacy : [];
-  const tagCounts = new Map();
-  intimacy.flatMap(item => Array.isArray(item.tags) ? item.tags : []).forEach(tag => tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1));
-  const intimacyTags = Array.from(tagCounts.entries()).map(([tag, count]) => `<span class="diarybook-intimacy-tag">${escapeHtml(tag)}${count > 1 ? ` ×${count}` : ''}</span>`).join('');
+  const intimacyRows = intimacy.map(item => `<div class="diarybook-intimacy-row">
+    <div class="diarybook-intimacy-tags">${(Array.isArray(item.tags) ? item.tags : []).map(tag => `<span class="diarybook-intimacy-tag">${escapeHtml(tag)}</span>`).join('')}</div>
+    <button class="diarybook-intimacy-action" data-intimacy-edit="${escapeHtml(String(item.id || ''))}" title="修改">修改</button>
+    <button class="diarybook-intimacy-action" data-intimacy-delete="${escapeHtml(String(item.id || ''))}" title="删除">删除</button>
+  </div>`).join('');
   page.innerHTML = `<div class="diarybook-page">
     <div class="diarybook-date">${escapeHtml(entry.dateStr)}</div>
     <div class="diarybook-content">${escapeHtml(entry.content || "平淡的一天")}</div>
     ${note ? `<div class="diarybook-note">${escapeHtml(note)}</div>` : ""}
-    ${intimacyTags ? `<div class="diarybook-intimacy"><div class="diarybook-intimacy-title">♡ 当日亲密标签</div><div class="diarybook-intimacy-tags">${intimacyTags}</div></div>` : ""}
+    ${intimacyRows ? `<div class="diarybook-intimacy"><div class="diarybook-intimacy-title">♡ 当日亲密记录</div>${intimacyRows}</div>` : ""}
     <div class="diarybook-sign">Leith · ${escapeHtml(entry.dateStr)}</div>
   </div>`;
+  page.querySelectorAll('[data-intimacy-edit]').forEach(button => {
+    button.onclick = async () => {
+      const item = intimacy.find(row => String(row.id) === button.dataset.intimacyEdit);
+      const oldTags = Array.isArray(item?.tags) ? item.tags.join('、') : '';
+      const next = prompt("修改标签（用顿号或逗号分开）：", oldTags);
+      if (next === null) return;
+      const tags = next.split(/[、,，]/).map(v => v.trim()).filter(Boolean);
+      if (!tags.length) return showToast("至少保留一个标签；也可以点删除整条记录");
+      const ok = await window.Memory.updateIntimacy(entry.dateStr, item.id, tags);
+      if (!ok) return showToast("修改失败，请检查云端连接");
+      await renderDiaryBook();
+      showToast("亲密记录已同步修改");
+    };
+  });
+  page.querySelectorAll('[data-intimacy-delete]').forEach(button => {
+    button.onclick = async () => {
+      if (!confirm("删除这条亲密记录？")) return;
+      const ok = await window.Memory.removeIntimacy(entry.dateStr, button.dataset.intimacyDelete);
+      if (!ok) return showToast("删除失败，请检查云端连接");
+      await renderDiaryBook();
+      showToast("亲密记录已从云端删除");
+    };
+  });
   if (label) label.innerText = `${diaryBookIndex + 1} / ${diaryBookEntries.length}`;
 }
 
