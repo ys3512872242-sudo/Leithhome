@@ -499,8 +499,7 @@ function escapeHtml(str) {
 
 function renderBubbleContent(text) {
   // 先去掉 [BUY:...] [GIFT:...] [LGIFT:...] 标记（用户不需要看到这些）
-  const envelopeSafeText = window.LeithDesireRuntime?.splitEventEnvelope?.(String(text || ""), "").visible ?? String(text || "");
-  const cleaned = envelopeSafeText.replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE|MOOD|LOVE|SEX|DATE):[^\]]+\]/g, "").trim();
+  const cleaned = String(text || '').replace(/\[(?:BUY|GIFT|LGIFT|ABUY|SBUY|CBUY|WEAR|USE|MOOD|LOVE|SEX|DATE):[^\]]+\]/g, "").trim();
   const segments = [];
   const tagPattern = /<(thinking|think)>/ig;
   let cursor = 0;
@@ -1136,8 +1135,9 @@ function saveMoodState(state, changedPerson = "", previous = null) {
 }
 function buildMoodPromptBlock() {
   const state = getMoodState();
+  const l = MOOD_FIELDS.map(([key]) => clampMood(state.leith[key])).join(",");
   const s = state.susieHidden ? "hidden" : MOOD_FIELDS.map(([key]) => clampMood(state.susie[key])).join(",");
-  return `[Susie's self-reported mood board, values are 1-7, order happiness/intimacy/anger/grievance. Current S=${s}. This is Susie's own editable context. Never alter these values and never emit a MOOD tag.`;
+  return `[Mood board, values are 1-7, order j,d,a,g. j=Leith sadness-to-happiness: 1 very sad, 4 calm, 7 very happy. d=Leith sexual desire: 1 abstinent/withdrawn, 4 neutral intimacy, 7 strongly sexual. a=Leith anger: 1 not angry, 4 irritated, 7 very angry. g=Leith grievance/hurt: 1 not hurt, 4 quietly wronged, 7 deeply wronged. Current Leith L=${l}; Susie S=${s}. Before every reply, seriously and cautiously decide whether Leith's own real emotional state should change from the conversation. If it changes, append exactly [MOOD:j,d,a,g] at the end; otherwise omit it. Never change Susie's S. Do not mention the tag.`;
 }
 function getMoodExtremesForDate(dateStr) {
   const { start, end } = getDiaryRangeMs(dateStr);
@@ -1154,7 +1154,7 @@ function renderMoodBoard() {
   const board = $("#moodBoard");
   if (!board) return;
   const summary = $("#moodBoardSummary");
-  if (summary) summary.textContent = `Susie ${state.susieHidden ? "隐藏" : state.susie.joy}　${board.classList.contains("collapsed") ? "⌄" : "⌃"}`;
+  if (summary) summary.textContent = `Leith ${state.leith.joy} · Susie ${state.susieHidden ? "隐藏" : state.susie.joy}　${board.classList.contains("collapsed") ? "⌄" : "⌃"}`;
   const susiePanel = $("#susieMoodPanel");
   susiePanel?.classList.toggle("is-hidden", state.susieHidden);
   const hideBtn = $("#susieMoodHideBtn");
@@ -1613,62 +1613,36 @@ async function autoRespondToNarration(threadId, bubble, row) {
   sendBtn.onclick = () => controller.abort();
 
   try {
-    await window.LeithDesireRuntime?.init?.();
-    const sourceMsg = getThreadMessages(threadId).slice().reverse().find(message => message._isNarration)
-      || { _id: uid(), content: "发生了一件内部经历。" };
-    const desireSnapshot = window.LeithDesireRuntime?.getSnapshot?.();
-    const desireContext = {
-      capsule: window.LeithDesireRuntime?.getCapsule?.(sourceMsg.content || ""),
-      priorIntent: desireSnapshot?.state?.intent || null
-    };
-    const systemPrompt = await buildEffectiveSystemPrompt(desireContext);
+    const systemPrompt = await buildEffectiveSystemPrompt();
     const messages = truncateMessagesForApi(getThreadMessages(threadId).filter(m => m.type !== "sticker"));
     let fullReply = "";
-    let lastUsage = null;
-    let result;
     if (provider.apiStyle === "anthropic") {
-      result = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+      fullReply = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
         lastChunkTime = Date.now(); hasReceivedContent = true;
-        bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
+        bubble.innerHTML = renderBubbleContent(acc);
         $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
       }});
     } else {
-      result = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
+      fullReply = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
         lastChunkTime = Date.now(); hasReceivedContent = true;
-        bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
+        bubble.innerHTML = renderBubbleContent(acc);
         $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
       }});
     }
-    fullReply = result.text;
-    lastUsage = result.usage || null;
     clearInterval(timeoutTimer);
     const freshMessages = getThreadMessages(threadId);
     const finalMsgId = uid();
-    const parsedDesireReply = window.LeithDesireRuntime?.splitEventEnvelope?.(fullReply, sourceMsg.content);
-    const visibleReply = parsedDesireReply?.hasEnvelope ? parsedDesireReply.visible : fullReply;
-    bubble.innerHTML = renderBubbleContent(visibleReply);
-    freshMessages.push({ role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() });
+    freshMessages.push({ role: "assistant", content: fullReply, _id: finalMsgId, _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
     forceChatToBottom();
     // 同步到云端短期记忆
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-      window.Memory.saveShortTerm(threadId, "assistant", visibleReply);
+      window.Memory.saveShortTerm(threadId, "assistant", fullReply);
     }
     renderThreadList();
-    const actions = parseAIActions(visibleReply);
+    const actions = parseAIActions(fullReply);
     if (actions.length) handleAIActions(actions);
-    await window.LeithDesireRuntime?.completeTurn?.({
-      sourceMessageId: sourceMsg._id,
-      assistantMessageId: finalMsgId,
-      userText: sourceMsg.content || "",
-      rawReply: fullReply,
-      priorIntent: desireContext.priorIntent,
-      capsule: desireContext.capsule,
-      provider: provider.name || provider.apiStyle,
-      model,
-      usage: lastUsage
-    });
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -2814,13 +2788,7 @@ async function regenerateFromMessage(userMsg) {
   setSendingUI(sendBtn, () => controller.abort());
 
   try {
-    await window.LeithDesireRuntime?.init?.();
-    const desireSnapshot = window.LeithDesireRuntime?.getSnapshot?.();
-    const desireContext = {
-      capsule: window.LeithDesireRuntime?.getCapsule?.(userMsg.content || ""),
-      priorIntent: desireSnapshot?.state?.intent || null
-    };
-    const systemPrompt = await buildEffectiveSystemPrompt(desireContext);
+    const systemPrompt = await buildEffectiveSystemPrompt();
     let messages = truncateMessagesForApi(getThreadMessages(threadId).filter(m => m.type !== "sticker")).map(m => {
       if (m.attachments && m.attachments.length) {
         return { role: m.role, content: buildContentBlocksForApi(m.content, m.attachments, provider.apiStyle) };
@@ -2830,7 +2798,6 @@ async function regenerateFromMessage(userMsg) {
     const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
     let fullReply = "";
-    let lastUsage = null;
     let searchNotice = null;
     const MAX_TOOL_ROUNDS = 3;
 
@@ -2841,7 +2808,7 @@ async function regenerateFromMessage(userMsg) {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
-          bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
+          bubble.innerHTML = renderBubbleContent(acc);
           box.scrollTop = box.scrollHeight;
         }, tools });
       } else {
@@ -2849,13 +2816,12 @@ async function regenerateFromMessage(userMsg) {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
-          bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
+          bubble.innerHTML = renderBubbleContent(acc);
           box.scrollTop = box.scrollHeight;
         }, tools });
       }
 
       fullReply = result.text;
-      lastUsage = result.usage || lastUsage;
       if (!result.toolCalls || !result.toolCalls.length) break;
 
       const tc = result.toolCalls[0];
@@ -2879,8 +2845,7 @@ async function regenerateFromMessage(userMsg) {
         messages.push({ role: "assistant", content: [{ type: "tool_use", id: tc.id, name: "web_search", input: { query } }] });
         messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: searchResult }] });
       } else {
-        const toolRoundReply = window.LeithDesireRuntime?.splitEventEnvelope?.(result.text, userMsg.content);
-        messages.push({ role: "assistant", content: toolRoundReply?.hasEnvelope ? toolRoundReply.visible : result.text, tool_calls: [{ id: tc.id, type: "function", function: { name: "web_search", arguments: tc.function.arguments } }] });
+        messages.push({ role: "assistant", content: result.text, tool_calls: [{ id: tc.id, type: "function", function: { name: "web_search", arguments: tc.function.arguments } }] });
         messages.push({ role: "tool", tool_call_id: tc.id, content: searchResult });
       }
 
@@ -2891,33 +2856,15 @@ async function regenerateFromMessage(userMsg) {
 
     const freshMessages = getThreadMessages(threadId);
     const finalMsgId = uid();
-    const parsedDesireReply = window.LeithDesireRuntime?.splitEventEnvelope?.(fullReply, userMsg.content) || { visible: fullReply };
-    const visibleReply = parsedDesireReply.hasEnvelope ? parsedDesireReply.visible : fullReply;
-    bubble.innerHTML = renderBubbleContent(visibleReply);
-    freshMessages.push({ role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() });
+    freshMessages.push({ role: "assistant", content: fullReply, _id: finalMsgId, _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
     renderThreadList();
     // 不在旁白回复后触发 token banner（避免每次买东西都弹提醒）
 
     // 解析 AI 的购买/送礼动作
-    const actions = parseAIActions(visibleReply);
+    const actions = parseAIActions(fullReply);
     if (actions.length) handleAIActions(actions);
-    try {
-      await window.LeithDesireRuntime?.completeTurn?.({
-        sourceMessageId: userMsg._id,
-        assistantMessageId: finalMsgId,
-        userText: userMsg.content || "",
-        rawReply: fullReply,
-        priorIntent: desireContext.priorIntent,
-        capsule: desireContext.capsule,
-        provider: provider.name || provider.apiStyle,
-        model,
-        usage: lastUsage
-      });
-    } catch (stateError) {
-      console.warn("内部状态更新失败；重新生成的回复已经安全保存。", stateError);
-    }
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -3461,7 +3408,7 @@ function buildTemporalContextBlock() {
 Treat memory date labels as authoritative. "发生于" is the event date; "记录于" is only when the memory was saved and may differ from when it happened. Retrieval order never means "recent", "yesterday", or "just now". If no event date is known, do not invent one.`;
 }
 
-async function buildEffectiveSystemPrompt(desireContext = null) {
+async function buildEffectiveSystemPrompt() {
   const base = localStorage.getItem(LS.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
 
   // 按需检索：只把最近几条消息的文本喂给关键词提取，匹配到什么记忆才带什么，
@@ -3500,10 +3447,7 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
   // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
   // 世界规则（WORLD_RULES_MINI / WORLD_RULES_FULL）现在跟着 shopRelevant 走
   const moodBlock = buildMoodPromptBlock();
-  const capsule = desireContext?.capsule || window.LeithDesireRuntime?.getCapsule(recentText);
-  const desireBlock = capsule?.text ? `[Leith internal state capsule — private, concise, never quote mechanically]\n${capsule.text}` : "";
-  const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
-  return [worldRulesBlock, FORMATTING_RULES, base.trim(), temporalBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, base.trim(), temporalBlock, moodBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim()].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -3795,6 +3739,7 @@ function parseAIActions(text) {
   const sbuyRegex = /\[SBUY:([^\]]+)\]/g;
   const cbuyRegex = /\[CBUY:([^\]]+)\]/g;
   const wearRegex = /\[WEAR:([^\]]+)\]/g;
+  const moodRegex = /\[MOOD:\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*,\s*([1-7])\s*\]/g;
   const useRegex = /\[USE:([^\]]+)\]/g;
   const loveRegex = /\[(?:LOVE|SEX):([^\]]*)\]/g;
   const dateRegex = /\[DATE:([^|\]]+)\|([^|\]]*)\|([^|\]]*)\|([^\]]*)\]/g;
@@ -3817,6 +3762,9 @@ function parseAIActions(text) {
   }
   while ((match = wearRegex.exec(text)) !== null) {
     actions.push({ type: "wear", itemName: match[1].trim() });
+  }
+  while ((match = moodRegex.exec(text)) !== null) {
+    actions.push({ type: "mood", values: match.slice(1, 5).map(Number) });
   }
   while ((match = useRegex.exec(text)) !== null) {
     actions.push({ type: "use", itemName: match[1].trim() });
@@ -3918,6 +3866,11 @@ function handleAIActions(actions) {
       insertNarration(threadId, `🪞 Leith 为 Susie 换上了 ${ownedItem.emoji || "👗"} ${ownedItem.name}`);
       showToast(`已换上 ${ownedItem.emoji || "👗"} ${ownedItem.name}`);
       needRefresh = true;
+    } else if (action.type === "mood") {
+      const state = getMoodState();
+      const previous = { ...state.leith };
+      MOOD_FIELDS.forEach(([key], index) => { state.leith[key] = clampMood(action.values[index]); });
+      saveMoodState(state, "leith", previous);
     } else if (action.type === "use") {
       // AI 在对话里判断某件消耗品"用掉了"，自动消耗床头柜里最早的一份（先买的先用）
       let item = findShelfItem(action.itemName);
@@ -4626,6 +4579,8 @@ function initHealthCheck() {
     if (document.visibilityState === "hidden") {
       clearInterval(healthCheckTimer);
       clearTimeout(outfitSyncTimer);
+      widgetWeatherController?.abort();
+      widgetNoteController?.abort();
     } else {
       // iOS 刚从熄屏恢复的前几秒只恢复 UI，不立刻请求模型或 Supabase。
       appResumeBlockedUntil = Date.now() + 15000;
@@ -4665,7 +4620,7 @@ async function sendChat(overrideContent) {
 
   const threadId = getActiveThreadId();
   const messages = getThreadMessages(threadId);
-  const userMsg = { role: "user", content, _id: uid(), _ts: Date.now() };
+  const userMsg = { role: "user", content, _id: uid() };
   if (attachments.length) userMsg.attachments = attachments;
   messages.push(userMsg);
   renderMessage(userMsg);
@@ -4709,13 +4664,7 @@ async function sendChat(overrideContent) {
   setSendingUI(sendBtn, () => controller.abort());
 
   try {
-    await window.LeithDesireRuntime?.init?.();
-    const desireSnapshot = window.LeithDesireRuntime?.getSnapshot?.();
-    const desireContext = {
-      capsule: window.LeithDesireRuntime?.getCapsule?.(content),
-      priorIntent: desireSnapshot?.state?.intent || null
-    };
-    const systemPrompt = await buildEffectiveSystemPrompt(desireContext);
+    const systemPrompt = await buildEffectiveSystemPrompt();
     let textMessages = truncateMessagesForApi(messages.filter(m => m.type !== "sticker")).map(m => {
       if (m.attachments && m.attachments.length) {
         return { role: m.role, content: buildContentBlocksForApi(m.content, m.attachments, provider.apiStyle) };
@@ -4726,7 +4675,6 @@ async function sendChat(overrideContent) {
     const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
     let fullReply = "";
-    let lastUsage = null;
     let searchNotice = null; // 搜索提示气泡
     const MAX_TOOL_ROUNDS = 3; // 防止无限循环
 
@@ -4737,7 +4685,7 @@ async function sendChat(overrideContent) {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
-          bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
+          bubble.innerHTML = renderBubbleContent(acc);
           if (chatPinnedToBottom) box.scrollTop = box.scrollHeight;
         }, tools });
       } else {
@@ -4745,13 +4693,12 @@ async function sendChat(overrideContent) {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
-          bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
+          bubble.innerHTML = renderBubbleContent(acc);
           if (chatPinnedToBottom) box.scrollTop = box.scrollHeight;
         }, tools });
       }
 
       fullReply = result.text;
-      lastUsage = result.usage || lastUsage;
 
       // 如果没有工具调用，循环结束
       if (!result.toolCalls || !result.toolCalls.length) break;
@@ -4794,10 +4741,7 @@ async function sendChat(overrideContent) {
         // OpenAI: assistant 消息带 tool_calls；单独的 tool 角色消息带 tool_call_id
         textMessages.push({
           role: "assistant",
-          content: (() => {
-            const parsed = window.LeithDesireRuntime?.splitEventEnvelope?.(result.text, content);
-            return parsed?.hasEnvelope ? parsed.visible : result.text;
-          })(),
+          content: result.text,
           tool_calls: [{ id: tc.id, type: "function", function: { name: "web_search", arguments: tc.function.arguments } }]
         });
         textMessages.push({
@@ -4815,38 +4759,20 @@ async function sendChat(overrideContent) {
 
     const freshMessages = getThreadMessages(threadId);
     const finalMsgId = uid();
-    const parsedDesireReply = window.LeithDesireRuntime?.splitEventEnvelope?.(fullReply, content) || { visible: fullReply };
-    const visibleReply = parsedDesireReply.hasEnvelope ? parsedDesireReply.visible : fullReply;
-    bubble.innerHTML = renderBubbleContent(visibleReply);
-    freshMessages.push({ role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() });
+    freshMessages.push({ role: "assistant", content: fullReply, _id: finalMsgId, _ts: Date.now() });
     saveThreadMessages(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
     // 同步到云端短期记忆——长期记忆现在改由每天深夜的日记生成负责，
     // 这里不再按消息数机械压缩
     if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-      window.Memory.saveShortTerm(threadId, "assistant", visibleReply);
+      window.Memory.saveShortTerm(threadId, "assistant", fullReply);
     }
     renderThreadList();
     renderTokenBanner();
 
     // 解析 AI 的购买/送礼动作
-    const actions = parseAIActions(visibleReply);
+    const actions = parseAIActions(fullReply);
     if (actions.length) handleAIActions(actions);
-    try {
-      await window.LeithDesireRuntime?.completeTurn?.({
-        sourceMessageId: userMsg._id,
-        assistantMessageId: finalMsgId,
-        userText: content,
-        rawReply: fullReply,
-        priorIntent: desireContext.priorIntent,
-        capsule: desireContext.capsule,
-        provider: provider.name || provider.apiStyle,
-        model,
-        usage: lastUsage
-      });
-    } catch (stateError) {
-      console.warn("内部状态更新失败；聊天消息已经安全保存。", stateError);
-    }
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -4939,7 +4865,6 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
   let rawBytesReceived = false;
   let parseFailCount = 0;
   let lastParseError = null;
-  let usage = null;
   // 累积 tool_calls（按 index 聚合，流式 delta 会分片到达）
   const toolCallAcc = {};
 
@@ -4956,7 +4881,6 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
       if (jsonStr === "[DONE]") continue;
       try {
         const chunkJson = JSON.parse(jsonStr);
-        if (chunkJson.usage) usage = chunkJson.usage;
         // 有些中转服务会把错误信息也用 200 状态码 + SSE 格式包起来返回，而不是走 HTTP 错误状态码
         if (chunkJson.error) {
           throw new Error(chunkJson.error.message || JSON.stringify(chunkJson.error));
@@ -4998,7 +4922,7 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
     throw new Error("服务商没有返回任何内容，请检查服务商地址、密钥或模型名称是否正确。");
   }
 
-  return { text: fullReply, toolCalls, usage };
+  return { text: fullReply, toolCalls };
 }
 
 // ---- Anthropic 官方 ----
@@ -5042,7 +4966,6 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   let rawBytesReceived = false;
   let parseFailCount = 0;
   let lastParseError = null;
-  let usage = null;
   // 当前 content block 的累积
   let currentBlock = null; // { type, text, toolUse: {id, name, input} }
   const toolUses = [];
@@ -5060,8 +4983,6 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
       if (!jsonStr) continue;
       try {
         const evt = JSON.parse(jsonStr);
-        if (evt.type === "message_start" && evt.message?.usage) usage = { ...evt.message.usage };
-        if (evt.type === "message_delta" && evt.usage) usage = { ...(usage || {}), ...evt.usage };
         // 有些中转服务会把错误信息也用 200 状态码 + SSE 格式包起来返回，而不是走 HTTP 错误状态码
         if (evt.type === "error") {
           throw new Error(evt.error?.message || JSON.stringify(evt.error || evt));
@@ -5110,7 +5031,7 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
     throw new Error("服务商没有返回任何内容，请检查服务商地址、密钥或模型名称是否正确。");
   }
 
-  return { text: fullReply, toolCalls, usage };
+  return { text: fullReply, toolCalls };
 }
 
 // ============================================================
@@ -6479,6 +6400,299 @@ function formatMemoryTime(ts) {
 }
 
 // ============================================================
+// 小组件 app（时间 + 天气 + 每日小纸条）
+// ============================================================
+let widgetTimeTimer = null;
+let cachedWeather = null;
+let cachedNote = null;
+let cachedNoteDate = "";
+let weatherPromise = null;
+let notePromise = null;
+let widgetWeatherController = null;
+let widgetNoteController = null;
+
+function initWidget() {
+  // 时间更新定时器
+  updateWidgetTime();
+  if (widgetTimeTimer) clearInterval(widgetTimeTimer);
+  // 小组件只显示到分钟；每秒重绘在 iOS PWA 中会造成没有视觉收益的持续耗电与合成。
+  widgetTimeTimer = setInterval(() => { if (!document.hidden) updateWidgetTime(); }, 30000);
+
+  // 刷新小纸条按钮
+  const refreshBtn = $("#refreshNoteBtn");
+  if (refreshBtn) {
+    refreshBtn.onclick = () => {
+      cachedNote = null;
+      cachedNoteDate = "";
+      generateDailyNote();
+    };
+  }
+
+  // 手动存进归档信件
+  const archiveBtn = $("#archiveNoteBtn");
+  if (archiveBtn) archiveBtn.onclick = archiveCurrentDailyNote;
+
+  // 桌面初始化保持纯本地；天气和 AI 小纸条只在用户真正打开小组件后加载。
+}
+
+function updateWidgetTime() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, "0");
+  const m = String(now.getMinutes()).padStart(2, "0");
+  const timeStr = `${h}:${m}`;
+  const dateStr = now.toLocaleDateString("zh-CN", { weekday: "long", month: "long", day: "numeric" });
+
+  // 桌面预览
+  const wp = $("#widgetTime");
+  if (wp) wp.innerText = timeStr;
+
+  // 小组件 app 内
+  const bt = $("#widgetBigTime");
+  if (bt) bt.innerText = timeStr;
+  const bd = $("#widgetBigDate");
+  if (bd) bd.innerText = dateStr;
+}
+
+function updateWidgetPreview() {
+  updateWidgetTime();
+  // 进入“桌面”绝不发网络请求，避免 iOS 从熄屏恢复时与其他后台任务扎堆。
+  if (cachedWeather) setWidgetWeatherLine(cachedWeather.icon, `${cachedWeather.desc} · ${cachedWeather.temp}°C`);
+  else setWidgetWeatherLine("○", "打开小组件后加载天气");
+  if (cachedNote) {
+    const wn = $("#widgetNotePreview");
+    if (wn) wn.innerText = cachedNote;
+  } else {
+    const wn = $("#widgetNotePreview");
+    if (wn) wn.innerText = "点击小组件，Leith 再写今日纸条";
+  }
+}
+
+// 更新桌面小组件卡片里的天气行（图标 span + 文字分开写，避免互相覆盖）
+function setWidgetWeatherLine(emoji, text) {
+  const emojiEl = $("#widgetWeatherEmoji");
+  if (emojiEl) emojiEl.innerText = emoji;
+  const ww = $("#widgetWeather");
+  if (ww) {
+    // 保留 emoji span，只替换后面的文字节点
+    let textNode = Array.from(ww.childNodes).find(n => n.nodeType === 3);
+    if (!textNode) {
+      textNode = document.createTextNode("");
+      ww.appendChild(textNode);
+    }
+    textNode.textContent = text;
+  }
+}
+
+async function fetchWeather() {
+  if (weatherPromise) return weatherPromise;
+  weatherPromise = (async () => {
+  widgetWeatherController = new AbortController();
+  // Open-Meteo 免费 API，无需 key
+  // 先尝试获取地理位置
+  const getCoords = () => new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => resolve(null),
+      { timeout: 5000 }
+    );
+  });
+
+  let coords = await getCoords();
+  // 默认深圳
+  if (!coords) coords = { lat: 22.5431, lon: 114.0579 };
+
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current_weather=true&timezone=auto`;
+    const resp = await fetch(url, { signal: widgetWeatherController.signal });
+    if (!resp.ok) throw new Error("天气获取失败");
+    const data = await resp.json();
+    const cw = data.current_weather;
+    if (!cw) throw new Error("无天气数据");
+
+    const temp = Math.round(cw.temperature);
+    const code = cw.weathercode;
+    const icon = weatherCodeToIcon(code);
+    const desc = weatherCodeToText(code);
+    cachedWeather = { temp, icon, desc, text: `${icon} ${desc} ${temp}°C` };
+
+    // 更新 UI
+    const wi = $("#widgetWeatherIcon");
+    if (wi) wi.innerText = icon;
+    const wt = $("#widgetWeatherText");
+    if (wt) wt.innerText = `${desc} · ${temp}°C`;
+    setWidgetWeatherLine(icon, `${desc} · ${temp}°C`);
+  } catch (e) {
+    console.error("天气获取失败:", e);
+    const wt = $("#widgetWeatherText");
+    if (wt) wt.innerText = "天气获取失败";
+    setWidgetWeatherLine("⚠️", "天气获取失败");
+  }
+  })();
+  try { return await weatherPromise; }
+  finally { weatherPromise = null; widgetWeatherController = null; }
+}
+
+function weatherCodeToIcon(code) {
+  if (code === 0) return "☀️";
+  if (code <= 3) return "⛅";
+  if (code <= 48) return "🌫️";
+  if (code <= 67) return "🌧️";
+  if (code <= 77) return "❄️";
+  if (code <= 82) return "🌦️";
+  if (code <= 86) return "🌨️";
+  if (code >= 95) return "⛈️";
+  return "🌤️";
+}
+
+function weatherCodeToText(code) {
+  const map = {
+    0: "晴", 1: "晴", 2: "多云", 3: "阴",
+    45: "雾", 48: "雾",
+    51: "毛毛雨", 53: "毛毛雨", 55: "毛毛雨",
+    56: "冻雨", 57: "冻雨",
+    61: "小雨", 63: "中雨", 65: "大雨",
+    66: "冻雨", 67: "冻雨",
+    71: "小雪", 73: "中雪", 75: "大雪",
+    77: "雪粒",
+    80: "阵雨", 81: "阵雨", 82: "暴雨",
+    85: "阵雪", 86: "阵雪",
+    95: "雷暴", 96: "雷暴", 99: "雷暴"
+  };
+  return map[code] || "未知";
+}
+
+async function generateDailyNote() {
+  const today = new Date().toISOString().slice(0, 10);
+  // 同一天不重复生成（除非手动刷新）
+  if (cachedNote && cachedNoteDate === today) {
+    updateNoteUI();
+    return;
+  }
+  if (notePromise) return notePromise;
+  notePromise = generateDailyNoteInner(today);
+  try { return await notePromise; }
+  finally { notePromise = null; }
+}
+
+async function generateDailyNoteInner(today) {
+  widgetNoteController = new AbortController();
+
+  const noteEl = $("#widgetNoteText");
+  if (noteEl) noteEl.innerText = "正在生成今日小纸条...";
+
+  const apiKey = localStorage.getItem(LS.apiKey);
+  const provider = getActiveProvider();
+  const model = getSelectedChatModel();
+  const isGemini = /gemini|google|generativelanguage/i.test(`${model || ""} ${provider?.name || ""} ${provider?.baseUrl || ""}`);
+
+  if (!apiKey || !provider || !model) {
+    if (noteEl) noteEl.innerText = "（配置好服务商后，Leith 会给你写每日小纸条）";
+    return;
+  }
+
+  const weatherInfo = cachedWeather ? `今天天气：${cachedWeather.desc}，${cachedWeather.temp}°C` : "";
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "long" });
+  const timeStr = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+  // 小纸条只"读"记忆和最近聊天，不会往里写任何东西——
+  // 读完就是读完了，除非用户自己点了"存进归档信件"，否则不会留下任何痕迹。
+  let contextBlock = "";
+  try {
+    if (window.Memory && !isGemini) {
+      const memBlock = window.Memory.asPromptBlock ? await window.Memory.asPromptBlock() : "";
+      if (memBlock) contextBlock += `【关于 Susie，你一直记得的事】\n${memBlock}\n\n`;
+
+      const threadId = getActiveThreadId();
+      if (window.Memory.isReady && window.Memory.isReady() && threadId) {
+        const recent = await window.Memory.listShortTermDetail(threadId, 8);
+        if (recent && recent.length) {
+          const lines = recent.slice().reverse().map(m => `${m.role === "assistant" ? "Leith" : "Susie"}：${m.content}`);
+          contextBlock += `【最近聊到的】\n${lines.join("\n")}\n\n`;
+        }
+      }
+    }
+  } catch (e) {
+    console.error("小纸条读取记忆失败（不影响生成，只是拿不到上下文）:", e);
+  }
+
+  const prompt = isGemini
+    ? `写一句适合日历小组件的中文生活便签。今天${dateStr}，现在${timeStr}，${weatherInfo || "天气未知"}。12到28个汉字，内容只围绕吃饭、喝水、休息、天气或给今天留一点余地。不要称呼，不要关系设定，不要解释，只输出正文。`
+    : `今天是${dateStr}，现在${timeStr}。${weatherInfo}。
+
+${contextBlock}请给 Susie 写一句简短、日常、非敏感的小纸条，30字以内。
+要求：
+1. 像朋友放在桌上的便签，温柔自然。
+2. 可以轻轻呼应天气、时间、日常心情或最近话题，但不要复述隐私细节。
+3. 不写医疗、心理诊断、危险行为、成人内容、承诺、控制、占有、身份宣称。
+4. 不要写“我记得你说过”，不要加引号、标题、解释或列表。
+只输出纸条正文。`;
+  const noteSystemPrompt = [
+    "Task: write one benign Chinese calendar note.",
+    "12-28 Chinese characters. Everyday life only: weather, food, water, rest or tidying.",
+    "No relationship roleplay, diagnosis, promises, adult content, danger, explanation or title.",
+    "Output the note only."
+  ].join("\n");
+
+  try {
+    const messages = [{ role: "user", content: prompt }];
+    const temp = 0.9;
+    let result;
+    if (provider.apiStyle === "anthropic") {
+      result = await streamAnthropic({
+        provider, apiKey, model, temp,
+        systemPrompt: noteSystemPrompt,
+        messages, controller: widgetNoteController,
+        onDelta: () => {}
+      });
+    } else {
+      result = await streamOpenAICompatible({
+        provider, apiKey, model, temp,
+        systemPrompt: noteSystemPrompt,
+        messages, controller: widgetNoteController,
+        onDelta: () => {}
+      });
+    }
+    cachedNote = (result.text || "").trim().replace(/^["“]|["”]$/g, "");
+    if (!cachedNote || cachedNote.length > 60) throw new Error("小纸条正文无效");
+    cachedNoteDate = today;
+    updateNoteUI();
+  } catch (e) {
+    console.error("小纸条生成失败:", e);
+    cachedNote = weatherInfo ? "今天也慢慢来，先照顾好自己。" : "给今天留一点轻轻的余地。";
+    cachedNoteDate = today;
+    updateNoteUI();
+  } finally {
+    widgetNoteController = null;
+  }
+}
+
+// 手动把当前这条小纸条存进归档信件——小纸条本身默认不会自动进记忆，
+// 只有用户主动点这个按钮，才会把它变成一条正式记忆
+async function archiveCurrentDailyNote() {
+  if (!cachedNote) return showToast("还没有小纸条可以存");
+  if (!window.Memory || !window.Memory.addArchive) return showToast("记忆系统未加载");
+  const dateLabel = new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
+  await window.Memory.addArchive(`【${dateLabel}的小纸条】${cachedNote}`);
+  showToast("已存进归档信件");
+}
+
+function updateNoteUI() {
+  if (!cachedNote) return;
+  const noteEl = $("#widgetNoteText");
+  if (noteEl) noteEl.innerText = cachedNote;
+  const preview = $("#widgetNotePreview");
+  if (preview) preview.innerText = cachedNote;
+}
+
+function refreshWidgetApp() {
+  updateWidgetTime();
+  if (!cachedWeather) fetchWeather();
+  if (!cachedNote) generateDailyNote();
+}
+
+// ============================================================
 // 共读小说 app
 // ============================================================
 let readingBooks = [];
@@ -7379,100 +7593,6 @@ async function manualSaveReadingReply(content) {
   await window.Memory.addReading(content, book ? book.name : "");
   readingMemoryBlock = await window.Memory.asReadingPromptBlock();
   showToast("已存进共读记忆");
-}
-
-// ============================================================
-// Leith · 此刻（替代旧天气/每日小纸条；纯时间 + 只读状态观察）
-// ============================================================
-const DESIRE_LABELS = {
-  attachment: "想你", curiosity: "好奇", reflection: "沉思", duty: "责任",
-  social: "社交", fatigue: "疲惫", libido: "性欲", stress: "压力"
-};
-const AFFECT_LABELS = { happiness: "开心", anger: "生气", grievance: "委屈" };
-let widgetTimeTimer = null;
-let desireObserverUnsubscribe = null;
-
-function initWidget() {
-  updateWidgetTime();
-  if (widgetTimeTimer) clearInterval(widgetTimeTimer);
-  widgetTimeTimer = setInterval(() => { if (!document.hidden) updateWidgetTime(); }, 30000);
-  if (!desireObserverUnsubscribe) {
-    desireObserverUnsubscribe = window.LeithDesireRuntime?.subscribe?.(() => renderDesireObserver()) || null;
-  }
-  window.LeithDesireRuntime?.init?.().then(renderDesireObserver).catch(error => {
-    console.warn("Leith 状态观察初始化失败", error);
-    renderDesireObserver();
-  });
-}
-
-function updateWidgetTime() {
-  const now = new Date();
-  const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  const dateStr = now.toLocaleDateString("zh-CN", { weekday: "long", month: "long", day: "numeric" });
-  if ($("#widgetTime")) $("#widgetTime").innerText = timeStr;
-  if ($("#widgetBigTime")) $("#widgetBigTime").innerText = timeStr;
-  if ($("#widgetBigDate")) $("#widgetBigDate").innerText = dateStr;
-}
-
-function updateWidgetPreview() {
-  updateWidgetTime();
-  renderDesireObserver();
-}
-
-function refreshWidgetApp() {
-  updateWidgetTime();
-  renderDesireObserver();
-}
-
-function renderDesireObserver() {
-  const snapshot = window.LeithDesireRuntime?.getSnapshot?.();
-  const state = snapshot?.state;
-  if (!state) return;
-  const affectText = `我现在${window.LeithDesireEngine.describeAffect(state.affect)}。`;
-  const intentReason = state.intent?.reason || "我想自然地回应眼前发生的事。";
-  const intentLabel = state.intent?.want_action === "rest_and_slow_down" ? "慢下来休息" : intentReason.replace(/^我(?:还)?想/, "").replace(/[。！]$/, "");
-  const thoughts = window.LeithDesireEngine.selectThoughts(state, "", 3);
-  const primaryThought = thoughts[0]?.text || "眼前正在发生的事。";
-
-  if ($("#desireEmotionText")) $("#desireEmotionText").textContent = affectText;
-  if ($("#desireIntentText")) $("#desireIntentText").textContent = `当前倾向：${intentLabel}`;
-  if ($("#desireThoughtText")) $("#desireThoughtText").textContent = primaryThought;
-  if ($("#desireDetailEmotion")) $("#desireDetailEmotion").textContent = affectText;
-  if ($("#desireDetailIntent")) $("#desireDetailIntent").textContent = intentReason;
-  if ($("#desireCloudStatus")) $("#desireCloudStatus").textContent = snapshot.cloudAvailable ? "已同步" : "本机保存";
-  renderDesireBars($("#desireBars"), state.drives);
-  renderDesireBars($("#desireDetailBars"), state.drives);
-  renderAffectBars($("#desireAffectBars"), state.affect);
-  const list = $("#desireThoughtList");
-  if (list) {
-    list.innerHTML = thoughts.length
-      ? thoughts.map(thought => `<div class="desire-thought-item">${escapeHtml(thought.text)}</div>`).join("")
-      : `<div class="desire-thought-item">此刻没有特别突出的念头。</div>`;
-  }
-}
-
-function renderDesireBars(container, drives) {
-  if (!container) return;
-  container.innerHTML = window.LeithDesireEngine.DRIVE_KEYS.map(key => {
-    const value = Math.max(0, Math.min(1, Number(drives[key]) || 0));
-    return `<div class="desire-bar-row">
-      <span>${DESIRE_LABELS[key]}</span>
-      <div class="desire-bar-track"><div class="desire-bar-fill" style="width:${Math.round(value * 100)}%"></div></div>
-      <span class="desire-bar-value">${Math.round(value * 100)}</span>
-    </div>`;
-  }).join("");
-}
-
-function renderAffectBars(container, affect) {
-  if (!container) return;
-  container.innerHTML = window.LeithDesireEngine.AFFECT_KEYS.map(key => {
-    const value = Math.max(0, Math.min(1, Number(affect[key]) || 0));
-    return `<div class="desire-bar-row">
-      <span>${AFFECT_LABELS[key]}</span>
-      <div class="desire-bar-track"><div class="desire-bar-fill" style="width:${Math.round(value * 100)}%"></div></div>
-      <span class="desire-bar-value">${Math.round(value * 100)}</span>
-    </div>`;
-  }).join("");
 }
 
 
