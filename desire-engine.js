@@ -77,6 +77,8 @@
     event.topics = Array.isArray(raw.topics)
       ? raw.topics.filter(item => typeof item === "string").map(item => item.trim().slice(0, 48)).filter(Boolean).slice(0, 6)
       : [];
+    event.user_goal = typeof raw.user_goal === "string" ? raw.user_goal.trim().slice(0, 120) : "";
+    event.open_loop = typeof raw.open_loop === "string" ? raw.open_loop.trim().slice(0, 140) : "";
     return { valid, event: valid ? event : neutralEvent(fallbackSummary || summary) };
   }
 
@@ -90,7 +92,9 @@
       intimacy: 0,
       threat: 0,
       certainty: 0,
-      topics: []
+      topics: [],
+      user_goal: "",
+      open_loop: ""
     };
   }
 
@@ -180,7 +184,7 @@
       reasons.push("事件评价解析失败，已安全降级为零脉冲事件。");
     }
     const scored = scoreDrives(state, context.currentTopic || "", nowIso);
-    state.intent = selectIntent(state, scored.scores, nowIso);
+    state.intent = selectIntent(state, scored.scores, nowIso, context.currentTopic || "");
     state.lastUpdatedAt = nowIso;
     return {
       state,
@@ -199,7 +203,8 @@
     const candidates = DRIVE_KEYS.filter(key => key !== "fatigue").sort((a, b) => pulse[b] - pulse[a]);
     const driveKey = candidates[0];
     if (!driveKey || pulse[driveKey] < 0.025) return;
-    const existing = (state.thoughts || []).find(item => item.text === event.summary && item.drive_key === driveKey);
+    const thoughtText = event.open_loop || event.user_goal || event.summary;
+    const existing = (state.thoughts || []).find(item => item.text === thoughtText && item.drive_key === driveKey);
     if (existing) {
       existing.strength = round(existing.strength + 0.12 * (1 - existing.strength));
       existing.fed_count = (existing.fed_count || 1) + 1;
@@ -209,7 +214,7 @@
     state.thoughts = state.thoughts || [];
     state.thoughts.push({
       id: `thought_${simpleHash(sourceEventId || `${event.event_type}:${event.summary}`)}`,
-      text: event.summary,
+      text: thoughtText,
       drive_key: driveKey,
       kind: "flit",
       strength: round(Math.min(0.78, 0.30 + pulse[driveKey])),
@@ -242,7 +247,7 @@
     return { scores, candidates };
   }
 
-  function selectIntent(state, scores, nowIso) {
+  function selectIntent(state, scores, nowIso, currentTopic) {
     if (state.drives.fatigue >= 0.72) {
       return {
         id: `intent_rest_${simpleHash(nowIso)}`,
@@ -258,13 +263,25 @@
     const best = Object.entries(scores).sort((a, b) => b[1] - a[1] || DRIVE_KEYS.indexOf(a[0]) - DRIVE_KEYS.indexOf(b[0]))[0];
     if (!best || best[1] < 0.30) return null;
     const spec = INTENT_MAP[best[0]];
+    const focusThought = selectThoughts(state, currentTopic || "", 3).find(item => item.drive_key === best[0])
+      || selectThoughts(state, currentTopic || "", 1)[0];
+    const focus = focusThought?.text ? focusThought.text.replace(/[。！？]+$/, "") : "";
+    const concreteReasons = {
+      curiosity: focus ? `我想继续弄清：${focus}。` : spec[1],
+      duty: focus ? `我想认真推进：${focus}。` : spec[1],
+      reflection: focus ? `我想安静想一想：${focus}。` : spec[1],
+      attachment: focus ? `我想靠近你，也继续回应：${focus}。` : spec[1],
+      social: focus ? `我想和你接着聊：${focus}。` : spec[1],
+      libido: focus ? `我想在尊重你节奏的前提下回应这份亲密：${focus}。` : spec[1],
+      stress: focus ? `我想先把这件事确认清楚：${focus}。` : spec[1]
+    };
     return {
       id: `intent_${best[0]}_${simpleHash(nowIso)}`,
       want_action: spec[0],
       drive_key: best[0],
-      reason: spec[1],
+      reason: concreteReasons[best[0]] || spec[1],
       score: round(best[1]),
-      query_hint: spec[2],
+      query_hint: focus ? `${spec[2]}; focus: ${focus}`.slice(0, 220) : spec[2],
       selected_at: nowIso,
       status: "active"
     };

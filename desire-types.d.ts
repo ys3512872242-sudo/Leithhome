@@ -4,6 +4,8 @@ export type AffectKey = "happiness" | "anger" | "grievance";
 export interface EvaluatedEvent {
   event_type: string;
   summary: string;
+  user_goal: string;
+  open_loop: string;
   relevance: number;
   novelty: number;
   goal_congruence: number;

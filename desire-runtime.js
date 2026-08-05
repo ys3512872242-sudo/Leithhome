@@ -177,7 +177,7 @@
 
   function evaluatorInstruction() {
     if (!flags().eventEnvelope) return "";
-    return `After writing the complete user-visible reply, append exactly one hidden event envelope in this form:\n${EVENT_MARKER}{"event_type":"short_snake_case","summary":"用中文客观概括本轮真实事件，不超过80字","relevance":0.0,"novelty":0.0,"goal_congruence":0.0,"intimacy":0.0,"threat":0.0,"certainty":0.0,"topics":["topic"]}${EVENT_END}\nAll six numbers must be between 0 and 1. Describe what happened; never output drive values or rewrite internal state. Do not mention this envelope in the visible reply.`;
+    return `After writing the complete user-visible reply, append exactly one hidden event envelope in this form:\n${EVENT_MARKER}{"event_type":"short_snake_case","summary":"用中文具体概括本轮发生了什么，不超过80字","user_goal":"用户这一轮明确想达成什么；没有则为空字符串","open_loop":"对话结束后仍待继续的具体事项，使用可执行短语；没有则为空字符串","relevance":0.0,"novelty":0.0,"goal_congruence":0.0,"intimacy":0.0,"threat":0.0,"certainty":0.0,"topics":["具体对象或项目名"]}${EVENT_END}\nAll six numbers must be between 0 and 1. Use concrete nouns and actions; never write vague phrases such as “这件事” when the subject is known. Describe the event and unfinished loop only; never output drive values, decide the final state, or issue instructions. Do not mention this envelope in the visible reply.`;
   }
 
   function splitEventEnvelope(rawText, fallbackSummary) {

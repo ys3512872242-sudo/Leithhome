@@ -2298,8 +2298,11 @@ async function renderMemoryList() {
       showToast("核心记忆已同步修改");
     });
     card.querySelector(".memory-del").addEventListener("click", async () => {
-      await window.Memory.remove(m.id);
-      renderMemoryList();
+      if (!confirm("删除这条核心记忆？删除后无法恢复。")) return;
+      const ok = await window.Memory.remove(m.id);
+      if (!ok) return showToast("没有删掉：请确认已解锁并连接云端");
+      await renderMemoryList();
+      showToast("核心记忆已从云端删除");
     });
     list.appendChild(card);
   });
@@ -5917,20 +5920,24 @@ async function deleteMemoryLeaf(id, branch) {
   if (!window.Memory) return;
   if (!confirm("删除这条记忆？")) return;
 
+  let ok = false;
   if (branch === "profile") {
-    await window.Memory.removeProfile(id);
+    ok = await window.Memory.removeProfile(id);
   } else if (branch === "core") {
-    await window.Memory.remove(id);
+    ok = await window.Memory.remove(id);
   } else if (branch === "reading") {
-    await window.Memory.removeReading(id);
+    ok = await window.Memory.removeReading(id);
   } else if (branch === "archive") {
-    await window.Memory.removeArchive(id);
+    ok = await window.Memory.removeArchive(id);
   } else if (branch === "diary") {
     if (window.Memory.removeDiary) {
-      await window.Memory.removeDiary(id);
+      ok = await window.Memory.removeDiary(id);
     } else {
       const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
-      if (client) await client.from('diary_entries').delete().eq('id', parseInt(id, 10));
+      if (client) {
+        const result = await client.from('diary_entries').delete().eq('id', parseInt(id, 10)).select('id');
+        ok = !result.error && result.data?.length === 1;
+      }
     }
   } else {
     // summary / short_term — 直接用 Supabase client 删
@@ -5938,12 +5945,16 @@ async function deleteMemoryLeaf(id, branch) {
     if (client) {
       const numId = parseInt(id, 10);
       if (!isNaN(numId)) {
-        try { await client.from('memories').delete().eq('id', numId); } catch (e) {}
+        try {
+          const result = await client.from('memories').delete().eq('id', numId).select('id');
+          ok = !result.error && result.data?.length === 1;
+        } catch (e) { ok = false; }
       }
     }
   }
-  renderMemoryTree();
-  showToast("已删除");
+  if (!ok) return showToast("没有删掉：请确认已解锁并连接云端");
+  await renderMemoryTree();
+  showToast("已从云端删除");
 }
 
 async function editMemoryLeaf(id, branch) {

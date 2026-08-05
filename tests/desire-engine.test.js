@@ -93,3 +93,20 @@ test("状态胶囊有明确长度上限，最多筛选三条念头", () => {
   assert.ok(capsule.thoughts.length <= 3);
 });
 
+test("明确的 open loop 会进入念头并形成具体意图", () => {
+  const state = Engine.createInitialState(T0);
+  const concreteEvent = {
+    ...event,
+    novelty: 1,
+    open_loop: "修复网页删除 Supabase 记录后刷新又出现的问题",
+    user_goal: "让网页删除操作真正落到云端"
+  };
+  const result = Engine.applyEvent(state, concreteEvent, {
+    nowIso: T1,
+    sourceEventId: "msg_concrete",
+    currentTopic: "Supabase 删除"
+  });
+  assert.ok(result.state.thoughts.some(thought => thought.text.includes("Supabase")));
+  assert.ok(result.intent.reason.includes("Supabase"));
+  assert.doesNotMatch(result.intent.reason, /继续把这件事弄清楚/);
+});

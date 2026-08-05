@@ -401,6 +401,27 @@ function extractKeywords(text, maxCount = 8) {
 // ============================================================
 // Supabase 记忆适配器
 // ============================================================
+async function deleteCloudRowById(table, id) {
+  if (!supabaseReady) return { ok: false, reason: '云端尚未连接' };
+  const numId = Number.parseInt(id, 10);
+  if (!Number.isFinite(numId)) return { ok: false, reason: '记录编号无效' };
+  try {
+    const { data, error } = await supabaseClient
+      .from(table)
+      .delete()
+      .eq('id', numId)
+      .select('id');
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length !== 1) {
+      return { ok: false, reason: '云端没有删除任何记录，可能是权限已经失效' };
+    }
+    return { ok: true };
+  } catch (error) {
+    console.error(`删除 ${table} 记录失败:`, error);
+    return { ok: false, reason: error.message || '云端删除失败' };
+  }
+}
+
 const SupabaseMemoryAdapter = {
   // ============================================================
   // 第四层：共读记录（reading）— 和 Leith 一起读书时聊出的感想/进度
@@ -497,9 +518,10 @@ const SupabaseMemoryAdapter = {
       if (!data?.[0]?.id) return false;
       const intimacy = (Array.isArray(data[0].intimacy) ? data[0].intimacy : [])
         .filter(item => String(item.id) !== String(entryId));
-      const result = await supabaseClient.from('diary_entries').update({ intimacy }).eq('id', data[0].id);
+      const result = await supabaseClient.from('diary_entries').update({ intimacy }).eq('id', data[0].id).select('id,intimacy');
       if (result.error) throw result.error;
-      return true;
+      return Boolean(result.data?.length === 1
+        && !(result.data[0].intimacy || []).some(item => String(item.id) === String(entryId)));
     } catch (e) {
       console.error('删除爱爱记录失败:', e);
       return false;
@@ -513,9 +535,9 @@ const SupabaseMemoryAdapter = {
     if (isNaN(numId)) return false;
     try {
       const table = branch === 'diary' ? 'diary_entries' : 'memories';
-      const { error } = await supabaseClient.from(table).update({ content: clean }).eq('id', numId);
+      const { data, error } = await supabaseClient.from(table).update({ content: clean }).eq('id', numId).select('id,content');
       if (error) throw error;
-      return true;
+      return Boolean(data?.length === 1 && data[0].content === clean);
     } catch (e) {
       console.error('修改云端记录失败:', e);
       return false;
@@ -543,18 +565,11 @@ const SupabaseMemoryAdapter = {
   },
 
   async removeReading(id) {
+    const result = await deleteCloudRowById('memories', id);
+    if (!result.ok) return false;
     const local = readLS(READING_LS_KEY, []);
-    writeLS(READING_LS_KEY, local.filter(m => m.id !== id));
-    if (supabaseReady) {
-      try {
-        const numId = parseInt(id, 10);
-        if (!isNaN(numId)) {
-          await supabaseClient.from('memories').delete().eq('id', numId);
-        }
-      } catch (e) {
-        console.error('删除共读记录失败:', e);
-      }
-    }
+    writeLS(READING_LS_KEY, local.filter(m => String(m.id) !== String(id)));
+    return true;
   },
 
   async clearReading() {
@@ -635,18 +650,11 @@ const SupabaseMemoryAdapter = {
   },
 
   async removeProfile(id) {
+    const result = await deleteCloudRowById('memories', id);
+    if (!result.ok) return false;
     const local = readLS(PROFILE_LS_KEY, []);
-    writeLS(PROFILE_LS_KEY, local.filter(m => m.id !== id));
-    if (supabaseReady) {
-      try {
-        const numId = parseInt(id, 10);
-        if (!isNaN(numId)) {
-          await supabaseClient.from('memories').delete().eq('id', numId);
-        }
-      } catch (e) {
-        console.error('删除人设档案失败:', e);
-      }
-    }
+    writeLS(PROFILE_LS_KEY, local.filter(m => String(m.id) !== String(id)));
+    return true;
   },
 
   async clearProfile() {
@@ -709,18 +717,11 @@ const SupabaseMemoryAdapter = {
   },
 
   async remove(id) {
+    const result = await deleteCloudRowById('memories', id);
+    if (!result.ok) return false;
     const local = readLS(MEMORY_LS_KEY, []);
-    writeLS(MEMORY_LS_KEY, local.filter(m => m.id !== id));
-    if (supabaseReady) {
-      try {
-        const numId = parseInt(id, 10);
-        if (!isNaN(numId)) {
-          await supabaseClient.from('memories').delete().eq('id', numId);
-        }
-      } catch (e) {
-        console.error('删除记忆失败:', e);
-      }
-    }
+    writeLS(MEMORY_LS_KEY, local.filter(m => String(m.id) !== String(id)));
+    return true;
   },
 
   async clear() {
@@ -776,15 +777,8 @@ const SupabaseMemoryAdapter = {
   },
 
   async removeArchive(id) {
-    if (!supabaseReady) return;
-    try {
-      const numId = parseInt(id, 10);
-      if (!isNaN(numId)) {
-        await supabaseClient.from('memories').delete().eq('id', numId);
-      }
-    } catch (e) {
-      console.error('删除归档失败:', e);
-    }
+    const result = await deleteCloudRowById('memories', id);
+    return result.ok;
   },
 
   // ============================================================
@@ -820,18 +814,8 @@ const SupabaseMemoryAdapter = {
   },
 
   async removeDiary(id) {
-    if (!supabaseReady) return false;
-    try {
-      const { error } = await supabaseClient
-        .from('diary_entries')
-        .delete()
-        .eq('id', parseInt(id, 10));
-      if (error) throw error;
-      return true;
-    } catch (e) {
-      console.error('删除日记失败:', e);
-      return false;
-    }
+    const result = await deleteCloudRowById('diary_entries', id);
+    return result.ok;
   },
 
   async hasDailyDiary(dateStr) {

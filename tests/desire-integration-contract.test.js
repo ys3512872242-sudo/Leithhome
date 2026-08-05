@@ -6,6 +6,7 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const runtime = fs.readFileSync(path.join(root, "desire-runtime.js"), "utf8");
+const memory = fs.readFileSync(path.join(root, "memory.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/202608040001_desire_state_v1.sql"), "utf8");
 
 test("同一 message ID 由数据库唯一约束和重复检查保护", () => {
@@ -39,3 +40,8 @@ test("隐藏事件只由同一次主回复携带，不存在独立评价请求",
   assert.match(app, /splitEventEnvelope/);
 });
 
+test("删除必须读取返回行并拒绝假成功", () => {
+  assert.match(memory, /\.delete\(\)[\s\S]*?\.select\('id'\)/);
+  assert.match(memory, /data\.length !== 1/);
+  assert.match(app, /没有删掉：请确认已解锁并连接云端/);
+});
