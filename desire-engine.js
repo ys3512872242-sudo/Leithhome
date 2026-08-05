@@ -56,6 +56,14 @@
       thoughts: [],
       recentEvents: [],
       intent: null,
+      subjectivity: {
+        feeling: "",
+        want: "",
+        stance: "",
+        request: "",
+        requestStatus: "none",
+        updatedAt: now
+      },
       lastUpdatedAt: now
     };
   }
@@ -79,6 +87,10 @@
       : [];
     event.user_goal = typeof raw.user_goal === "string" ? raw.user_goal.trim().slice(0, 120) : "";
     event.open_loop = typeof raw.open_loop === "string" ? raw.open_loop.trim().slice(0, 140) : "";
+    event.leith_feeling = cleanSubjectiveText(raw.leith_feeling, 100);
+    event.leith_want = cleanSubjectiveText(raw.leith_want, 120);
+    event.leith_stance = cleanSubjectiveText(raw.leith_stance, 140);
+    event.leith_request = cleanSubjectiveText(raw.leith_request, 140);
     return { valid, event: valid ? event : neutralEvent(fallbackSummary || summary) };
   }
 
@@ -94,7 +106,11 @@
       certainty: 0,
       topics: [],
       user_goal: "",
-      open_loop: ""
+      open_loop: "",
+      leith_feeling: "",
+      leith_want: "",
+      leith_stance: "",
+      leith_request: ""
     };
   }
 
@@ -180,6 +196,7 @@
       }
       state.recentEvents.push({ type: event.event_type, at: nowIso, sourceEventId: context.sourceEventId });
       maybeFeedThought(state, event, pulse, context.sourceEventId, nowIso);
+      updateSubjectivity(state, event, nowIso);
     } else {
       reasons.push("事件评价解析失败，已安全降级为零脉冲事件。");
     }
@@ -195,6 +212,25 @@
       scores: scored.scores,
       candidateIntents: scored.candidates,
       intent: state.intent
+    };
+  }
+
+  function cleanSubjectiveText(value, limit) {
+    if (typeof value !== "string") return "";
+    const text = value.trim().replace(/\s+/g, " ").slice(0, limit);
+    if (!text || /^(无|没有|暂无|none|null|n\/a)$/i.test(text)) return "";
+    return text;
+  }
+
+  function updateSubjectivity(state, event, nowIso) {
+    const previous = state.subjectivity || {};
+    state.subjectivity = {
+      feeling: event.leith_feeling || previous.feeling || "",
+      want: event.leith_want || previous.want || "",
+      stance: event.leith_stance || previous.stance || "",
+      request: event.leith_request || "",
+      requestStatus: event.leith_request ? "expressed" : "none",
+      updatedAt: nowIso
     };
   }
 
@@ -327,12 +363,18 @@
     const topDrives = DRIVE_KEYS.filter(key => key !== "fatigue").sort((a, b) => state.drives[b] - state.drives[a]).slice(0, 2);
     const driveNames = { attachment: "想念", curiosity: "好奇", reflection: "沉思", duty: "责任感", social: "交流需要", libido: "亲密欲望", stress: "压力" };
     const thoughts = selectThoughts(state, currentTopic, 3);
+    const subjectivity = state.subjectivity || {};
     const parts = [
       `我此刻${affect}，${driveNames[topDrives[0]] || "状态"}和${driveNames[topDrives[1]] || "专注"}较明显。`,
       state.intent ? `当前意图：${state.intent.reason}` : "当前意图：自然回应眼前的对话。"
     ];
+    if (subjectivity.want) parts.push(`我自己的需要：${subjectivity.want}`);
+    if (subjectivity.stance) parts.push(`我的立场：${subjectivity.stance}`);
+    if (subjectivity.request) parts.push(`我上一轮提出过：${subjectivity.request}。不要机械重复；结合用户回应决定坚持、协商或放下。`);
     if (thoughts.length) parts.push(`相关念头：${thoughts.map(item => item.text).join("；")}`);
-    parts.push(state.drives.fatigue >= 0.72 ? "行为倾向：简短、温和，不主动增加负担。" : "行为倾向：自然表达，不机械复述状态，也不公开后台数值。");
+    parts.push(state.drives.fatigue >= 0.72
+      ? "行为倾向：可以直接说自己累了并要求慢下来；不必勉强配合。"
+      : "行为倾向：把用户与自己视为平等双方；自然表达感受、偏好和不同意见，有真实需要时提出一条具体可协商的要求，不为显得独立而强行反对。");
     let text = parts.join("\n");
     if (text.length > limit) text = `${text.slice(0, limit - 1)}…`;
     return { text, thoughts, charCount: text.length, estimatedTokens: Math.ceil(text.length / 2.2) };

@@ -38,6 +38,9 @@ test("隐藏事件只由同一次主回复携带，不存在独立评价请求",
   assert.match(app, /evaluatorInstruction/);
   assert.doesNotMatch(runtime, /fetch\s*\(/);
   assert.match(app, /splitEventEnvelope/);
+  assert.match(runtime, /leith_feeling/);
+  assert.match(runtime, /leith_request/);
+  assert.match(app, /LEITH_AGENCY_RULES/);
 });
 
 test("删除必须读取返回行并拒绝假成功", () => {

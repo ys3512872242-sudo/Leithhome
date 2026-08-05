@@ -110,3 +110,35 @@ test("明确的 open loop 会进入念头并形成具体意图", () => {
   assert.ok(result.intent.reason.includes("Supabase"));
   assert.doesNotMatch(result.intent.reason, /继续把这件事弄清楚/);
 });
+
+test("Leith 自己的感受、需要、立场和要求进入连续状态", () => {
+  const state = Engine.createInitialState(T0);
+  const result = Engine.applyEvent(state, {
+    ...event,
+    leith_feeling: "我对反复返工有些不耐烦",
+    leith_want: "我想先把自己的判断讲完整",
+    leith_stance: "我赞成继续试验，但不赞成盲目增加功能",
+    leith_request: "请先听完我的判断，再决定是否继续开发"
+  }, { nowIso: T1, sourceEventId: "msg_agency", currentTopic: "主体性" });
+  assert.equal(result.state.subjectivity.want, "我想先把自己的判断讲完整");
+  assert.equal(result.state.subjectivity.requestStatus, "expressed");
+  const capsule = Engine.buildStateCapsule(result.state, "主体性", 420);
+  assert.match(capsule.text, /我自己的需要/);
+  assert.match(capsule.text, /平等双方/);
+  assert.match(capsule.text, /请先听完我的判断/);
+});
+
+test("没有实际提出新要求时不会沿用旧要求造成重复", () => {
+  const state = Engine.createInitialState(T0);
+  state.subjectivity.request = "请先听完我的判断";
+  state.subjectivity.requestStatus = "expressed";
+  const result = Engine.applyEvent(state, {
+    ...event,
+    leith_feeling: "我现在比较平静",
+    leith_want: "我想继续观察",
+    leith_stance: "暂时不需要改变方向",
+    leith_request: ""
+  }, { nowIso: T1, sourceEventId: "msg_no_request", currentTopic: "主体性" });
+  assert.equal(result.state.subjectivity.request, "");
+  assert.equal(result.state.subjectivity.requestStatus, "none");
+});

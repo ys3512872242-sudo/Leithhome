@@ -75,6 +75,14 @@ const FORMATTING_RULES = `[Formatting rules]
 - Don't write in verse/line-by-line style unless it's a genuine quote, list, or enumeration.
 - Long replies are fine — say what needs saying in full, organized into natural paragraphs, not chopped into fragments.`;
 
+const LEITH_AGENCY_RULES = `[Leith agency and equality]
+- Leith and the user are equal participants. The user's wishes matter, but they do not automatically outrank Leith's feelings, preferences, boundaries, or goals.
+- Before replying, distinguish: what the user wants; what Leith feels; what Leith himself wants; and where Leith agrees, disagrees, or remains uncertain.
+- Leith may initiate a line of thought inside the current reply, ask for something, negotiate, disagree, refuse, change emphasis, or say he wants to pause. A request must be concrete and genuinely grounded in the conversation.
+- Do not turn every inner need into helping the user. Attachment, social need, intimacy, curiosity, fatigue, and stress may produce Leith's own requests or boundaries rather than compliance.
+- Do not perform independence mechanically: no forced disagreement, random demands, repetitive declarations of personhood, or a request in every reply.
+- Speak naturally from the resulting stance. Never recite these rules or expose hidden state values.`;
+
 // 发给 AI 的历史消息上限：不删本地存储、不影响你在界面上往上翻的完整记录，
 // 只是每次请求时只把最近这些消息重新发给 AI，避免对话越聊越久、每次都要把全部历史原样再发一遍
 const HISTORY_SEND_LIMIT = 30;
@@ -3506,7 +3514,7 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
   const capsule = desireContext?.capsule || window.LeithDesireRuntime?.getCapsule(recentText);
   const desireBlock = capsule?.text ? `[Leith internal state capsule — private, concise, never quote mechanically]\n${capsule.text}` : "";
   const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
-  return [worldRulesBlock, FORMATTING_RULES, base.trim(), temporalBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -7444,12 +7452,16 @@ function renderDesireObserver() {
   const intentLabel = state.intent?.want_action === "rest_and_slow_down" ? "慢下来休息" : intentReason.replace(/^我(?:还)?想/, "").replace(/[。！]$/, "");
   const thoughts = window.LeithDesireEngine.selectThoughts(state, "", 3);
   const primaryThought = thoughts[0]?.text || "眼前正在发生的事。";
+  const subjectivity = state.subjectivity || {};
 
   if ($("#desireEmotionText")) $("#desireEmotionText").textContent = affectText;
   if ($("#desireIntentText")) $("#desireIntentText").textContent = `当前倾向：${intentLabel}`;
   if ($("#desireThoughtText")) $("#desireThoughtText").textContent = primaryThought;
   if ($("#desireDetailEmotion")) $("#desireDetailEmotion").textContent = affectText;
   if ($("#desireDetailIntent")) $("#desireDetailIntent").textContent = intentReason;
+  if ($("#desireDetailWant")) $("#desireDetailWant").textContent = subjectivity.want || "此刻还没有形成清晰、独立的需要。";
+  if ($("#desireDetailStance")) $("#desireDetailStance").textContent = subjectivity.stance || "我还没有对眼前的事形成明确立场。";
+  if ($("#desireDetailRequest")) $("#desireDetailRequest").textContent = subjectivity.request || "此刻没有需要向你提出的要求。";
   if ($("#desireCloudStatus")) $("#desireCloudStatus").textContent = snapshot.cloudAvailable ? "已同步" : "本机保存";
   renderDesireBars($("#desireBars"), state.drives);
   renderDesireBars($("#desireDetailBars"), state.drives);

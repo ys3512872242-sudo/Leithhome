@@ -6,6 +6,10 @@ export interface EvaluatedEvent {
   summary: string;
   user_goal: string;
   open_loop: string;
+  leith_feeling: string;
+  leith_want: string;
+  leith_stance: string;
+  leith_request: string;
   relevance: number;
   novelty: number;
   goal_congruence: number;
@@ -50,5 +54,13 @@ export interface DesireState {
   thoughts: Thought[];
   recentEvents: Array<{ type: string; at: string; sourceEventId: string }>;
   intent: Intent | null;
+  subjectivity: {
+    feeling: string;
+    want: string;
+    stance: string;
+    request: string;
+    requestStatus: "none" | "expressed";
+    updatedAt: string;
+  };
   lastUpdatedAt: string;
 }
