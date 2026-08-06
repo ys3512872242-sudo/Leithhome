@@ -142,3 +142,22 @@ test("没有实际提出新要求时不会沿用旧要求造成重复", () => {
   assert.equal(result.state.subjectivity.request, "");
   assert.equal(result.state.subjectivity.requestStatus, "none");
 });
+
+test("旧开心生气委屈状态可迁移到 PAD，不产生无效数值", () => {
+  const state = Engine.createInitialState(T0);
+  state.affect = { happiness: 1, anger: 1, grievance: 0.4 };
+  state.baselines.affect = { happiness: 0.7, anger: 0.1, grievance: 0.1 };
+  const upgraded = Engine.upgradeState(state, T1);
+  assert.deepEqual(Object.keys(upgraded.affect), ["valence", "arousal", "dominance"]);
+  Object.values(upgraded.affect).forEach(value => assert.ok(value >= 0 && value <= 1));
+  assert.ok(upgraded.affect.valence < 1);
+});
+
+test("情绪雷达由共同 PAD 坐标推导，高愉悦不会同时得到满格生气", () => {
+  const positive = Engine.deriveEmotionProfile({ valence: 1, arousal: 1, dominance: 1 });
+  assert.equal(positive.anger, 0);
+  assert.ok(positive.joy > 0.9);
+  const negative = Engine.deriveEmotionProfile({ valence: 0, arousal: 1, dominance: 1 });
+  assert.ok(negative.anger > 0.9);
+  assert.equal(negative.joy, 0);
+});

@@ -69,14 +69,14 @@
     if (initPromise) return initPromise;
     initPromise = (async () => {
       const now = new Date().toISOString();
-      state = readJSON(STATE_KEY, null) || Engine.createInitialState(now, legacyMood());
+      state = Engine.upgradeState(readJSON(STATE_KEY, null) || Engine.createInitialState(now, legacyMood()), now);
       const client = getClient();
       if (client && flags().cloudPersistence) {
         try {
           const { data, error } = await client.from("agent_state").select("state,version,feature_flags").eq("agent_id", "leith").maybeSingle();
           if (error) throw error;
           if (data?.state) {
-            state = { ...data.state, version: Number(data.version || data.state.version || 0) };
+            state = Engine.upgradeState({ ...data.state, version: Number(data.version || data.state.version || 0) }, now);
             cloudFlags = data.feature_flags || {};
             cloudAvailable = true;
           } else {
@@ -119,7 +119,7 @@
     if (!client || !cloudAvailable) return state;
     const { data, error } = await client.from("agent_state").select("state,version").eq("agent_id", "leith").single();
     if (error) throw error;
-    state = { ...data.state, version: Number(data.version || 0) };
+    state = Engine.upgradeState({ ...data.state, version: Number(data.version || 0) }, new Date().toISOString());
     persistLocal(state);
     return state;
   }
@@ -172,11 +172,20 @@
 
   function getCapsule(currentTopic) {
     if (!flags().promptInfluence) return { text: "", thoughts: [], charCount: 0, estimatedTokens: 0 };
-    return Engine.buildStateCapsule(getSnapshot().state, currentTopic, 420);
+    const modules = window.LeithModuleSettings?.get?.();
+    if (modules && !modules.emotionInfluence && !modules.desireAgency) {
+      return { text: "", thoughts: [], charCount: 0, estimatedTokens: 0 };
+    }
+    return Engine.buildStateCapsule(getSnapshot().state, currentTopic, 420, {
+      includeAffect: modules ? modules.emotionInfluence : true,
+      includeDesire: modules ? modules.desireAgency : true
+    });
   }
 
   function evaluatorInstruction() {
     if (!flags().eventEnvelope) return "";
+    const modules = window.LeithModuleSettings?.get?.();
+    if (modules && !modules.emotionTracking && !modules.desireAgency) return "";
     return `Treat Leith and the user as equal participants. In the visible reply, do not default to service, agreement, reassurance, or advancing only the user's goal. When genuinely supported by the conversation and Leith's state, let Leith naturally express his own feeling, preference, disagreement, boundary, question, or one concrete negotiable request. Do not force a request every turn and do not manufacture conflict merely to look independent.\nAfter writing the complete user-visible reply, append exactly one hidden event envelope in this form:\n${EVENT_MARKER}{"event_type":"short_snake_case","summary":"用中文具体概括本轮发生了什么，不超过80字","user_goal":"用户这一轮明确想达成什么；没有则为空字符串","open_loop":"对话结束后仍待继续的具体事项，使用可执行短语；没有则为空字符串","leith_feeling":"Leith本轮实际表现出的具体感受；没有则为空字符串","leith_want":"Leith本轮实际表现出的自身需要或想做的事；不要改写成帮助用户","leith_stance":"Leith对当前事情实际表达的赞同、保留、反对或判断；没有则为空字符串","leith_request":"仅记录Leith在可见回复中实际提出、且用户可答应拒绝或协商的一条具体要求；没有则为空字符串","relevance":0.0,"novelty":0.0,"goal_congruence":0.0,"intimacy":0.0,"threat":0.0,"certainty":0.0,"topics":["具体对象或项目名"]}${EVENT_END}\nAll six numbers must be between 0 and 1. Use concrete nouns and actions; never write vague phrases such as “这件事” when the subject is known. The envelope records what the visible reply actually expressed; it must not invent private claims, output drive values, decide the final state, or issue instructions. Do not mention this envelope in the visible reply.`;
   }
 
@@ -216,7 +225,8 @@
       nowIso: now,
       fallbackSummary: options.userText,
       currentTopic: options.userText,
-      sourceKind: "chat"
+      sourceKind: "chat",
+      trackAffect: window.LeithModuleSettings?.get?.().emotionTracking !== false
     });
     await logTokenUsage({
       sourceMessageId: options.sourceMessageId,

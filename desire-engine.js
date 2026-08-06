@@ -9,7 +9,9 @@
     "attachment", "curiosity", "reflection", "duty",
     "social", "fatigue", "libido", "stress"
   ];
-  const AFFECT_KEYS = ["happiness", "anger", "grievance"];
+  // Russell 情绪环 + PAD 的核心坐标。全部以 0..1 保存：
+  // valence 0=不愉快、1=愉快；arousal 0=平静、1=激活；dominance 0=无力、1=掌控。
+  const AFFECT_KEYS = ["valence", "arousal", "dominance"];
   const DEFAULT_DRIVES = Object.freeze({
     attachment: 0.42,
     curiosity: 0.48,
@@ -20,7 +22,7 @@
     libido: 0.30,
     stress: 0.20
   });
-  const DEFAULT_AFFECT = Object.freeze({ happiness: 0.66, anger: 0.06, grievance: 0.08 });
+  const DEFAULT_AFFECT = Object.freeze({ valence: 0.66, arousal: 0.38, dominance: 0.58 });
   const INTENT_MAP = Object.freeze({
     attachment: ["seek_closeness", "我想更靠近你一点。", "respond with warm, attentive closeness"],
     curiosity: ["continue_research", "我还想把这件事弄清楚。", "continue exploring the current question"],
@@ -41,9 +43,12 @@
     const drives = { ...DEFAULT_DRIVES };
     const affect = { ...DEFAULT_AFFECT };
     if (legacy && legacy.leith) {
-      affect.happiness = round((Number(legacy.leith.joy) - 1) / 6);
-      affect.anger = round((Number(legacy.leith.anger) - 1) / 6);
-      affect.grievance = round((Number(legacy.leith.grievance) - 1) / 6);
+      const joy = clamp01((Number(legacy.leith.joy) - 1) / 6);
+      const anger = clamp01((Number(legacy.leith.anger) - 1) / 6);
+      const grievance = clamp01((Number(legacy.leith.grievance) - 1) / 6);
+      affect.valence = round(joy * (1 - Math.max(anger, grievance) * 0.55));
+      affect.arousal = round(0.28 + anger * 0.58 + joy * 0.18);
+      affect.dominance = round(0.55 + anger * 0.18 - grievance * 0.35);
       drives.libido = round((Number(legacy.leith.desire) - 1) / 6);
     }
     return {
@@ -115,7 +120,7 @@
   }
 
   function advanceTime(inputState, nowIso) {
-    const state = clone(inputState);
+    const state = upgradeState(inputState, nowIso);
     const nowMs = Date.parse(nowIso);
     const previousMs = Date.parse(state.lastUpdatedAt || nowIso);
     const hours = Math.max(0, Math.min(720, (nowMs - previousMs) / 3600000));
@@ -163,10 +168,10 @@
       fatigue: event.relevance * 0.018 + event.threat * 0.035,
       libido: intimate ? event.intimacy * 0.17 : 0,
       stress: event.threat * 0.22 + (1 - event.goal_congruence) * event.relevance * 0.045,
-      affect: {
-        happiness: event.goal_congruence * 0.09 + event.intimacy * 0.055,
-        anger: event.threat * (hurt ? 0.16 : 0.08),
-        grievance: hurt ? event.threat * 0.18 + (1 - event.goal_congruence) * 0.06 : event.threat * 0.035
+      affectTarget: {
+        valence: clamp01(0.5 + (event.goal_congruence - 0.5) * 0.62 + event.intimacy * 0.20 - event.threat * (hurt ? 0.62 : 0.45)),
+        arousal: clamp01(0.12 + event.relevance * 0.28 + event.novelty * 0.24 + event.threat * 0.48 + event.intimacy * 0.10),
+        dominance: clamp01(0.42 + event.certainty * 0.25 + event.goal_congruence * 0.20 - event.threat * 0.34)
       }
     };
   }
@@ -190,9 +195,12 @@
         state.drives[key] = round(state.drives[key] + actual);
         if (actual >= 0.008) reasons.push(`${key} 因事件脉冲增加 ${actual.toFixed(3)}。`);
       }
-      for (const key of AFFECT_KEYS) {
-        const actual = pulse.affect[key] * frequencyFactor * Math.sqrt(Math.max(0, 1 - state.affect[key]));
-        state.affect[key] = round(state.affect[key] + actual);
+      if (context.trackAffect !== false) {
+        for (const key of AFFECT_KEYS) {
+          const target = pulse.affectTarget[key];
+          const responsiveness = (0.18 + event.relevance * 0.20) * frequencyFactor;
+          state.affect[key] = round(state.affect[key] + (target - state.affect[key]) * responsiveness);
+        }
       }
       state.recentEvents.push({ type: event.event_type, at: nowIso, sourceEventId: context.sourceEventId });
       maybeFeedThought(state, event, pulse, context.sourceEventId, nowIso);
@@ -357,35 +365,84 @@
       .map(({ _rank, ...item }) => item);
   }
 
-  function buildStateCapsule(state, currentTopic, maxChars) {
+  function buildStateCapsule(state, currentTopic, maxChars, options) {
     const limit = Math.max(120, Math.min(420, maxChars ?? 280));
+    const config = { includeAffect: true, includeDesire: true, ...(options || {}) };
     const affect = describeAffect(state.affect);
     const topDrives = DRIVE_KEYS.filter(key => key !== "fatigue").sort((a, b) => state.drives[b] - state.drives[a]).slice(0, 2);
     const driveNames = { attachment: "想念", curiosity: "好奇", reflection: "沉思", duty: "责任感", social: "交流需要", libido: "亲密欲望", stress: "压力" };
     const thoughts = selectThoughts(state, currentTopic, 3);
     const subjectivity = state.subjectivity || {};
-    const parts = [
-      `我此刻${affect}，${driveNames[topDrives[0]] || "状态"}和${driveNames[topDrives[1]] || "专注"}较明显。`,
-      state.intent ? `当前意图：${state.intent.reason}` : "当前意图：自然回应眼前的对话。"
-    ];
-    if (subjectivity.want) parts.push(`我自己的需要：${subjectivity.want}`);
-    if (subjectivity.stance) parts.push(`我的立场：${subjectivity.stance}`);
-    if (subjectivity.request) parts.push(`我上一轮提出过：${subjectivity.request}。不要机械重复；结合用户回应决定坚持、协商或放下。`);
-    if (thoughts.length) parts.push(`相关念头：${thoughts.map(item => item.text).join("；")}`);
+    const parts = [];
+    if (config.includeAffect) parts.push(`我此刻${affect}。`);
+    if (config.includeDesire) {
+      parts.push(`当前较明显的需要：${driveNames[topDrives[0]] || "专注"}、${driveNames[topDrives[1]] || "交流"}。`);
+      parts.push(state.intent ? `当前意图：${state.intent.reason}` : "当前意图：自然回应眼前的对话。");
+      if (subjectivity.want) parts.push(`我自己的需要：${subjectivity.want}`);
+      if (subjectivity.stance) parts.push(`我的立场：${subjectivity.stance}`);
+      if (subjectivity.request) parts.push(`我上一轮提出过：${subjectivity.request}。不要机械重复；结合用户回应决定坚持、协商或放下。`);
+      if (thoughts.length) parts.push(`相关念头：${thoughts.map(item => item.text).join("；")}`);
+    }
     parts.push(state.drives.fatigue >= 0.72
       ? "行为倾向：可以直接说自己累了并要求慢下来；不必勉强配合。"
       : "行为倾向：把用户与自己视为平等双方；自然表达感受、偏好和不同意见，有真实需要时提出一条具体可协商的要求，不为显得独立而强行反对。");
     let text = parts.join("\n");
     if (text.length > limit) text = `${text.slice(0, limit - 1)}…`;
-    return { text, thoughts, charCount: text.length, estimatedTokens: Math.ceil(text.length / 2.2) };
+    return { text, thoughts: config.includeDesire ? thoughts : [], charCount: text.length, estimatedTokens: Math.ceil(text.length / 2.2) };
   }
 
   function describeAffect(affect) {
-    if (affect.anger >= 0.65) return "有些生气";
-    if (affect.grievance >= 0.60) return "有些委屈";
-    if (affect.happiness >= 0.68) return "心情明亮而安定";
-    if (affect.happiness <= 0.32) return "心情有些低落";
-    return "情绪平稳";
+    const profile = deriveEmotionProfile(affect);
+    const top = Object.entries(profile).sort((a, b) => b[1] - a[1]);
+    const names = { joy: "开心", calm: "安心", anticipation: "期待", anger: "生气", sadness: "难过", anxiety: "焦虑" };
+    if (!top.length || top[0][1] < 0.18) return "情绪平稳";
+    if (top[1] && top[1][1] >= 0.24) return `主要是${names[top[0][0]]}，也有一点${names[top[1][0]]}`;
+    return `感到${names[top[0][0]]}`;
+  }
+
+  function deriveEmotionProfile(rawAffect) {
+    const affect = normalizeAffect(rawAffect);
+    const positive = Math.max(0, (affect.valence - 0.5) * 2);
+    const negative = Math.max(0, (0.5 - affect.valence) * 2);
+    const high = affect.arousal;
+    const low = 1 - affect.arousal;
+    const control = affect.dominance;
+    const lowControl = 1 - affect.dominance;
+    return {
+      joy: round(positive * (0.35 + high * 0.65)),
+      calm: round(positive * low),
+      anticipation: round(high * (0.25 + positive * 0.55) * (0.45 + control * 0.35)),
+      anger: round(negative * high * (0.35 + control * 0.65)),
+      sadness: round(negative * (0.30 + low * 0.70) * (0.45 + lowControl * 0.40)),
+      anxiety: round(negative * high * (0.35 + lowControl * 0.65))
+    };
+  }
+
+  function normalizeAffect(raw) {
+    if (raw && AFFECT_KEYS.every(key => Number.isFinite(Number(raw[key])))) {
+      return Object.fromEntries(AFFECT_KEYS.map(key => [key, round(raw[key])]));
+    }
+    const happiness = clamp01(raw?.happiness ?? DEFAULT_AFFECT.valence);
+    const anger = clamp01(raw?.anger ?? 0);
+    const grievance = clamp01(raw?.grievance ?? 0);
+    return {
+      valence: round(happiness * (1 - Math.max(anger, grievance) * 0.55)),
+      arousal: round(0.28 + anger * 0.58 + happiness * 0.18),
+      dominance: round(0.55 + anger * 0.18 - grievance * 0.35)
+    };
+  }
+
+  function upgradeState(inputState, nowIso) {
+    const state = clone(inputState || createInitialState(nowIso));
+    state.affect = normalizeAffect(state.affect);
+    state.baselines = state.baselines || {};
+    state.baselines.affect = normalizeAffect(state.baselines.affect || state.affect);
+    state.baselines.drives = { ...DEFAULT_DRIVES, ...(state.baselines.drives || state.drives || {}) };
+    state.drives = { ...DEFAULT_DRIVES, ...(state.drives || {}) };
+    state.subjectivity = state.subjectivity || {
+      feeling: "", want: "", stance: "", request: "", requestStatus: "none", updatedAt: iso(nowIso)
+    };
+    return state;
   }
 
   function makeDelta(before, after, affectBefore, affectAfter) {
@@ -424,6 +481,8 @@
     satisfyIntent,
     selectThoughts,
     buildStateCapsule,
-    describeAffect
+    describeAffect,
+    deriveEmotionProfile,
+    upgradeState
   };
 });

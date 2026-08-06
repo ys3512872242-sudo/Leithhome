@@ -37,7 +37,41 @@ const LS = {
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
   readingLinks: "companion_reading_links_v1", // [{id, url, note, addedAt}]
   diaryNotes: "companion_diary_notes_v1",
+  moduleSettings: "leith_module_settings_v1",
 };
+
+const DEFAULT_MODULE_SETTINGS = Object.freeze({
+  longTermMemory: true,
+  readingContext: true,
+  diaryContext: true,
+  emotionTracking: true,
+  emotionInfluence: true,
+  desireAgency: true,
+  stateCard: true,
+  shopping: true,
+  wardrobe: true,
+  sharedCalendar: true,
+  healthContext: true,
+  imageUnderstanding: true,
+  webSearch: false
+});
+
+function getLeithModuleSettings() {
+  const stored = loadJSON(LS.moduleSettings, {});
+  if (!("webSearch" in stored)) stored.webSearch = localStorage.getItem("companion_web_enabled_v1") === "1";
+  return { ...DEFAULT_MODULE_SETTINGS, ...stored };
+}
+
+function saveLeithModuleSettings(next) {
+  saveJSON(LS.moduleSettings, { ...DEFAULT_MODULE_SETTINGS, ...next });
+  webEnabled = Boolean(next.webSearch);
+  localStorage.setItem(WEB_LS_KEY, webEnabled ? "1" : "0");
+  updateWebToggleUI();
+  renderModuleSettings();
+  renderDesireObserver();
+}
+
+window.LeithModuleSettings = { get: getLeithModuleSettings };
 
 const DEFAULT_PROVIDERS = [
   {
@@ -575,15 +609,20 @@ function openApp(appPageId) {
   target.classList.add("active");
   pushNavLayer(closeApp);
 
-  if (appPageId === "page-app-shop") renderShopPage();
-  if (appPageId === "page-app-memory") renderMemoryTree();
-  if (appPageId === "page-app-widget") refreshWidgetApp();
-  if (appPageId === "page-app-reading") showReadingLibrary();
-  if (appPageId === "page-app-theater") renderTheaterRoomList();
-  if (appPageId === "page-app-health") renderHealthPage();
-  if (appPageId === "page-app-diarybook") renderDiaryBook();
-  if (appPageId === "page-app-love") renderLoveApp();
-  if (appPageId === "page-app-closet") renderClosetPage();
+  // 先让页面切换完成，再渲染较重内容，避免点击后主线程同一帧卡住。
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!target.classList.contains("active")) return;
+    if (appPageId === "page-app-shop") renderShopPage();
+    if (appPageId === "page-app-memory") renderMemoryTree();
+    if (appPageId === "page-app-widget") refreshWidgetApp();
+    if (appPageId === "page-app-reading") showReadingLibrary();
+    if (appPageId === "page-app-theater") renderTheaterRoomList();
+    if (appPageId === "page-app-health") renderHealthPage();
+    if (appPageId === "page-app-diarybook") renderDiaryBook();
+    if (appPageId === "page-app-love") renderLoveApp();
+    if (appPageId === "page-app-closet") renderClosetPage();
+    if (appPageId === "page-app-modules") renderModuleSettings();
+  }));
 }
 
 // 关闭 app 页面，回到桌面
@@ -1630,7 +1669,11 @@ async function autoRespondToNarration(threadId, bubble, row) {
       priorIntent: desireSnapshot?.state?.intent || null
     };
     const systemPrompt = await buildEffectiveSystemPrompt(desireContext);
-    const messages = truncateMessagesForApi(getThreadMessages(threadId).filter(m => m.type !== "sticker"));
+    const messages = prepareMessagesForApi(
+      truncateMessagesForApi(getThreadMessages(threadId).filter(m => m.type !== "sticker")),
+      provider.apiStyle,
+      null
+    );
     let fullReply = "";
     let lastUsage = null;
     let result;
@@ -2832,12 +2875,11 @@ async function regenerateFromMessage(userMsg) {
       priorIntent: desireSnapshot?.state?.intent || null
     };
     const systemPrompt = await buildEffectiveSystemPrompt(desireContext);
-    let messages = truncateMessagesForApi(getThreadMessages(threadId).filter(m => m.type !== "sticker")).map(m => {
-      if (m.attachments && m.attachments.length) {
-        return { role: m.role, content: buildContentBlocksForApi(m.content, m.attachments, provider.apiStyle) };
-      }
-      return m;
-    });
+    let messages = prepareMessagesForApi(
+      truncateMessagesForApi(getThreadMessages(threadId).filter(m => m.type !== "sticker")),
+      provider.apiStyle,
+      userMsg._id
+    );
     const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
     let fullReply = "";
@@ -3331,7 +3373,11 @@ function updateWebToggleUI() {
 $("#webToggleBtn").onclick = () => {
   webEnabled = !webEnabled;
   localStorage.setItem(WEB_LS_KEY, webEnabled ? "1" : "0");
+  const modules = getLeithModuleSettings();
+  modules.webSearch = webEnabled;
+  saveJSON(LS.moduleSettings, modules);
   updateWebToggleUI();
+  renderModuleSettings();
   showToast(webEnabled ? "联网已开启：Leith 可以自己搜索网页、并知道现在的时间" : "联网已关闭");
 };
 updateWebToggleUI();
@@ -3474,6 +3520,7 @@ Treat memory date labels as authoritative. "发生于" is the event date; "记�
 
 async function buildEffectiveSystemPrompt(desireContext = null) {
   const base = localStorage.getItem(LS.systemPrompt) || DEFAULT_SYSTEM_PROMPT;
+  const modules = getLeithModuleSettings();
 
   // 按需检索：只把最近几条消息的文本喂给关键词提取，匹配到什么记忆才带什么，
   // 不再无条件把 profile/核心记忆/日记全量塞进去——这是本次瘦身的核心改动
@@ -3482,7 +3529,7 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
   const recentText = recentMsgs.map(m => m.content).join(" ");
 
   let memoryBlock = "";
-  if (window.Memory) {
+  if (window.Memory && modules.longTermMemory) {
     memoryBlock = window.Memory.buildRelevantMemoryBlock
       ? await window.Memory.buildRelevantMemoryBlock(recentText)
       : await window.Memory.asPromptBlock();
@@ -3501,17 +3548,19 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
   // 惊喜能力，且知道有哪些商品、够不够钱），完整规则说明+完整状态（含床头柜/礼物记录等细节）
   // 只有最近聊天明显涉及购物/礼物话题时才附加
   const shopRelevant = isShopTopicRelevant(recentText);
-  const worldRulesBlock = shopRelevant ? WORLD_RULES_FULL : WORLD_RULES_MINI;
-  const worldBlock = shopRelevant ? buildWorldPromptBlock() : buildWorldPromptBlockMini();
+  const worldRulesBlock = modules.shopping ? (shopRelevant ? WORLD_RULES_FULL : WORLD_RULES_MINI) : "";
+  const worldBlock = modules.shopping ? (shopRelevant ? buildWorldPromptBlock() : buildWorldPromptBlockMini()) : "";
 
   const webBlock = buildWebPromptBlock();
   const temporalBlock = buildTemporalContextBlock();
   const noteBlock = buildSystemNotesBlock();
-  const healthBlock = buildHealthPromptBlock(recentText);
+  const healthBlock = modules.healthContext ? buildHealthPromptBlock(recentText) : "";
   // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
   // 世界规则（WORLD_RULES_MINI / WORLD_RULES_FULL）现在跟着 shopRelevant 走
-  const moodBlock = buildMoodPromptBlock();
-  const capsule = desireContext?.capsule || window.LeithDesireRuntime?.getCapsule(recentText);
+  const moodBlock = modules.emotionInfluence ? buildMoodPromptBlock() : "";
+  const capsule = (modules.emotionInfluence || modules.desireAgency)
+    ? (desireContext?.capsule || window.LeithDesireRuntime?.getCapsule(recentText))
+    : null;
   const desireBlock = capsule?.text ? `[Leith internal state capsule — private, concise, never quote mechanically]\n${capsule.text}` : "";
   const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
   return [worldRulesBlock, FORMATTING_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
@@ -4433,6 +4482,10 @@ function isImageFile(file) {
 }
 
 async function handleAttachFiles(e) {
+  if (!getLeithModuleSettings().imageUnderstanding) {
+    e.target.value = "";
+    return showModal("照片功能已关闭", "请先到桌面里的“Leith 设置”开启照片理解。");
+  }
   const files = Array.from(e.target.files || []);
   const oversized = [];
   for (const file of files) {
@@ -4442,13 +4495,9 @@ async function handleAttachFiles(e) {
     }
     try {
       if (isImageFile(file)) {
-        const dataUrl = await fileToDataUrl(file);
-        // HEIC/HEIF 大多数浏览器无法直接渲染预览、也不是模型能直接识别的格式，
-        // 提前提示用户，而不是让它悄悄发出去之后收到奇怪的回复才发现有问题
-        if (/\.(heic|heif)$/i.test(file.name) && !(file.type && /jpe?g|png|webp/i.test(file.type))) {
-          showToast(`${file.name} 是 HEIC 格式，部分服务商可能无法识别，建议先转成 JPG/PNG`);
-        }
-        pendingAttachments.push({ id: uid(), kind: "image", name: file.name, dataUrl, mimeType: file.type || "image/jpeg" });
+        showToast(`正在处理 ${file.name}…`);
+        const prepared = await prepareImageForChat(file);
+        pendingAttachments.push({ id: uid(), kind: "image", name: prepared.name, dataUrl: prepared.dataUrl, mimeType: prepared.mimeType, byteSize: prepared.byteSize });
       } else if (/\.pdf$/i.test(file.name)) {
         showToast("正在解析 PDF...");
         const text = await extractPdfText(file);
@@ -4460,7 +4509,7 @@ async function handleAttachFiles(e) {
       }
     } catch (err) {
       console.error("附件读取失败:", err);
-      showModal("附件读取失败", `${file.name} 读取时出错了，换一个文件试试？`);
+      showModal("附件读取失败", `${file.name}：${err.message || "读取时出错了，请换一个文件重试。"}`);
     }
   }
   if (oversized.length) {
@@ -4476,6 +4525,48 @@ function fileToDataUrl(file) {
     reader.onload = () => resolve(reader.result);
     reader.onerror = reject;
     reader.readAsDataURL(file);
+  });
+}
+
+async function prepareImageForChat(file) {
+  const originalUrl = await fileToDataUrl(file);
+  const image = await loadImageForCanvas(originalUrl).catch(() => null);
+  if (!image) {
+    if (/\.(heic|heif)$/i.test(file.name)) {
+      throw new Error("这张 HEIC/HEIF 照片无法由当前浏览器解码。请在相册中导出为 JPG 后重试。");
+    }
+    throw new Error("浏览器无法解码这张图片，请换成 JPG、PNG 或 WebP。");
+  }
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(image, 0, 0, width, height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.84));
+  if (!blob) throw new Error("图片压缩失败，请换一张照片重试。");
+  const dataUrl = await fileToDataUrl(blob);
+  return {
+    name: file.name.replace(/\.[^.]+$/, "") + ".jpg",
+    dataUrl,
+    mimeType: "image/jpeg",
+    byteSize: blob.size
+  };
+}
+
+function loadImageForCanvas(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("图片解码失败"));
+    img.src = dataUrl;
   });
 }
 
@@ -4521,7 +4612,7 @@ function renderBubbleAttachments(attachments) {
 }
 
 // 把附件转换成发给模型 API 的 content blocks（文本 + 图片），doc 内容拼进文本
-function buildContentBlocksForApi(text, attachments, apiStyle) {
+function buildContentBlocksForApi(text, attachments, apiStyle, includeImages = true) {
   const docs = (attachments || []).filter(a => a.kind === "doc");
   const images = (attachments || []).filter(a => a.kind === "image");
 
@@ -4531,6 +4622,10 @@ function buildContentBlocksForApi(text, attachments, apiStyle) {
   });
 
   if (!images.length) return combinedText; // 没图片就还是普通字符串，兼容原逻辑
+  if (!includeImages) {
+    const names = images.map(image => image.name || "照片").join("、");
+    return `${combinedText}${combinedText ? "\n\n" : ""}[Earlier image already seen: ${names}. Image bytes omitted from repeated context.]`;
+  }
 
   const blocks = [];
   if (combinedText) blocks.push({ type: "text", text: combinedText });
@@ -4543,6 +4638,21 @@ function buildContentBlocksForApi(text, attachments, apiStyle) {
     }
   });
   return blocks;
+}
+
+function prepareMessagesForApi(messages, apiStyle, currentImageMessageId) {
+  return (messages || []).map(message => {
+    if (!message.attachments?.length) return message;
+    return {
+      role: message.role,
+      content: buildContentBlocksForApi(
+        message.content,
+        message.attachments,
+        apiStyle,
+        Boolean(currentImageMessageId && message._id === currentImageMessageId)
+      )
+    };
+  });
 }
 
 // ============================================================
@@ -4727,12 +4837,11 @@ async function sendChat(overrideContent) {
       priorIntent: desireSnapshot?.state?.intent || null
     };
     const systemPrompt = await buildEffectiveSystemPrompt(desireContext);
-    let textMessages = truncateMessagesForApi(messages.filter(m => m.type !== "sticker")).map(m => {
-      if (m.attachments && m.attachments.length) {
-        return { role: m.role, content: buildContentBlocksForApi(m.content, m.attachments, provider.apiStyle) };
-      }
-      return m;
-    });
+    let textMessages = prepareMessagesForApi(
+      truncateMessagesForApi(messages.filter(m => m.type !== "sticker")),
+      provider.apiStyle,
+      userMsg._id
+    );
     // 联网开启时传入工具定义
     const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
 
@@ -4877,10 +4986,18 @@ async function sendChat(overrideContent) {
         }
       } else {
         row.remove();
+        if (attachments.length) {
+          pendingAttachments = attachments;
+          renderAttachPreview();
+        }
         showModal("请求超时", "60 秒内没有收到响应，可能是网络或服务商问题。");
       }
     } else {
       row.remove();
+      if (attachments.length) {
+        pendingAttachments = attachments;
+        renderAttachPreview();
+      }
       showModal("请求失败", err.message || "网络错误，请检查服务商地址、密钥或跨域设置。");
     }
   } finally {
@@ -7243,8 +7360,10 @@ function openReadingChatDrawer() {
   $("#readingChatDrawer").classList.add("open");
   pushNavLayer(closeReadingChatDrawer);
   // 提前把已有的共读记忆查出来缓存着，聊天时直接用，不用每次都查
-  if (window.Memory) {
+  if (window.Memory && getLeithModuleSettings().readingContext) {
     window.Memory.asReadingPromptBlock().then(block => { readingMemoryBlock = block; });
+  } else {
+    readingMemoryBlock = "";
   }
 }
 function closeReadingChatDrawer() {
@@ -7407,7 +7526,8 @@ const DESIRE_LABELS = {
   attachment: "想你", curiosity: "好奇", reflection: "沉思", duty: "责任",
   social: "社交", fatigue: "疲惫", libido: "性欲", stress: "压力"
 };
-const AFFECT_LABELS = { happiness: "开心", anger: "生气", grievance: "委屈" };
+const AFFECT_LABELS = { valence: "愉悦", arousal: "活跃", dominance: "掌控" };
+const EMOTION_LABELS = { joy: "开心", calm: "安心", anticipation: "期待", anger: "生气", sadness: "难过", anxiety: "焦虑" };
 let widgetTimeTimer = null;
 let desireObserverUnsubscribe = null;
 
@@ -7453,6 +7573,9 @@ function renderDesireObserver() {
   const thoughts = window.LeithDesireEngine.selectThoughts(state, "", 3);
   const primaryThought = thoughts[0]?.text || "眼前正在发生的事。";
   const subjectivity = state.subjectivity || {};
+  const modules = getLeithModuleSettings();
+
+  $("#desireCard")?.classList.toggle("hidden", !modules.stateCard);
 
   if ($("#desireEmotionText")) $("#desireEmotionText").textContent = affectText;
   if ($("#desireIntentText")) $("#desireIntentText").textContent = `当前倾向：${intentLabel}`;
@@ -7466,12 +7589,35 @@ function renderDesireObserver() {
   renderDesireBars($("#desireBars"), state.drives);
   renderDesireBars($("#desireDetailBars"), state.drives);
   renderAffectBars($("#desireAffectBars"), state.affect);
+  renderEmotionRadar($("#desireEmotionRadar"), window.LeithDesireEngine.deriveEmotionProfile(state.affect));
   const list = $("#desireThoughtList");
   if (list) {
     list.innerHTML = thoughts.length
       ? thoughts.map(thought => `<div class="desire-thought-item">${escapeHtml(thought.text)}</div>`).join("")
       : `<div class="desire-thought-item">此刻没有特别突出的念头。</div>`;
   }
+}
+
+function renderEmotionRadar(svg, profile) {
+  if (!svg) return;
+  const keys = ["joy", "anticipation", "anxiety", "anger", "sadness", "calm"];
+  const cx = 130, cy = 130, radius = 86;
+  const point = (index, value = 1) => {
+    const angle = -Math.PI / 2 + index * Math.PI * 2 / keys.length;
+    return [cx + Math.cos(angle) * radius * value, cy + Math.sin(angle) * radius * value];
+  };
+  const polygon = value => keys.map((_, index) => point(index, value).join(",")).join(" ");
+  const shape = keys.map((key, index) => point(index, Math.max(0.04, Number(profile[key]) || 0)).join(",")).join(" ");
+  svg.innerHTML = `
+    <polygon class="grid" points="${polygon(1)}"></polygon>
+    <polygon class="grid" points="${polygon(.66)}"></polygon>
+    <polygon class="grid" points="${polygon(.33)}"></polygon>
+    ${keys.map((_, index) => `<line class="axis" x1="${cx}" y1="${cy}" x2="${point(index)[0]}" y2="${point(index)[1]}"></line>`).join("")}
+    <polygon class="shape" points="${shape}"></polygon>
+    ${keys.map((key, index) => {
+      const [x, y] = point(index, 1.22);
+      return `<text x="${x}" y="${y}">${EMOTION_LABELS[key]}</text>`;
+    }).join("")}`;
 }
 
 function renderDesireBars(container, drives) {
@@ -7498,6 +7644,53 @@ function renderAffectBars(container, affect) {
   }).join("");
 }
 
+const MODULE_DEFINITIONS = [
+  { group: "记忆与经历", key: "longTermMemory", name: "长期记忆参与聊天", note: "关闭后不检索核心记忆和日记；通常节省较多 token。" },
+  { group: "记忆与经历", key: "readingContext", name: "共读参与聊天", note: "关闭后共读页面仍可使用，但共读内容不进入普通聊天。" },
+  { group: "内在状态", key: "emotionTracking", name: "记录情绪变化", note: "本地计算与保存；本身不增加模型调用。" },
+  { group: "内在状态", key: "emotionInfluence", name: "情绪影响回复", note: "关闭后仍可显示情绪，但不把情绪放进提示词，可节省少量 token。" },
+  { group: "内在状态", key: "desireAgency", name: "欲望与主体性", note: "控制念头、立场、要求参与回复；关闭可节省少量 token。" },
+  { group: "内在状态", key: "stateCard", name: "桌面显示“Leith · 此刻”", note: "只影响显示，不影响 token。" },
+  { group: "小世界", key: "shopping", name: "购物和零花钱", note: "关闭后不注入商品、余额及操作规则，可节省 token。" },
+  { group: "小世界", key: "healthContext", name: "健康记录参与聊天", note: "关闭后记录仍保留，但不会进入提示词。" },
+  { group: "能力", key: "imageUnderstanding", name: "发送和理解照片", note: "关闭后不能选择照片；有照片时可明显减少图像 token。" },
+  { group: "能力", key: "webSearch", name: "联网搜索", note: "关闭后不发送联网工具定义，也不会执行搜索。" }
+];
+
+function renderModuleSettings() {
+  const list = $("#moduleSettingsList");
+  const settings = getLeithModuleSettings();
+  if (!list) return;
+  let lastGroup = "";
+  list.innerHTML = MODULE_DEFINITIONS.map(item => {
+    const heading = item.group !== lastGroup ? `<div class="module-group-title">${item.group}</div>` : "";
+    lastGroup = item.group;
+    return `${heading}<label class="module-row">
+      <span><strong>${item.name}</strong><small>${item.note}</small></span>
+      <span class="module-switch"><input type="checkbox" data-module-key="${item.key}" ${settings[item.key] ? "checked" : ""}><span></span></span>
+    </label>`;
+  }).join("");
+  list.querySelectorAll("[data-module-key]").forEach(input => {
+    input.addEventListener("change", () => {
+      const next = getLeithModuleSettings();
+      next[input.dataset.moduleKey] = input.checked;
+      saveLeithModuleSettings(next);
+      applyModuleAvailability();
+    });
+  });
+  applyModuleAvailability();
+}
+
+function applyModuleAvailability() {
+  const settings = getLeithModuleSettings();
+  const attachBtn = $("#openAttachBtn");
+  if (attachBtn) {
+    attachBtn.disabled = !settings.imageUnderstanding;
+    attachBtn.title = settings.imageUnderstanding ? "上传图片/文档" : "照片功能已在 Leith 设置中关闭";
+  }
+  $("#desireCard")?.classList.toggle("hidden", !settings.stateCard);
+}
+
 
 initTimeOfDayTheme();
 initChatScrollTracking();
@@ -7520,6 +7713,7 @@ initWidget();
 initMoodBoard();
 initReading();
 initAttachments();
+applyModuleAvailability();
 initHealthApp();
 initFoldedCalendarApp();
 initHealthCheck();

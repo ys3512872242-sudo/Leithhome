@@ -1,5 +1,5 @@
 export type DriveKey = "attachment" | "curiosity" | "reflection" | "duty" | "social" | "fatigue" | "libido" | "stress";
-export type AffectKey = "happiness" | "anger" | "grievance";
+export type AffectKey = "valence" | "arousal" | "dominance";
 
 export interface EvaluatedEvent {
   event_type: string;

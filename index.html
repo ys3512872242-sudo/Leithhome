@@ -1681,11 +1681,30 @@
   .desire-thought-list{display:flex;flex-direction:column;gap:9px;}
   .desire-thought-item{font-family:var(--serif);font-size:13px;line-height:1.65;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.025);}
   .desire-observer-note{font-size:11px;line-height:1.7;color:var(--paper-dim);}
+  .emotion-radar-wrap{display:grid;grid-template-columns:minmax(180px,260px) minmax(0,1fr);gap:18px;align-items:center;margin-top:12px;}
+  .emotion-radar{width:100%;aspect-ratio:1;display:block;overflow:visible;}
+  .emotion-radar .grid{fill:none;stroke:var(--line);stroke-width:1;}
+  .emotion-radar .axis{stroke:var(--line-soft);stroke-width:1;}
+  .emotion-radar .shape{fill:rgba(201,126,147,.20);stroke:var(--rose);stroke-width:2;transition:points .35s ease;}
+  .emotion-radar text{fill:var(--paper-dim);font:10px var(--sans);text-anchor:middle;dominant-baseline:middle;}
+  .module-list{display:flex;flex-direction:column;gap:10px;max-width:680px;margin:0 auto 18px;}
+  .module-group-title{font-size:11px;letter-spacing:.12em;color:var(--paper-dim);padding:12px 4px 2px;}
+  .module-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:15px 16px;border:1px solid var(--line);border-radius:17px;background:var(--surface-glass);}
+  .module-row strong{display:block;font-size:14px;font-weight:550;}
+  .module-row small{display:block;margin-top:4px;color:var(--paper-dim);font-size:10px;line-height:1.5;}
+  .module-switch{position:relative;width:46px;height:27px;display:block;}
+  .module-switch input{position:absolute;opacity:0;pointer-events:none;}
+  .module-switch span{position:absolute;inset:0;border-radius:99px;background:rgba(255,255,255,.10);transition:.2s;cursor:pointer;}
+  .module-switch span:after{content:"";position:absolute;width:21px;height:21px;left:3px;top:3px;border-radius:50%;background:var(--paper-dim);transition:.2s;}
+  .module-switch input:checked+span{background:var(--accent-dim);}
+  .module-switch input:checked+span:after{transform:translateX(19px);background:var(--paper);}
+  .module-token-note{max-width:680px;margin:0 auto 18px;padding:15px 16px;border-radius:17px;background:rgba(201,154,91,.07);color:var(--paper-dim);font-size:11px;line-height:1.7;}
   @media(max-width:520px){
     .desire-card{padding:18px 17px;border-radius:21px;}
     .desire-bars{grid-template-columns:1fr;gap:8px;}
     .desire-card-emotion{font-size:15px;}
     .desire-detail-hero,.desire-detail-section{padding:18px;}
+    .emotion-radar-wrap{grid-template-columns:1fr;}
   }
 
   .hidden{display:none!important;}
@@ -1887,6 +1906,12 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20S4 15.2 4 9.2A4.2 4.2 0 0112 7a4.2 4.2 0 018 2.2C20 15.2 12 20 12 20z"/><path d="M9 12h6"/></svg>
           </div>
           <div class="app-icon-label">恋爱纪念</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-modules')">
+          <div class="app-icon-img" style="color:var(--accent-2);background:linear-gradient(150deg,rgba(128,152,201,.15),var(--bg-elevated) 75%);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+          </div>
+          <div class="app-icon-label">Leith 设置</div>
         </div>
       </div>
     </div>
@@ -2218,7 +2243,10 @@
       </section>
       <section class="desire-detail-section">
         <div class="desire-detail-label">此刻情绪</div>
-        <div class="desire-bars detail affect" id="desireAffectBars"></div>
+        <div class="emotion-radar-wrap">
+          <svg class="emotion-radar" id="desireEmotionRadar" viewBox="0 0 260 260" aria-label="Leith 情绪雷达"></svg>
+          <div class="desire-bars detail affect" id="desireAffectBars"></div>
+        </div>
       </section>
       <section class="desire-detail-section">
         <div class="desire-detail-label">内在需要</div>
@@ -2233,6 +2261,20 @@
       </section>
     </div>
   </div><!-- /app-widget -->
+
+  <!-- ===== App: Leith 模块管理 ===== -->
+  <div class="app-page" id="page-app-modules">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">Leith 设置</span>
+    </div>
+    <div class="app-body">
+      <div class="module-token-note">关闭模块只有在停止向对话提示词注入内容时才会节省 token。桌面显示、Supabase 同步和本地情绪计算本身不消耗模型 token。核心人格、最近对话与安全底线始终保留。</div>
+      <div class="module-list" id="moduleSettingsList"></div>
+    </div>
+  </div><!-- /app-modules -->
 
   <!-- ===== App: 健康 ===== -->
   <div class="app-page" id="page-app-health">

@@ -48,3 +48,18 @@ test("删除必须读取返回行并拒绝假成功", () => {
   assert.match(memory, /data\.length !== 1/);
   assert.match(app, /没有删掉：请确认已解锁并连接云端/);
 });
+
+test("照片发送前压缩，失败时恢复待发送照片，历史图片不重复上传", () => {
+  assert.match(app, /prepareImageForChat/);
+  assert.match(app, /maxSide = 1600/);
+  assert.match(app, /pendingAttachments = attachments/);
+  assert.match(app, /Image bytes omitted from repeated context/);
+});
+
+test("模块开关控制真实提示词注入而非只隐藏界面", () => {
+  assert.match(app, /modules\.longTermMemory/);
+  assert.match(app, /modules\.shopping/);
+  assert.match(app, /modules\.healthContext/);
+  assert.match(runtime, /modules\.emotionInfluence/);
+  assert.match(runtime, /modules\.desireAgency/);
+});
