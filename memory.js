@@ -466,7 +466,7 @@ const SupabaseMemoryAdapter = {
     }
   },
 
-  async addIntimacy(dateStr, tags = [], actor = 'user') {
+  async addIntimacy(dateStr, tags = [], actor = 'user', sourceMessageId = '') {
     if (!supabaseReady || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) return false;
     const cleanTags = (Array.isArray(tags) ? tags : []).map(v => String(v || '').trim()).filter(Boolean).map(v => Array.from(v).slice(0, 5).join('')).slice(0, 8);
     try {
@@ -474,7 +474,16 @@ const SupabaseMemoryAdapter = {
         .select('id,intimacy').eq('period', 'day').eq('date_str', dateStr).limit(1);
       if (error) throw error;
       const intimacy = Array.isArray(data?.[0]?.intimacy) ? data[0].intimacy.slice() : [];
-      intimacy.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, actor: actor === 'leith' ? 'leith' : 'user', at: new Date().toISOString(), tags: cleanTags });
+      const sourceId = String(sourceMessageId || '').trim().slice(0, 120);
+      if (sourceId && intimacy.some(item => String(item.sourceMessageId || '') === sourceId)) return true;
+      intimacy.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        actor: actor === 'leith' ? 'leith' : 'user',
+        event: actor === 'leith' ? 'user_orgasm' : 'manual',
+        sourceMessageId: sourceId || undefined,
+        at: new Date().toISOString(),
+        tags: cleanTags
+      });
       if (data?.[0]?.id) {
         const result = await supabaseClient.from('diary_entries').update({ intimacy }).eq('id', data[0].id);
         if (result.error) throw result.error;

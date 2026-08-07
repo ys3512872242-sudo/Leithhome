@@ -1706,6 +1706,14 @@
   .mcp-tool-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:13px 0;border-top:1px solid var(--line-soft);}
   .mcp-tool-row strong{display:block;font-size:13px;}.mcp-tool-row small{display:block;color:var(--paper-dim);font-size:10px;margin-top:3px;}
   .mcp-status{min-height:18px;margin:12px 0 0!important;color:var(--paper-dim)!important;}
+  .mcp-add-form{display:grid;grid-template-columns:160px minmax(0,1fr) auto;gap:8px;margin-top:14px;}
+  .mcp-add-form input{min-width:0;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.12);color:var(--paper);font:12px var(--sans);}
+  .mcp-server-list{display:flex;flex-direction:column;gap:10px;margin-top:14px;}
+  .mcp-server{padding:14px;border:1px solid var(--line-soft);border-radius:15px;background:rgba(255,255,255,.018);}
+  .mcp-server-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.mcp-server-head strong{font-size:13px}.mcp-server-head small{color:var(--paper-dim);font-size:10px;}
+  .mcp-tool-permission{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding-top:10px;margin-top:10px;border-top:1px solid var(--line-soft);}
+  .mcp-tool-permission strong{font-size:11px}.mcp-tool-permission small{display:block;color:var(--paper-dim);font-size:9px;margin-top:2px;line-height:1.45;}
+  @media(max-width:620px){.mcp-add-form{grid-template-columns:1fr}.mcp-add-form button{width:100%;}}
   @media(max-width:520px){
     .desire-card{padding:18px 17px;border-radius:21px;}
     .desire-bars{grid-template-columns:1fr;gap:8px;}
@@ -2291,6 +2299,13 @@
         </div>
         <button class="btn btn-ghost btn-sm btn-block" id="testMcpGatewayBtn" style="margin-top:14px;">测试安全连接</button>
         <p class="mcp-status" id="mcpGatewayStatus">尚未测试</p>
+        <div class="mcp-add-form">
+          <input id="mcpServerNameInput" autocomplete="off" placeholder="英文名称，例如 botling-knows">
+          <input id="mcpServerUrlInput" type="password" autocomplete="off" placeholder="粘贴 Streamable HTTP 专属地址">
+          <button class="btn btn-primary btn-sm" id="addMcpServerBtn">连接</button>
+        </div>
+        <p>专属地址只发送到安全网关，不保存在浏览器、聊天记录或调用日志中。连接后请在下面逐项开放只读工具，再新开一段对话让 Leith 看到最新工具。</p>
+        <div class="mcp-server-list" id="mcpServerList"></div>
       </section>
     </div>
   </div><!-- /app-modules -->

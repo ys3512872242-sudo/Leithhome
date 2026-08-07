@@ -89,7 +89,7 @@ const DEFAULT_PROVIDERS = [
 // 保留"惊喜"能力，即使这轮聊天完全没提购物话题也不会丢失这个行为；
 // FULL 版是完整机制说明，只有聊天内容明显跟购物/礼物相关时才附加，减少平时的固定开销。
 const WORLD_RULES_MINI = `[World] You can occasionally surprise Susie with a gift, buy something for yourself, buy clothes for Susie, or help her change outfits using [LGIFT:item]/[ABUY:item]/[SBUY:item]/[CBUY:item]/[WEAR:item] tags (full syntax rules included automatically when relevant).
-[Sex record] When Susie and Leith actually had sex or completed an adult sexual act in the current conversation, append exactly one [SEX:tag1,tag2] at the end. This means an event that actually happened, not flirting, sexual discussion, fantasy, role-play, a plan, desire, consent by itself, or a vague romantic/intimate moment. Optional tags describe the sexual position or activity; every tag is at most 5 Chinese characters. Do not mention the hidden tag.
+[Sex record] Only after Susie has clearly reached orgasm in an actually completed sexual encounter, append exactly one [SEX:tag1,tag2] at the end of the first reply after that climax. One confirmed Susie orgasm equals one record. Never emit it before climax, for Leith's orgasm alone, or again for the same climax in later replies. Discussion, fantasy, role-play, plans, arousal, consent, an unfinished act, or vague intimacy never count. Tags contain only concrete positions, stimulation methods, toys, or other sexual methods that actually occurred; do not invent details, and keep each tag within 5 Chinese characters. Do not mention the hidden tag.
 [Shared calendar] When Leith deliberately wants to add a real calendar date that both can see, append [DATE:YYYY-MM-DD|emoji|title|note]. Use one emoji sticker, a short title, and a short note. Do not add dates casually or invent plans.`;
 const WORLD_RULES_FULL = `[World rules]
 [LGIFT:item] Gift limited item to user -> deduct from limited fund, item delists into gift list
@@ -1709,7 +1709,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
     }
     renderThreadList();
     const actions = parseAIActions(visibleReply);
-    if (actions.length) handleAIActions(actions);
+    if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
     await window.LeithDesireRuntime?.completeTurn?.({
       sourceMessageId: sourceMsg._id,
       assistantMessageId: finalMsgId,
@@ -2881,7 +2881,7 @@ async function regenerateFromMessage(userMsg) {
       provider.apiStyle,
       userMsg._id
     );
-    const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
+    const tools = getAvailableChatTools(provider.apiStyle);
 
     let fullReply = "";
     let lastUsage = null;
@@ -2913,28 +2913,27 @@ async function regenerateFromMessage(userMsg) {
       if (!result.toolCalls || !result.toolCalls.length) break;
 
       const tc = result.toolCalls[0];
-      let query = "";
-      try { query = JSON.parse(tc.function.arguments).query || ""; } catch (e) {}
+      let executed;
+      try { executed = await executeAvailableTool(tc); }
+      catch (error) { executed = { name: tc.function.name, args: {}, label: "使用外部工具", result: `工具失败：${error.message}` }; }
 
       if (!searchNotice) {
         searchNotice = document.createElement("div");
         searchNotice.className = "msg-row assistant";
         searchNotice.style.opacity = "0.7";
-        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在搜索「${escapeHtml(query)}」...</div>`;
+        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在${escapeHtml(executed.label)}…</div>`;
         box.appendChild(searchNotice);
         box.scrollTop = box.scrollHeight;
       }
 
-      let searchResult;
-      try { searchResult = await duckDuckGoSearch(query); }
-      catch (e) { searchResult = `搜索失败：${e.message}`; }
+      const searchResult = executed.result;
 
       if (provider.apiStyle === "anthropic") {
-        messages.push({ role: "assistant", content: [{ type: "tool_use", id: tc.id, name: "web_search", input: { query } }] });
+        messages.push({ role: "assistant", content: [{ type: "tool_use", id: tc.id, name: executed.name, input: executed.args }] });
         messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: searchResult }] });
       } else {
         const toolRoundReply = window.LeithDesireRuntime?.splitEventEnvelope?.(result.text, userMsg.content);
-        messages.push({ role: "assistant", content: toolRoundReply?.hasEnvelope ? toolRoundReply.visible : result.text, tool_calls: [{ id: tc.id, type: "function", function: { name: "web_search", arguments: tc.function.arguments } }] });
+        messages.push({ role: "assistant", content: toolRoundReply?.hasEnvelope ? toolRoundReply.visible : result.text, tool_calls: [{ id: tc.id, type: "function", function: { name: executed.name, arguments: tc.function.arguments } }] });
         messages.push({ role: "tool", tool_call_id: tc.id, content: searchResult });
       }
 
@@ -2956,7 +2955,7 @@ async function regenerateFromMessage(userMsg) {
 
     // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(visibleReply);
-    if (actions.length) handleAIActions(actions);
+    if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
     try {
       await window.LeithDesireRuntime?.completeTurn?.({
         sourceMessageId: userMsg._id,
@@ -3493,6 +3492,22 @@ function getAnthropicTools() {
   }];
 }
 
+function getAvailableChatTools(apiStyle) {
+  const tools = [];
+  if (webEnabled) tools.push(...(apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]));
+  if (window.LeithMCP?.getModelTools) tools.push(...window.LeithMCP.getModelTools(apiStyle));
+  return tools.length ? tools : null;
+}
+
+async function executeAvailableTool(toolCall) {
+  const name = toolCall.function.name;
+  let args = {};
+  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch (_) {}
+  if (name === "web_search") return { name, args, label: `搜索「${args.query || ""}」`, result: await duckDuckGoSearch(args.query || "") };
+  if (name.startsWith("mcp_") && window.LeithMCP?.executeModelTool) return { name, args, label: "查看外部工具", result: await window.LeithMCP.executeModelTool(name, args) };
+  throw new Error("工具不存在或尚未获得权限");
+}
+
 // 拼接联网相关的系统提示（时间感知 + 工具说明）——这段是喂给模型的隐藏提示词，
 // 用户在界面上看不到，所以用英文写，省 token
 function buildWebPromptBlock() {
@@ -3882,7 +3897,7 @@ function parseAIActions(text) {
   while ((match = useRegex.exec(text)) !== null) {
     actions.push({ type: "use", itemName: match[1].trim() });
   }
-  while ((match = loveRegex.exec(text)) !== null) {
+  if ((match = loveRegex.exec(text)) !== null) {
     const tags = match[1].split(/[,，、]/).map(v => Array.from(v.trim()).slice(0, 5).join('')).filter(Boolean);
     actions.push({ type: "love", tags });
   }
@@ -3893,7 +3908,7 @@ function parseAIActions(text) {
 }
 
 // 处理 AI 的购买/送礼动作
-function handleAIActions(actions) {
+function handleAIActions(actions, context = {}) {
   const threadId = getActiveThreadId();
   let needRefresh = false;
   actions.forEach(action => {
@@ -3996,7 +4011,7 @@ function handleAIActions(actions) {
       insertNarration(threadId, `${item.emoji} ${item.name} 用掉了`);
       needRefresh = true;
     } else if (action.type === "love") {
-      window.Memory?.addIntimacy?.(formatLocalDate(), action.tags, "leith").then(ok => {
+      window.Memory?.addIntimacy?.(formatLocalDate(), action.tags, "leith", context.sourceMessageId || "").then(ok => {
         if (ok) showToast("♡ Leith 点亮了今天的爱爱记录");
       });
     } else if (action.type === "date") {
@@ -4844,7 +4859,7 @@ async function sendChat(overrideContent) {
       userMsg._id
     );
     // 联网开启时传入工具定义
-    const tools = webEnabled ? (provider.apiStyle === "anthropic" ? getAnthropicTools() : [WEB_SEARCH_TOOL]) : null;
+    const tools = getAvailableChatTools(provider.apiStyle);
 
     let fullReply = "";
     let lastUsage = null;
@@ -4879,33 +4894,29 @@ async function sendChat(overrideContent) {
 
       // 处理工具调用
       const tc = result.toolCalls[0];
-      let query = "";
-      try { query = JSON.parse(tc.function.arguments).query || ""; } catch (e) { query = ""; }
+      let executed;
+      try { executed = await executeAvailableTool(tc); }
+      catch (error) { executed = { name: tc.function.name, args: {}, label: "使用外部工具", result: `工具失败：${error.message}` }; }
 
       // 显示"正在搜索"提示
       if (!searchNotice) {
         searchNotice = document.createElement("div");
         searchNotice.className = "msg-row assistant";
         searchNotice.style.opacity = "0.7";
-        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在搜索「${escapeHtml(query)}」...</div>`;
+        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在${escapeHtml(executed.label)}…</div>`;
         box.appendChild(searchNotice);
         box.scrollTop = box.scrollHeight;
       }
 
       // 执行搜索
-      let searchResult;
-      try {
-        searchResult = await duckDuckGoSearch(query);
-      } catch (e) {
-        searchResult = `搜索失败：${e.message}`;
-      }
+      const searchResult = executed.result;
 
       // 把 assistant 的 tool_call 消息 + tool 结果追加到上下文
       if (provider.apiStyle === "anthropic") {
         // Anthropic: assistant 消息 content 是数组，含 tool_use block；用户消息 content 含 tool_result block
         textMessages.push({
           role: "assistant",
-          content: [{ type: "tool_use", id: tc.id, name: "web_search", input: { query } }]
+          content: [{ type: "tool_use", id: tc.id, name: executed.name, input: executed.args }]
         });
         textMessages.push({
           role: "user",
@@ -4919,7 +4930,7 @@ async function sendChat(overrideContent) {
             const parsed = window.LeithDesireRuntime?.splitEventEnvelope?.(result.text, content);
             return parsed?.hasEnvelope ? parsed.visible : result.text;
           })(),
-          tool_calls: [{ id: tc.id, type: "function", function: { name: "web_search", arguments: tc.function.arguments } }]
+          tool_calls: [{ id: tc.id, type: "function", function: { name: executed.name, arguments: tc.function.arguments } }]
         });
         textMessages.push({
           role: "tool",
@@ -4952,7 +4963,7 @@ async function sendChat(overrideContent) {
 
     // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(visibleReply);
-    if (actions.length) handleAIActions(actions);
+    if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
     try {
       await window.LeithDesireRuntime?.completeTurn?.({
         sourceMessageId: userMsg._id,
@@ -7694,6 +7705,26 @@ function renderMcpSettings() {
   statusTool.checked = settings.tools["system.status"].enabled;
   statusTool.disabled = !settings.enabled;
   testButton.disabled = !settings.enabled || !settings.tools["system.status"].enabled;
+  const list = $("#mcpServerList");
+  if (list) {
+    const servers = window.LeithMCP.getRegistry();
+    list.innerHTML = servers.length ? servers.map(server => `<section class="mcp-server" data-mcp-server="${escapeHtml(server.id)}">
+      <div class="mcp-server-head"><span><strong>${escapeHtml(server.name)}</strong><small> · ${escapeHtml(server.host || "已安全保存")}</small></span><button class="btn btn-ghost btn-sm" data-mcp-remove="${escapeHtml(server.id)}">移除</button></div>
+      ${(server.tools || []).map(tool => `<label class="mcp-tool-permission"><span><strong>${escapeHtml(tool.name)}</strong><small>${escapeHtml(tool.description || "此工具没有提供说明")}${tool.permission !== "read" ? " · 写入工具暂不开放" : ""}</small></span><span class="module-switch"><input type="checkbox" data-mcp-tool-server="${escapeHtml(server.id)}" data-mcp-tool-name="${escapeHtml(tool.name)}" ${tool.enabled ? "checked" : ""} ${tool.permission !== "read" ? "disabled" : ""}><span></span></span></label>`).join("")}
+    </section>`).join("") : `<p>还没有连接外部 MCP。</p>`;
+    list.querySelectorAll("[data-mcp-tool-name]").forEach(input => input.addEventListener("change", async () => {
+      input.disabled = true;
+      try { await window.LeithMCP.setToolEnabled(input.dataset.mcpToolServer, input.dataset.mcpToolName, input.checked); }
+      catch (error) { showToast(`权限保存失败：${error.message}`); }
+      renderMcpSettings();
+    }));
+    list.querySelectorAll("[data-mcp-remove]").forEach(button => button.addEventListener("click", async () => {
+      if (!confirm("确定移除这个 MCP？专属地址会从 Leith 的安全网关中删除。")) return;
+      try { await window.LeithMCP.removeServer(button.dataset.mcpRemove); showToast("MCP 已移除"); }
+      catch (error) { showToast(`移除失败：${error.message}`); }
+      renderMcpSettings();
+    }));
+  }
 }
 
 function initMcpSettings() {
@@ -7701,6 +7732,9 @@ function initMcpSettings() {
   const statusTool = $("#mcpStatusToolToggle");
   const testButton = $("#testMcpGatewayBtn");
   const status = $("#mcpGatewayStatus");
+  const nameInput = $("#mcpServerNameInput");
+  const urlInput = $("#mcpServerUrlInput");
+  const addButton = $("#addMcpServerBtn");
   if (!master || !statusTool || !testButton || !window.LeithMCP) return;
   master.addEventListener("change", async () => {
     const next = window.LeithMCP.getSettings();
@@ -7724,7 +7758,19 @@ function initMcpSettings() {
     } catch (error) { status.textContent = `连接失败：${error.message}`; }
     finally { renderMcpSettings(); }
   });
+  addButton?.addEventListener("click", async () => {
+    const name = nameInput.value.trim(); const endpoint = urlInput.value.trim();
+    if (!name || !endpoint) return showToast("请填写英文名称和专属地址");
+    addButton.disabled = true; status.textContent = "正在安全检查 MCP 并读取工具列表…";
+    try {
+      const result = await window.LeithMCP.addServer(name, endpoint);
+      urlInput.value = ""; nameInput.value = "";
+      status.textContent = `已连接 ${result.name}，请逐项开放需要的只读工具。`;
+    } catch (error) { status.textContent = `连接失败：${error.message}`; }
+    finally { addButton.disabled = false; renderMcpSettings(); }
+  });
   window.addEventListener("leith:mcp-settings-changed", renderMcpSettings);
+  window.addEventListener("leith:mcp-registry-changed", renderMcpSettings);
   renderMcpSettings();
 }
 

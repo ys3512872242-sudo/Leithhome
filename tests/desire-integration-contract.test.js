@@ -9,6 +9,7 @@ const runtime = fs.readFileSync(path.join(root, "desire-runtime.js"), "utf8");
 const memory = fs.readFileSync(path.join(root, "memory.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/202608040001_desire_state_v1.sql"), "utf8");
 const mcpMigration = fs.readFileSync(path.join(root, "supabase/migrations/202608070001_mcp_gateway_v1.sql"), "utf8");
+const mcpRegistryMigration = fs.readFileSync(path.join(root, "supabase/migrations/202608070002_mcp_manual_registry.sql"), "utf8");
 const mcpClient = fs.readFileSync(path.join(root, "mcp-gateway.js"), "utf8");
 const mcpFunction = fs.readFileSync(path.join(root, "supabase/functions/leith-mcp-gateway-v1/index.ts"), "utf8");
 
@@ -71,9 +72,36 @@ test("MCP 网关默认关闭、只读并在前后端同时校验权限", () => {
   assert.match(mcpMigration, /"enabled":false/);
   assert.match(mcpMigration, /permission in \('read', 'write'\)/);
   assert.match(mcpClient, /MCP 总开关尚未开启/);
-  assert.match(mcpClient, /permission !== "read"/);
+  assert.match(mcpClient, /tool\.enabled && tool\.permission === "read"/);
   assert.match(mcpFunction, /sessionValid\(token\)/);
   assert.match(mcpFunction, /settings\.enabled !== true/);
   assert.match(mcpFunction, /permission !== "read"/);
   assert.doesNotMatch(mcpFunction, /input\?\.url|fetch\(payload/);
+});
+
+test("手动 MCP 地址只保存在服务端，浏览器只缓存脱敏工具目录", () => {
+  assert.match(mcpRegistryMigration, /mcp_servers_private/i);
+  assert.match(mcpRegistryMigration, /enable row level security/i);
+  assert.match(mcpRegistryMigration, /revoke all .* from anon, authenticated/i);
+  assert.match(mcpClient, /Sanitized metadata only; never stores endpoint URLs/);
+  assert.doesNotMatch(mcpClient, /localStorage\.setItem\([^\n]*endpoint/i);
+  assert.match(mcpFunction, /select=id,name,host,tools,created_at/);
+  assert.doesNotMatch(mcpFunction, /select=id,name,host,endpoint,tools/);
+});
+
+test("聊天仅暴露已授权的只读 MCP 工具，写入工具默认禁用", () => {
+  assert.match(mcpFunction, /permission: WRITE_WORDS\.test[\s\S]*?\? "write" : "read", enabled: false/);
+  assert.match(mcpFunction, /!tool\.enabled \|\| tool\.permission !== "read"/);
+  assert.match(mcpClient, /tool\.enabled && tool\.permission === "read"/);
+  assert.match(app, /getAvailableChatTools\(provider\.apiStyle\)/);
+  assert.match(app, /executeAvailableTool\(tc\)/);
+});
+
+test("爱爱记录只在用户高潮事后记录，并按回复消息去重", () => {
+  assert.match(app, /Only after Susie has clearly reached orgasm/);
+  assert.match(app, /One confirmed Susie orgasm equals one record/);
+  assert.match(app, /for Leith's orgasm alone/);
+  assert.match(app, /handleAIActions\(actions, \{ sourceMessageId: finalMsgId \}\)/);
+  assert.match(memory, /item\.sourceMessageId/);
+  assert.match(memory, /event: actor === 'leith' \? 'user_orgasm'/);
 });
