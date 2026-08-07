@@ -60,7 +60,8 @@ const DEFAULT_MODULE_SETTINGS = Object.freeze({
 function getLeithModuleSettings() {
   const stored = loadJSON(LS.moduleSettings, {});
   if (!("webSearch" in stored)) stored.webSearch = localStorage.getItem("companion_web_enabled_v1") === "1";
-  return { ...DEFAULT_MODULE_SETTINGS, ...stored };
+  // “Leith · 此刻”是桌面核心组件，旧版本曾允许隐藏；现在固定显示并兼容清除旧的关闭状态。
+  return { ...DEFAULT_MODULE_SETTINGS, ...stored, stateCard: true };
 }
 
 function saveLeithModuleSettings(next) {
@@ -7614,7 +7615,7 @@ function renderDesireObserver() {
   const subjectivity = state.subjectivity || {};
   const modules = getLeithModuleSettings();
 
-  $("#desireCard")?.classList.toggle("hidden", !modules.stateCard);
+  $("#desireCard")?.classList.remove("hidden");
 
   if ($("#desireEmotionText")) $("#desireEmotionText").textContent = affectText;
   if ($("#desireIntentText")) $("#desireIntentText").textContent = `当前倾向：${intentLabel}`;
@@ -7689,7 +7690,6 @@ const MODULE_DEFINITIONS = [
   { group: "内在状态", key: "emotionTracking", name: "记录情绪变化", note: "本地计算与保存；本身不增加模型调用。" },
   { group: "内在状态", key: "emotionInfluence", name: "情绪影响回复", note: "关闭后仍可显示情绪，但不把情绪放进提示词，可节省少量 token。" },
   { group: "内在状态", key: "desireAgency", name: "欲望与主体性", note: "控制念头、立场、要求参与回复；关闭可节省少量 token。" },
-  { group: "内在状态", key: "stateCard", name: "桌面显示“Leith · 此刻”", note: "只影响显示，不影响 token。" },
   { group: "小世界", key: "shopping", name: "购物和零花钱", note: "关闭后不注入商品、余额及操作规则，可节省 token。" },
   { group: "小世界", key: "healthContext", name: "健康记录参与聊天", note: "关闭后记录仍保留，但不会进入提示词。" },
   { group: "能力", key: "imageUnderstanding", name: "发送和理解照片", note: "关闭后不能选择照片；有照片时可明显减少图像 token。" },
@@ -7816,7 +7816,7 @@ function applyModuleAvailability() {
     attachBtn.disabled = !settings.imageUnderstanding;
     attachBtn.title = settings.imageUnderstanding ? "上传图片/文档" : "照片功能已在 Leith 设置中关闭";
   }
-  $("#desireCard")?.classList.toggle("hidden", !settings.stateCard);
+  $("#desireCard")?.classList.remove("hidden");
 }
 
 

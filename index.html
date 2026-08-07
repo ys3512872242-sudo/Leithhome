@@ -1659,7 +1659,7 @@
     border:0;
     background-color:var(--time-paper);background-size:cover;background-position:center;background-repeat:no-repeat;
     box-shadow:inset 0 1px rgba(255,255,255,.16);
-    transition:background .8s ease,border-color .8s ease,color .8s ease;
+    transition:background .8s ease,border-color .8s ease,color .8s ease;cursor:pointer;color:inherit;font:inherit;text-align:initial;
   }
   .time-sky-panel::before{
     content:"";position:absolute;inset:0;z-index:0;opacity:1;
@@ -1916,7 +1916,7 @@
       </div>
 
       <section class="time-desire-widget" aria-label="时间与 Leith 此刻状态">
-      <div class="time-sky-panel" aria-label="随时间变化的天空时钟">
+      <button class="time-sky-panel" type="button" aria-label="查看 Leith 此刻的完整状态" onclick="openApp('page-app-widget')">
         <div class="desktop-time" id="widgetTime" aria-label="当前时间">--:--</div>
         <div class="time-sky-meta"><span id="desktopSkyPhase">此刻</span> · <span id="desktopSkyDate">--</span></div>
         <div class="time-painter-scene" aria-hidden="true">
@@ -1948,7 +1948,7 @@
             </g>
           </svg>
         </div>
-      </div>
+      </button>
       <div class="time-preview-strip" aria-label="预览天空时段">
         <button class="time-preview-btn active" type="button" data-sky-preview="auto">自动</button>
         <button class="time-preview-btn" type="button" data-sky-preview="dawn">清晨</button>
