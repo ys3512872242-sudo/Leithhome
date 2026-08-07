@@ -218,22 +218,47 @@ window.addEventListener("popstate", () => {
 });
 
 // ============================================================
-// 分时段主题：白天 / 傍晚 / 深夜，跟着系统时间自动换色
+// 分时段主题：五段天空画幅 + 三档全局亮度，跟着系统时间自动换色
 // ============================================================
-function getTimeOfDay(hour) {
+const SKY_PHASES = {
+  dawn: { label: "清晨", tod: "day", theme: "#AFB9C7" },
+  noon: { label: "中午", tod: "day", theme: "#7F9FC7" },
+  sunset: { label: "傍晚", tod: "dusk", theme: "#66738F" },
+  evening: { label: "晚上", tod: "dusk", theme: "#243957" },
+  deepnight: { label: "深夜", tod: "night", theme: "#071426" }
+};
+let skyPreviewOverride = null;
+
+function getSkyPhase(hour) {
   const h = hour ?? new Date().getHours();
-  if (h >= 6 && h < 17) return "day";     // 06:00–17:00 白天
-  if (h >= 17 && h < 23) return "dusk";   // 17:00–23:00 傍晚
-  return "night";                          // 23:00–06:00 深夜
+  if (h >= 5 && h < 9) return "dawn";
+  if (h >= 9 && h < 16) return "noon";
+  if (h >= 16 && h < 19) return "sunset";
+  if (h >= 19 && h < 23) return "evening";
+  return "deepnight";
 }
 
 function applyTimeOfDayTheme() {
-  const tod = getTimeOfDay();
-  document.documentElement.setAttribute("data-tod", tod);
-  const themeColors = { day: '#C6D3D8', dusk: '#243A63', night: '#061329' };
+  const phase = skyPreviewOverride || getSkyPhase();
+  const palette = SKY_PHASES[phase];
+  document.documentElement.setAttribute("data-tod", palette.tod);
+  document.documentElement.setAttribute("data-sky-phase", phase);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', themeColors[tod]);
-  return tod;
+  if (meta) meta.setAttribute('content', palette.theme);
+  updateSkyPreviewUI(phase);
+  return phase;
+}
+
+function updateSkyPreviewUI(phase) {
+  if ($("#desktopSkyPhase")) $("#desktopSkyPhase").textContent = SKY_PHASES[phase]?.label || "此刻";
+  document.querySelectorAll("[data-sky-preview]").forEach(button => button.classList.toggle("active", button.dataset.skyPreview === (skyPreviewOverride || "auto")));
+}
+
+function initSkyPreviewControls() {
+  document.querySelectorAll("[data-sky-preview]").forEach(button => button.addEventListener("click", () => {
+    skyPreviewOverride = button.dataset.skyPreview === "auto" ? null : button.dataset.skyPreview;
+    applyTimeOfDayTheme();
+  }));
 }
 
 function initTimeOfDayTheme() {
@@ -7563,6 +7588,8 @@ function updateWidgetTime() {
   if ($("#widgetTime")) $("#widgetTime").innerText = timeStr;
   if ($("#widgetBigTime")) $("#widgetBigTime").innerText = timeStr;
   if ($("#widgetBigDate")) $("#widgetBigDate").innerText = dateStr;
+  if ($("#desktopSkyDate")) $("#desktopSkyDate").innerText = dateStr;
+  updateSkyPreviewUI(skyPreviewOverride || getSkyPhase(now.getHours()));
 }
 
 function updateWidgetPreview() {
@@ -7708,10 +7735,16 @@ function renderMcpSettings() {
   const list = $("#mcpServerList");
   if (list) {
     const servers = window.LeithMCP.getRegistry();
-    list.innerHTML = servers.length ? servers.map(server => `<section class="mcp-server" data-mcp-server="${escapeHtml(server.id)}">
-      <div class="mcp-server-head"><span><strong>${escapeHtml(server.name)}</strong><small> · ${escapeHtml(server.host || "已安全保存")}</small></span><button class="btn btn-ghost btn-sm" data-mcp-remove="${escapeHtml(server.id)}">移除</button></div>
-      ${(server.tools || []).map(tool => `<label class="mcp-tool-permission"><span><strong>${escapeHtml(tool.name)}</strong><small>${escapeHtml(tool.description || "此工具没有提供说明")}${tool.permission !== "read" ? " · 写入工具暂不开放" : ""}</small></span><span class="module-switch"><input type="checkbox" data-mcp-tool-server="${escapeHtml(server.id)}" data-mcp-tool-name="${escapeHtml(tool.name)}" ${tool.enabled ? "checked" : ""} ${tool.permission !== "read" ? "disabled" : ""}><span></span></span></label>`).join("")}
+    list.innerHTML = servers.length ? servers.map(server => `<section class="mcp-server ${server.enabled ? "" : "is-off"}" data-mcp-server="${escapeHtml(server.id)}">
+      <div class="mcp-server-head"><span><strong>${escapeHtml(server.name)}</strong><small> · ${escapeHtml(server.host || "已安全保存")}${server.has_auth ? ` · 已配置 ${escapeHtml(server.auth_header_name || "密钥")}` : " · 无额外密钥"}</small></span><span class="mcp-server-actions"><span class="module-switch" title="单独开启这个 MCP"><input type="checkbox" data-mcp-server-toggle="${escapeHtml(server.id)}" ${server.enabled ? "checked" : ""}><span></span></span><button class="btn btn-ghost btn-sm" data-mcp-remove="${escapeHtml(server.id)}">移除</button></span></div>
+      ${(server.tools || []).map(tool => `<label class="mcp-tool-permission"><span><strong>${escapeHtml(tool.name)}</strong><small>${escapeHtml(tool.description || "此工具没有提供说明")}${tool.permission !== "read" ? " · 写入工具暂不开放" : ""}</small></span><span class="module-switch"><input type="checkbox" data-mcp-tool-server="${escapeHtml(server.id)}" data-mcp-tool-name="${escapeHtml(tool.name)}" ${tool.enabled ? "checked" : ""} ${!server.enabled || tool.permission !== "read" ? "disabled" : ""}><span></span></span></label>`).join("")}
     </section>`).join("") : `<p>还没有连接外部 MCP。</p>`;
+    list.querySelectorAll("[data-mcp-server-toggle]").forEach(input => input.addEventListener("change", async () => {
+      input.disabled = true;
+      try { await window.LeithMCP.setServerEnabled(input.dataset.mcpServerToggle, input.checked); }
+      catch (error) { showToast(`MCP 开关保存失败：${error.message}`); }
+      renderMcpSettings();
+    }));
     list.querySelectorAll("[data-mcp-tool-name]").forEach(input => input.addEventListener("change", async () => {
       input.disabled = true;
       try { await window.LeithMCP.setToolEnabled(input.dataset.mcpToolServer, input.dataset.mcpToolName, input.checked); }
@@ -7734,6 +7767,8 @@ function initMcpSettings() {
   const status = $("#mcpGatewayStatus");
   const nameInput = $("#mcpServerNameInput");
   const urlInput = $("#mcpServerUrlInput");
+  const authNameInput = $("#mcpAuthHeaderNameInput");
+  const authValueInput = $("#mcpAuthHeaderValueInput");
   const addButton = $("#addMcpServerBtn");
   if (!master || !statusTool || !testButton || !window.LeithMCP) return;
   master.addEventListener("change", async () => {
@@ -7763,9 +7798,9 @@ function initMcpSettings() {
     if (!name || !endpoint) return showToast("请填写英文名称和专属地址");
     addButton.disabled = true; status.textContent = "正在安全检查 MCP 并读取工具列表…";
     try {
-      const result = await window.LeithMCP.addServer(name, endpoint);
-      urlInput.value = ""; nameInput.value = "";
-      status.textContent = `已连接 ${result.name}，请逐项开放需要的只读工具。`;
+      const result = await window.LeithMCP.addServer(name, endpoint, authNameInput?.value || "", authValueInput?.value || "");
+      urlInput.value = ""; nameInput.value = ""; if (authNameInput) authNameInput.value = ""; if (authValueInput) authValueInput.value = "";
+      status.textContent = `已连接 ${result.name}。它默认关闭，请先开启这个 MCP，再逐项开放需要的只读工具。`;
     } catch (error) { status.textContent = `连接失败：${error.message}`; }
     finally { addButton.disabled = false; renderMcpSettings(); }
   });
@@ -7786,6 +7821,7 @@ function applyModuleAvailability() {
 
 
 initTimeOfDayTheme();
+initSkyPreviewControls();
 initChatScrollTracking();
 initBottomBar();
 initGiveMoneyBtn();

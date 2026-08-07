@@ -8,8 +8,10 @@
   // 在 CSS 解析前就先定好当前时段，避免打开一瞬间先闪一下错误的配色
   (function(){
     var h = new Date().getHours();
-    var tod = (h>=6 && h<17) ? "day" : (h>=17 && h<23) ? "dusk" : "night";
+    var phase = (h>=5 && h<9) ? "dawn" : (h>=9 && h<16) ? "noon" : (h>=16 && h<19) ? "sunset" : (h>=19 && h<23) ? "evening" : "deepnight";
+    var tod = (phase==="dawn" || phase==="noon") ? "day" : (phase==="sunset" || phase==="evening") ? "dusk" : "night";
     document.documentElement.setAttribute("data-tod", tod);
+    document.documentElement.setAttribute("data-sky-phase", phase);
     if ((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true) {
       document.documentElement.classList.add('standalone-pwa');
     }
@@ -1639,12 +1641,45 @@
 
   /* ===== Leith · 此刻：只读内部状态 ===== */
   .desktop-time{
-    margin:8px auto 16px;text-align:center;font-family:var(--serif-display);
-    font-size:clamp(30px,7vw,48px);font-weight:400;letter-spacing:.04em;color:var(--paper);
-    font-variant-numeric:tabular-nums;user-select:none;pointer-events:none;
+    text-align:center;font-family:var(--serif-display);
+    font-size:clamp(42px,11vw,74px);font-weight:500;letter-spacing:.025em;color:var(--time-ink);
+    font-variant-numeric:tabular-nums;user-select:none;pointer-events:none;line-height:.92;
+    text-shadow:0 1px 18px var(--time-glow);position:relative;z-index:3;
   }
+  .time-sky-panel{
+    --time-paper:#eee9de;--time-ink:#3f4b55;--time-muted:#66747e;--time-accent:#d56c55;--time-shadow:#b8a892;--time-glow:rgba(255,255,255,.45);
+    width:min(100%,680px);min-height:232px;margin:2px auto 16px;padding:28px 22px 17px;
+    position:relative;isolation:isolate;overflow:hidden;border-radius:26px;
+    border:1px solid color-mix(in srgb,var(--time-ink) 13%,transparent);
+    background:var(--time-paper);
+    box-shadow:0 16px 42px rgba(8,13,22,.13),inset 0 1px rgba(255,255,255,.16);
+    transition:background .8s ease,border-color .8s ease,color .8s ease;
+  }
+  .time-sky-panel::before{
+    content:"";position:absolute;inset:0;z-index:0;opacity:.34;
+    background:linear-gradient(96deg,transparent 4%,rgba(255,255,255,.34) 28%,transparent 53%),radial-gradient(circle at 18% 9%,rgba(255,255,255,.28),transparent 35%);
+  }
+  .time-sky-panel::after{
+    content:"";position:absolute;inset:0;z-index:2;opacity:.13;mix-blend-mode:multiply;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='130' height='90'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.035 .22' numOctaves='2' seed='7'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E");
+  }
+  .time-sky-meta{text-align:center;color:var(--time-muted);font:500 10px var(--sans);letter-spacing:.18em;margin-top:11px;position:relative;z-index:3;}
+  .time-painter-scene{position:absolute;inset:0;z-index:1;pointer-events:none;color:var(--time-ink);opacity:.94;animation:zinePaperDrift 14s ease-in-out infinite alternate;}
+  .time-painter-scene svg{width:100%;height:100%;overflow:visible;}
+  .phase-art{display:none}.phase-art .ink{fill:var(--time-ink)}.phase-art .accent{fill:var(--time-accent)}.phase-art .shadow{fill:var(--time-shadow);opacity:.42}.phase-art .line{fill:none;stroke:var(--time-ink);stroke-width:2;stroke-linecap:round}.phase-art .fine{fill:none;stroke:var(--time-ink);stroke-width:1;opacity:.62}.phase-art .paper{fill:var(--time-paper)}
+  html[data-sky-phase="dawn"] .phase-dawn,html[data-sky-phase="noon"] .phase-noon,html[data-sky-phase="sunset"] .phase-sunset,html[data-sky-phase="evening"] .phase-evening,html[data-sky-phase="deepnight"] .phase-deepnight{display:block}
+  @keyframes zinePaperDrift{to{transform:translate3d(.7px,-.5px,0);opacity:.89}}
+  .time-preview-strip{display:flex;justify-content:center;flex-wrap:wrap;gap:5px;width:min(100%,680px);margin:-6px auto 18px;}
+  .time-preview-btn{border:1px solid var(--line);background:var(--surface-glass);color:var(--paper-dim);border-radius:999px;padding:5px 9px;font:500 10px var(--sans);cursor:pointer;transition:.2s;}
+  .time-preview-btn.active{color:var(--paper);border-color:var(--accent-dim);background:var(--accent-glow);}
+  html[data-sky-phase="dawn"] .time-sky-panel{--time-paper:#efe8da;--time-ink:#596476;--time-muted:#80746e;--time-accent:#db705b;--time-shadow:#d4b8a5;--time-glow:rgba(255,225,202,.5);}
+  html[data-sky-phase="noon"] .time-sky-panel{--time-paper:#eeeade;--time-ink:#40536b;--time-muted:#65717b;--time-accent:#4d73c8;--time-shadow:#b8a98f;--time-glow:rgba(246,242,222,.56);}
+  html[data-sky-phase="sunset"] .time-sky-panel{--time-paper:#e8d8c8;--time-ink:#5e4a52;--time-muted:#806b6b;--time-accent:#df7046;--time-shadow:#b77b6b;--time-glow:rgba(245,174,130,.32);}
+  html[data-sky-phase="evening"] .time-sky-panel{--time-paper:#303b55;--time-ink:#e8dfd2;--time-muted:#c2bac0;--time-accent:#e1a849;--time-shadow:#17233d;--time-glow:rgba(164,185,221,.22);}
+  html[data-sky-phase="deepnight"] .time-sky-panel{--time-paper:#0b1629;--time-ink:#d7d9df;--time-muted:#9299a8;--time-accent:#d4c374;--time-shadow:#21324f;--time-glow:rgba(111,138,183,.17);box-shadow:0 16px 42px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.04);}
+  @media(prefers-reduced-motion:reduce){.time-painter-scene{animation:none}}
   .desire-card{
-    display:block;width:min(100%,680px);margin:0 auto 28px;padding:21px 22px 20px;
+    display:block;width:min(100%,680px);height:min(238px,34vh);margin:0 auto 28px;padding:21px 22px 20px;
     color:var(--paper);text-align:left;font:inherit;cursor:pointer;
     border:1px solid color-mix(in srgb,var(--accent-dim) 48%,var(--line));border-radius:24px;
     background:
@@ -1652,8 +1687,10 @@
       radial-gradient(circle at 4% 100%,rgba(128,152,201,.11),transparent 42%),
       linear-gradient(145deg,var(--surface-glass),var(--bg-elevated));
     box-shadow:0 14px 38px rgba(0,0,0,.16),inset 0 1px rgba(255,255,255,.035);
-    transition:transform .18s ease,border-color .18s ease;
+    transition:transform .18s ease,border-color .18s ease;overflow-y:auto;overscroll-behavior:contain;
+    scrollbar-width:thin;scrollbar-color:var(--accent-dim) transparent;touch-action:pan-y;
   }
+  .desire-card::-webkit-scrollbar{width:3px}.desire-card::-webkit-scrollbar-thumb{background:var(--accent-dim);border-radius:99px}.desire-card::after{content:"向上滑动查看更多";display:block;text-align:center;margin-top:14px;color:var(--paper-dim);font:500 9px var(--sans);letter-spacing:.08em;opacity:.55;}
   .desire-card:active{transform:scale(.99);}
   .desire-card-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;}
   .desire-card-heading span{font-family:var(--serif-display);font-size:20px;letter-spacing:.02em;}
@@ -1706,11 +1743,12 @@
   .mcp-tool-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:13px 0;border-top:1px solid var(--line-soft);}
   .mcp-tool-row strong{display:block;font-size:13px;}.mcp-tool-row small{display:block;color:var(--paper-dim);font-size:10px;margin-top:3px;}
   .mcp-status{min-height:18px;margin:12px 0 0!important;color:var(--paper-dim)!important;}
-  .mcp-add-form{display:grid;grid-template-columns:160px minmax(0,1fr) auto;gap:8px;margin-top:14px;}
+  .mcp-add-form{display:grid;grid-template-columns:160px minmax(0,1fr);gap:8px;margin-top:14px;}
   .mcp-add-form input{min-width:0;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:rgba(0,0,0,.12);color:var(--paper);font:12px var(--sans);}
+  .mcp-add-form .mcp-wide{grid-column:1/-1}.mcp-add-form button{grid-column:1/-1}
   .mcp-server-list{display:flex;flex-direction:column;gap:10px;margin-top:14px;}
   .mcp-server{padding:14px;border:1px solid var(--line-soft);border-radius:15px;background:rgba(255,255,255,.018);}
-  .mcp-server-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.mcp-server-head strong{font-size:13px}.mcp-server-head small{color:var(--paper-dim);font-size:10px;}
+  .mcp-server-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.mcp-server-head strong{font-size:13px}.mcp-server-head small{color:var(--paper-dim);font-size:10px;}.mcp-server-actions{display:flex;align-items:center;gap:8px}.mcp-server.is-off .mcp-tool-permission{opacity:.48}
   .mcp-tool-permission{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding-top:10px;margin-top:10px;border-top:1px solid var(--line-soft);}
   .mcp-tool-permission strong{font-size:11px}.mcp-tool-permission small{display:block;color:var(--paper-dim);font-size:9px;margin-top:2px;line-height:1.45;}
   @media(max-width:620px){.mcp-add-form{grid-template-columns:1fr}.mcp-add-form button{width:100%;}}
@@ -1862,7 +1900,47 @@
         <button class="desktop-lock-button" id="changeLeithPasswordBtn">🔐 修改记忆密码</button>
       </div>
 
-      <div class="desktop-time" id="widgetTime" aria-label="当前时间">--:--</div>
+      <section class="time-sky-panel" aria-label="随时间变化的天空时钟">
+        <div class="desktop-time" id="widgetTime" aria-label="当前时间">--:--</div>
+        <div class="time-sky-meta"><span id="desktopSkyPhase">此刻</span> · <span id="desktopSkyDate">--</span></div>
+        <div class="time-painter-scene" aria-hidden="true">
+          <svg viewBox="0 0 680 232" preserveAspectRatio="none">
+            <g class="phase-art phase-dawn">
+              <circle class="accent" cx="112" cy="163" r="28" opacity=".86"/><path class="shadow" d="M94 190l172 19-38 8-139-17z"/>
+              <path class="ink" d="M475 137h48l-6 56h-36z" opacity=".76"/><path class="line" d="M499 142c-3-35 9-59 26-78m-23 35c-25-4-38-14-48-28m55 12c17-14 33-18 51-16m-56 58c-25 2-42-3-58-15"/>
+              <path class="fine" d="M82 194c73 4 132 4 193 0m257 4c34 1 55 0 75-2"/>
+            </g>
+            <g class="phase-art phase-noon">
+              <path class="accent" d="M88 103h172v69H88z" opacity=".9"/><path class="paper" d="M143 103h5v69h-5m55-69h5v69h-5" opacity=".65"/>
+              <path class="shadow" d="M397 186l157 22-47 9-135-22z"/><path class="ink" d="M391 154h49l-5 43h-40z" opacity=".64"/>
+              <path class="line" d="M414 158c-2-31-2-60 7-91m-8 42c-17-5-31-14-40-27m44 10c12-15 26-23 43-28m-45 67c-19 0-33-5-45-15m47 17c16-1 30-7 43-18"/>
+            </g>
+            <g class="phase-art phase-sunset">
+              <circle class="accent" cx="520" cy="126" r="48"/><path class="shadow" d="M129 176l332 40-88 11-280-38z"/>
+              <path class="ink" d="M149 142h43l-6 52h-31z" opacity=".72"/><path class="line" d="M170 145c-3-27 5-45 17-62m-16 28c-18-4-30-13-38-26m42 8c13-11 26-16 40-14"/>
+              <path class="fine" d="M84 190c105 1 202 1 292-2m121 0c48 2 82 1 106-2"/>
+            </g>
+            <g class="phase-art phase-evening">
+              <path class="shadow" d="M73 95h211v99H73z" opacity=".9"/><path class="fine" d="M143 95v99m70-99v99"/>
+              <path class="accent" d="M458 111h65l-9 43h-46z"/><path class="line" d="M491 111V76m-25 78h49m-69 38h89"/>
+              <circle class="paper" cx="118" cy="123" r="2"/><circle class="paper" cx="241" cy="134" r="1.8"/><circle class="paper" cx="177" cy="113" r="1.4"/>
+            </g>
+            <g class="phase-art phase-deepnight">
+              <path class="shadow" d="M76 90h244v113H76z" opacity=".95"/><path class="paper" d="M232 112a31 31 0 1 0 22 52 27 27 0 1 1-22-52z"/>
+              <path class="accent" d="M484 151h46l-5 39h-36z" opacity=".9"/><path class="line" d="M530 158c18 2 23 10 18 20-4 8-12 11-22 10M477 195h69"/>
+              <circle class="paper" cx="118" cy="119" r="1.8"/><circle class="paper" cx="169" cy="157" r="1.3"/><circle class="paper" cx="286" cy="126" r="1.5"/>
+            </g>
+          </svg>
+        </div>
+      </section>
+      <div class="time-preview-strip" aria-label="预览天空时段">
+        <button class="time-preview-btn active" type="button" data-sky-preview="auto">自动</button>
+        <button class="time-preview-btn" type="button" data-sky-preview="dawn">清晨</button>
+        <button class="time-preview-btn" type="button" data-sky-preview="noon">中午</button>
+        <button class="time-preview-btn" type="button" data-sky-preview="sunset">傍晚</button>
+        <button class="time-preview-btn" type="button" data-sky-preview="evening">晚上</button>
+        <button class="time-preview-btn" type="button" data-sky-preview="deepnight">深夜</button>
+      </div>
 
       <button class="desire-card" id="desireCard" type="button" onclick="openApp('page-app-widget')">
         <div class="desire-card-heading"><span>Leith · 此刻</span><small id="desireCloudStatus">本机</small></div>
@@ -2302,9 +2380,12 @@
         <div class="mcp-add-form">
           <input id="mcpServerNameInput" autocomplete="off" placeholder="英文名称，例如 botling-knows">
           <input id="mcpServerUrlInput" type="password" autocomplete="off" placeholder="粘贴 Streamable HTTP 专属地址">
+          <input id="mcpAuthHeaderNameInput" list="mcpAuthHeaderNames" autocomplete="off" placeholder="密钥类型（可选），例如 Authorization">
+          <input id="mcpAuthHeaderValueInput" type="password" autocomplete="new-password" placeholder="明文密钥（可选），例如 Bearer …">
+          <datalist id="mcpAuthHeaderNames"><option value="Authorization"><option value="X-API-Key"><option value="API-Key"><option value="X-Auth-Token"></datalist>
           <button class="btn btn-primary btn-sm" id="addMcpServerBtn">连接</button>
         </div>
-        <p>专属地址只发送到安全网关，不保存在浏览器、聊天记录或调用日志中。连接后请在下面逐项开放只读工具，再新开一段对话让 Leith 看到最新工具。</p>
+        <p>地址和可选密钥只发送到安全网关，不保存在浏览器、聊天记录或调用日志中，也不会从网关回显。连接后依次开启“这个 MCP”和需要的只读工具，再新开一段对话让 Leith 看到最新工具。</p>
         <div class="mcp-server-list" id="mcpServerList"></div>
       </section>
     </div>

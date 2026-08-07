@@ -10,6 +10,7 @@ const memory = fs.readFileSync(path.join(root, "memory.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/202608040001_desire_state_v1.sql"), "utf8");
 const mcpMigration = fs.readFileSync(path.join(root, "supabase/migrations/202608070001_mcp_gateway_v1.sql"), "utf8");
 const mcpRegistryMigration = fs.readFileSync(path.join(root, "supabase/migrations/202608070002_mcp_manual_registry.sql"), "utf8");
+const mcpControlsMigration = fs.readFileSync(path.join(root, "supabase/migrations/202608070003_mcp_server_controls.sql"), "utf8");
 const mcpClient = fs.readFileSync(path.join(root, "mcp-gateway.js"), "utf8");
 const mcpFunction = fs.readFileSync(path.join(root, "supabase/functions/leith-mcp-gateway-v1/index.ts"), "utf8");
 
@@ -85,8 +86,9 @@ test("手动 MCP 地址只保存在服务端，浏览器只缓存脱敏工具目
   assert.match(mcpRegistryMigration, /revoke all .* from anon, authenticated/i);
   assert.match(mcpClient, /Sanitized metadata only; never stores endpoint URLs/);
   assert.doesNotMatch(mcpClient, /localStorage\.setItem\([^\n]*endpoint/i);
-  assert.match(mcpFunction, /select=id,name,host,tools,created_at/);
-  assert.doesNotMatch(mcpFunction, /select=id,name,host,endpoint,tools/);
+  assert.match(mcpFunction, /function publicServer[\s\S]*?has_auth/);
+  assert.doesNotMatch(mcpFunction, /publicServer[\s\S]{0,300}endpoint:/);
+  assert.doesNotMatch(mcpFunction, /publicServer[\s\S]{0,300}auth_header_value:/);
 });
 
 test("聊天仅暴露已授权的只读 MCP 工具，写入工具默认禁用", () => {
@@ -95,6 +97,18 @@ test("聊天仅暴露已授权的只读 MCP 工具，写入工具默认禁用", 
   assert.match(mcpClient, /tool\.enabled && tool\.permission === "read"/);
   assert.match(app, /getAvailableChatTools\(provider\.apiStyle\)/);
   assert.match(app, /executeAvailableTool\(tc\)/);
+});
+
+test("MCP 支持总开关、单服务开关、单工具开关和不回显的可选密钥", () => {
+  assert.match(mcpControlsMigration, /enabled boolean not null default false/i);
+  assert.match(mcpControlsMigration, /auth_header_name text/i);
+  assert.match(mcpControlsMigration, /auth_header_value text/i);
+  assert.match(mcpControlsMigration, /revoke all .* from anon, authenticated/i);
+  assert.match(mcpClient, /server\.enabled === true/);
+  assert.match(mcpClient, /registry\.server_enabled/);
+  assert.match(mcpFunction, /ALLOWED_AUTH_HEADERS/);
+  assert.match(mcpFunction, /这个 MCP 的独立开关尚未开启/);
+  assert.match(app, /data-mcp-server-toggle/);
 });
 
 test("爱爱记录只在用户高潮事后记录，并按回复消息去重", () => {

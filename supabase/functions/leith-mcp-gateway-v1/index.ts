@@ -24,24 +24,34 @@ function parseRpc(text: string, contentType: string) {
   }
   return JSON.parse(text || "{}");
 }
-async function mcpPost(endpoint: string, message: unknown, sessionId = "") {
+const ALLOWED_AUTH_HEADERS = new Set(["authorization", "x-api-key", "api-key", "x-auth-token"]);
+function safeAuthHeader(rawName: unknown, rawValue: unknown) {
+  const name = String(rawName || "").trim().toLowerCase(); const value = String(rawValue || "").trim();
+  if (!name && !value) return { name: "", value: "" };
+  if (!name || !value) throw new Error("认证请求头和密钥值需要同时填写");
+  if (!ALLOWED_AUTH_HEADERS.has(name)) throw new Error("暂只支持 Authorization、X-API-Key、API-Key 或 X-Auth-Token");
+  if (value.length > 2000 || /[\r\n]/.test(value)) throw new Error("密钥格式不正确");
+  return { name, value };
+}
+async function mcpPost(endpoint: string, message: unknown, sessionId = "", authHeaderName = "", authHeaderValue = "") {
   const headers: Record<string,string> = { "content-type": "application/json", "accept": "application/json, text/event-stream", "origin": "https://ys3512872242-sudo.github.io" };
   if (sessionId) headers["mcp-session-id"] = sessionId;
+  const auth = safeAuthHeader(authHeaderName, authHeaderValue); if (auth.name) headers[auth.name] = auth.value;
   const result = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(message), redirect: "error" });
   const text = await result.text(); if (!result.ok) throw new Error(`MCP 连接失败（HTTP ${result.status}）`);
   return { rpc: text ? parseRpc(text, result.headers.get("content-type") || "") : {}, sessionId: result.headers.get("mcp-session-id") || sessionId };
 }
-async function connect(endpoint: string) {
-  const initialized = await mcpPost(endpoint, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "leithhome", version: "1.0" } } });
+async function connect(endpoint: string, authHeaderName = "", authHeaderValue = "") {
+  const initialized = await mcpPost(endpoint, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "leithhome", version: "1.0" } } }, "", authHeaderName, authHeaderValue);
   if (initialized.rpc.error) throw new Error(initialized.rpc.error.message || "MCP 初始化失败");
-  await mcpPost(endpoint, { jsonrpc: "2.0", method: "notifications/initialized", params: {} }, initialized.sessionId);
-  const listed = await mcpPost(endpoint, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, initialized.sessionId);
+  await mcpPost(endpoint, { jsonrpc: "2.0", method: "notifications/initialized", params: {} }, initialized.sessionId, authHeaderName, authHeaderValue);
+  const listed = await mcpPost(endpoint, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, initialized.sessionId, authHeaderName, authHeaderValue);
   if (listed.rpc.error) throw new Error(listed.rpc.error.message || "无法读取 MCP 工具");
   return { tools: listed.rpc.result?.tools || [], sessionId: listed.sessionId };
 }
 const WRITE_WORDS = /(answer|comment|ask|edit|mark|withdraw|delete|publish|post|create|update|send|write|upload|remove)/i;
 function sanitizeTools(tools: any[]) { return tools.slice(0, 80).map(tool => ({ name: String(tool.name || "").slice(0, 100), description: String(tool.description || "").slice(0, 500), inputSchema: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : { type: "object", properties: {} }, permission: WRITE_WORDS.test(String(tool.name || "")) ? "write" : "read", enabled: false })); }
-function publicServer(row: any) { return { id: row.id, name: row.name, host: row.host, tools: row.tools || [], created_at: row.created_at }; }
+function publicServer(row: any) { return { id: row.id, name: row.name, host: row.host, enabled: row.enabled === true, has_auth: Boolean(row.auth_header_name && row.auth_header_value), auth_header_name: row.auth_header_name || null, tools: row.tools || [], created_at: row.created_at }; }
 async function logCall(requestId: string, tool: string, status: string, startedAt: number, errorMessage: string | null = null) { await rest("mcp_call_log", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ request_id: requestId, tool_name: tool, permission: "read", status, duration_ms: Date.now() - startedAt, error_message: errorMessage }) }); }
 
 Deno.serve(async (req: Request) => {
@@ -52,14 +62,15 @@ Deno.serve(async (req: Request) => {
   const action = String(payload.action || payload.tool || ""); const requestId = String(payload.request_id || crypto.randomUUID()).slice(0, 80); const startedAt = Date.now();
   try {
     if (action === "system.status") return response(req, { ok: true, result: { gateway: "ready", mode: "read-only", checked_at: new Date().toISOString() }, request_id: requestId });
-    if (action === "registry.list") { const result = await rest("mcp_servers_private?select=id,name,host,tools,created_at&order=created_at.asc"); const rows = result.ok ? await result.json() : []; return response(req, { ok: true, result: { servers: rows.map(publicServer) }, request_id: requestId }); }
+    if (action === "registry.list") { const result = await rest("mcp_servers_private?select=id,name,host,enabled,auth_header_name,auth_header_value,tools,created_at&order=created_at.asc"); const rows = result.ok ? await result.json() : []; return response(req, { ok: true, result: { servers: rows.map(publicServer) }, request_id: requestId }); }
     if (action === "registry.add") {
       const name = String(payload.name || "").trim(); if (!/^[A-Za-z0-9_-]{2,40}$/.test(name)) throw new Error("名称只能用英文、数字、下划线或连字符");
-      const target = safeEndpoint(String(payload.endpoint || "")); const discovered = await connect(target.endpoint); const tools = sanitizeTools(discovered.tools);
-      const saved = await rest("mcp_servers_private?on_conflict=name", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ name, endpoint: target.endpoint, host: target.host, tools, updated_at: new Date().toISOString() }) });
+      const target = safeEndpoint(String(payload.endpoint || "")); const auth = safeAuthHeader(payload.auth_header_name, payload.auth_header_value); const discovered = await connect(target.endpoint, auth.name, auth.value); const tools = sanitizeTools(discovered.tools);
+      const saved = await rest("mcp_servers_private?on_conflict=name", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify({ name, endpoint: target.endpoint, host: target.host, enabled: false, auth_header_name: auth.name || null, auth_header_value: auth.value || null, tools, updated_at: new Date().toISOString() }) });
       if (!saved.ok) throw new Error("MCP 已连通，但保存失败"); const row = (await saved.json())[0]; return response(req, { ok: true, result: publicServer(row), request_id: requestId });
     }
     if (action === "registry.remove") { const id = String(payload.server_id || ""); await rest(`mcp_servers_private?id=eq.${encodeURIComponent(id)}`, { method: "DELETE" }); return response(req, { ok: true, result: { removed: true }, request_id: requestId }); }
+    if (action === "registry.server_enabled") { const id = String(payload.server_id || ""); await rest(`mcp_servers_private?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled: payload.enabled === true, updated_at: new Date().toISOString() }) }); return response(req, { ok: true, result: { saved: true }, request_id: requestId }); }
     if (action === "registry.permission") {
       const id = String(payload.server_id || ""), toolName = String(payload.tool_name || ""); const found = await rest(`mcp_servers_private?id=eq.${encodeURIComponent(id)}&select=tools&limit=1`); const row = (await found.json())[0];
       const tools = (row?.tools || []).map((tool: any) => tool.name === toolName && tool.permission === "read" ? { ...tool, enabled: payload.enabled === true } : tool);
@@ -67,9 +78,10 @@ Deno.serve(async (req: Request) => {
     }
     if (action === "tools.call") {
       const settingsResponse = await rest("app_state?state_key=eq.leith_mcp_gateway_settings_v1&select=value&limit=1"); const settings = (await settingsResponse.json())?.[0]?.value || {}; if (settings.enabled !== true) throw new Error("MCP 总开关尚未开启");
-      const id = String(payload.server_id || ""), toolName = String(payload.tool_name || ""); const found = await rest(`mcp_servers_private?id=eq.${encodeURIComponent(id)}&select=endpoint,tools&limit=1`); const row = (await found.json())[0]; const tool = row?.tools?.find((item: any) => item.name === toolName);
-      if (!row || !tool || !tool.enabled || tool.permission !== "read") throw new Error("这个工具没有获得只读权限");
-      const connected = await connect(row.endpoint); const called = await mcpPost(row.endpoint, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: toolName, arguments: payload.arguments || {} } }, connected.sessionId);
+      const id = String(payload.server_id || ""), toolName = String(payload.tool_name || ""); const found = await rest(`mcp_servers_private?id=eq.${encodeURIComponent(id)}&select=endpoint,enabled,auth_header_name,auth_header_value,tools&limit=1`); const row = (await found.json())[0]; const tool = row?.tools?.find((item: any) => item.name === toolName);
+      if (!row?.enabled) throw new Error("这个 MCP 的独立开关尚未开启");
+      if (!tool || !tool.enabled || tool.permission !== "read") throw new Error("这个工具没有获得只读权限");
+      const connected = await connect(row.endpoint, row.auth_header_name, row.auth_header_value); const called = await mcpPost(row.endpoint, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: toolName, arguments: payload.arguments || {} } }, connected.sessionId, row.auth_header_name, row.auth_header_value);
       if (called.rpc.error) throw new Error(called.rpc.error.message || "MCP 工具执行失败"); await logCall(requestId, toolName, "success", startedAt); return response(req, { ok: true, result: called.rpc.result, request_id: requestId });
     }
     throw new Error("未知的 MCP 操作");
