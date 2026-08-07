@@ -8,6 +8,9 @@ const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const runtime = fs.readFileSync(path.join(root, "desire-runtime.js"), "utf8");
 const memory = fs.readFileSync(path.join(root, "memory.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/202608040001_desire_state_v1.sql"), "utf8");
+const mcpMigration = fs.readFileSync(path.join(root, "supabase/migrations/202608070001_mcp_gateway_v1.sql"), "utf8");
+const mcpClient = fs.readFileSync(path.join(root, "mcp-gateway.js"), "utf8");
+const mcpFunction = fs.readFileSync(path.join(root, "supabase/functions/leith-mcp-gateway-v1/index.ts"), "utf8");
 
 test("同一 message ID 由数据库唯一约束和重复检查保护", () => {
   assert.match(migration, /source_event_id text not null unique/i);
@@ -62,4 +65,15 @@ test("模块开关控制真实提示词注入而非只隐藏界面", () => {
   assert.match(app, /modules\.healthContext/);
   assert.match(runtime, /modules\.emotionInfluence/);
   assert.match(runtime, /modules\.desireAgency/);
+});
+
+test("MCP 网关默认关闭、只读并在前后端同时校验权限", () => {
+  assert.match(mcpMigration, /"enabled":false/);
+  assert.match(mcpMigration, /permission in \('read', 'write'\)/);
+  assert.match(mcpClient, /MCP 总开关尚未开启/);
+  assert.match(mcpClient, /permission !== "read"/);
+  assert.match(mcpFunction, /sessionValid\(token\)/);
+  assert.match(mcpFunction, /settings\.enabled !== true/);
+  assert.match(mcpFunction, /permission !== "read"/);
+  assert.doesNotMatch(mcpFunction, /input\?\.url|fetch\(payload/);
 });

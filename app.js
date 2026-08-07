@@ -53,7 +53,8 @@ const DEFAULT_MODULE_SETTINGS = Object.freeze({
   sharedCalendar: true,
   healthContext: true,
   imageUnderstanding: true,
-  webSearch: false
+  webSearch: false,
+  mcpGateway: false
 });
 
 function getLeithModuleSettings() {
@@ -7679,6 +7680,52 @@ function renderModuleSettings() {
     });
   });
   applyModuleAvailability();
+  renderMcpSettings();
+}
+
+function renderMcpSettings() {
+  if (!window.LeithMCP) return;
+  const settings = window.LeithMCP.getSettings();
+  const master = $("#mcpMasterToggle");
+  const statusTool = $("#mcpStatusToolToggle");
+  const testButton = $("#testMcpGatewayBtn");
+  if (!master || !statusTool || !testButton) return;
+  master.checked = settings.enabled;
+  statusTool.checked = settings.tools["system.status"].enabled;
+  statusTool.disabled = !settings.enabled;
+  testButton.disabled = !settings.enabled || !settings.tools["system.status"].enabled;
+}
+
+function initMcpSettings() {
+  const master = $("#mcpMasterToggle");
+  const statusTool = $("#mcpStatusToolToggle");
+  const testButton = $("#testMcpGatewayBtn");
+  const status = $("#mcpGatewayStatus");
+  if (!master || !statusTool || !testButton || !window.LeithMCP) return;
+  master.addEventListener("change", async () => {
+    const next = window.LeithMCP.getSettings();
+    next.enabled = master.checked;
+    await window.LeithMCP.saveSettings(next);
+    renderMcpSettings();
+    status.textContent = next.enabled ? "已开启；只有获得许可的工具可以连接。" : "已关闭；不会产生 MCP 调用。";
+  });
+  statusTool.addEventListener("change", async () => {
+    const next = window.LeithMCP.getSettings();
+    next.tools["system.status"].enabled = statusTool.checked;
+    await window.LeithMCP.saveSettings(next);
+    renderMcpSettings();
+  });
+  testButton.addEventListener("click", async () => {
+    testButton.disabled = true;
+    status.textContent = "正在检查安全连接…";
+    try {
+      const data = await window.LeithMCP.test();
+      status.textContent = data.result?.gateway === "ready" ? "连接正常 · 当前仅允许只读工具" : "已连接，但状态未知";
+    } catch (error) { status.textContent = `连接失败：${error.message}`; }
+    finally { renderMcpSettings(); }
+  });
+  window.addEventListener("leith:mcp-settings-changed", renderMcpSettings);
+  renderMcpSettings();
 }
 
 function applyModuleAvailability() {
@@ -7713,6 +7760,7 @@ initWidget();
 initMoodBoard();
 initReading();
 initAttachments();
+initMcpSettings();
 applyModuleAvailability();
 initHealthApp();
 initFoldedCalendarApp();

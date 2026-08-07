@@ -1699,6 +1699,13 @@
   .module-switch input:checked+span{background:var(--accent-dim);}
   .module-switch input:checked+span:after{transform:translateX(19px);background:var(--paper);}
   .module-token-note{max-width:680px;margin:0 auto 18px;padding:15px 16px;border-radius:17px;background:rgba(201,154,91,.07);color:var(--paper-dim);font-size:11px;line-height:1.7;}
+  .mcp-settings-card{max-width:680px;margin:16px auto 0;padding:18px;border:1px solid var(--line);border-radius:20px;background:var(--surface-glass);}
+  .mcp-settings-head{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:12px;}
+  .mcp-settings-head h4{margin:0;font-size:15px;font-weight:600;}
+  .mcp-settings-card p{margin:4px 0 14px;color:var(--paper-dim);font-size:11px;line-height:1.65;}
+  .mcp-tool-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:13px 0;border-top:1px solid var(--line-soft);}
+  .mcp-tool-row strong{display:block;font-size:13px;}.mcp-tool-row small{display:block;color:var(--paper-dim);font-size:10px;margin-top:3px;}
+  .mcp-status{min-height:18px;margin:12px 0 0!important;color:var(--paper-dim)!important;}
   @media(max-width:520px){
     .desire-card{padding:18px 17px;border-radius:21px;}
     .desire-bars{grid-template-columns:1fr;gap:8px;}
@@ -2273,6 +2280,18 @@
     <div class="app-body">
       <div class="module-token-note">关闭模块只有在停止向对话提示词注入内容时才会节省 token。桌面显示、Supabase 同步和本地情绪计算本身不消耗模型 token。核心人格、最近对话与安全底线始终保留。</div>
       <div class="module-list" id="moduleSettingsList"></div>
+      <section class="mcp-settings-card" aria-labelledby="mcpSettingsTitle">
+        <div class="mcp-settings-head">
+          <div><h4 id="mcpSettingsTitle">外部工具（MCP）</h4><p>Leith 只有在真正使用工具时才会连接。第一阶段只开放只读操作。</p></div>
+          <span class="module-switch"><input type="checkbox" id="mcpMasterToggle"><span></span></span>
+        </div>
+        <div class="mcp-tool-row">
+          <span><strong>连接状态检查</strong><small>只读取网关状态，不访问其他资料。</small></span>
+          <span class="module-switch"><input type="checkbox" id="mcpStatusToolToggle"><span></span></span>
+        </div>
+        <button class="btn btn-ghost btn-sm btn-block" id="testMcpGatewayBtn" style="margin-top:14px;">测试安全连接</button>
+        <p class="mcp-status" id="mcpGatewayStatus">尚未测试</p>
+      </section>
     </div>
   </div><!-- /app-modules -->
 
@@ -2608,6 +2627,7 @@
 <script src="wardrobe/catalog.js"></script>
 <script src="desire-engine.js"></script>
 <script src="desire-runtime.js"></script>
+<script src="mcp-gateway.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
