@@ -7561,7 +7561,7 @@ async function manualSaveReadingReply(content) {
 // Leith · 此刻（替代旧天气/每日小纸条；纯时间 + 只读状态观察）
 // ============================================================
 const DESIRE_LABELS = {
-  attachment: "想你", curiosity: "好奇", reflection: "沉思", duty: "责任",
+  attachment: "依恋", curiosity: "好奇", reflection: "沉思", duty: "责任",
   social: "社交", fatigue: "疲惫", libido: "性欲", stress: "压力"
 };
 const AFFECT_LABELS = { valence: "愉悦", arousal: "活跃", dominance: "掌控" };

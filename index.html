@@ -673,9 +673,21 @@
 
   /* ===== 应用桌面 ===== */
   .desktop-page{
+    --desk-bg:#111d31;--desk-bg-2:#172c48;--desk-text:#e8e5df;--desk-muted:#aeb5c1;
+    --desk-line:rgba(218,224,234,.14);--desk-glass:rgba(255,255,255,.055);--desk-accent:#d1bd76;
     flex:1;overflow-y:auto;padding:20px 16px 20px;
     display:flex;flex-direction:column;gap:16px;
+    color:var(--desk-text);
+    background:
+      radial-gradient(circle at 12% 8%,color-mix(in srgb,var(--desk-accent) 13%,transparent),transparent 29%),
+      linear-gradient(165deg,var(--desk-bg),var(--desk-bg-2));
+    transition:background .8s ease,color .8s ease;
   }
+  html[data-sky-phase="dawn"] .desktop-page{--desk-bg:#e9e4dc;--desk-bg-2:#cbd7df;--desk-text:#4e5966;--desk-muted:#747b83;--desk-line:rgba(78,89,102,.17);--desk-glass:rgba(255,255,255,.40);--desk-accent:#ce7767;}
+  html[data-sky-phase="noon"] .desktop-page{--desk-bg:#ece8dd;--desk-bg-2:#c9d9e5;--desk-text:#40536b;--desk-muted:#697783;--desk-line:rgba(64,83,107,.16);--desk-glass:rgba(255,255,255,.38);--desk-accent:#5879bd;}
+  html[data-sky-phase="sunset"] .desktop-page{--desk-bg:#514754;--desk-bg-2:#806063;--desk-text:#fff1e7;--desk-muted:#ddc6c3;--desk-line:rgba(255,225,208,.17);--desk-glass:rgba(255,255,255,.065);--desk-accent:#f09b74;}
+  html[data-sky-phase="evening"] .desktop-page{--desk-bg:#29303b;--desk-bg-2:#38465e;--desk-text:#f0e6d8;--desk-muted:#c1b9b3;--desk-line:rgba(240,230,216,.14);--desk-glass:rgba(255,255,255,.055);--desk-accent:#d4a24d;}
+  html[data-sky-phase="deepnight"] .desktop-page{--desk-bg:#0c1729;--desk-bg-2:#173657;--desk-text:#e8e5df;--desk-muted:#aeb5c1;--desk-line:rgba(218,224,234,.14);--desk-glass:rgba(255,255,255,.045);--desk-accent:#d1bd76;}
   .desktop-page::-webkit-scrollbar{width:3px;}
   .desktop-page::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
   .desktop-header{
@@ -684,16 +696,16 @@
   }
   .desktop-header h2{
     margin:0;font-family:var(--serif-display);font-style:italic;font-size:30px;font-weight:600;
-    color:var(--paper);letter-spacing:.5px;
-    background:linear-gradient(120deg,var(--paper) 30%,var(--accent-2) 95%);
+    color:var(--desk-text);letter-spacing:.5px;
+    background:linear-gradient(120deg,var(--desk-text) 30%,var(--desk-accent) 95%);
     -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   }
   .desktop-header p{
-    margin:8px 0 0;font-size:11px;color:var(--paper-dim);letter-spacing:2px;text-transform:uppercase;
+    margin:8px 0 0;font-size:11px;color:var(--desk-muted);letter-spacing:2px;text-transform:uppercase;
   }
   .desktop-header::after{
     content:'';display:block;width:34px;height:1px;margin:14px auto 0;
-    background:linear-gradient(90deg,transparent,var(--accent-dim),transparent);
+    background:linear-gradient(90deg,transparent,var(--desk-accent),transparent);
   }
 
   /* 小组件卡片（桌面顶部，苹果小组件风格：时间/天气/留言一次看全） */
@@ -771,6 +783,13 @@
     box-shadow:0 7px 18px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.12);
     transition:all .25s var(--ease-out);
   }
+  .desktop-page .app-icon-img{
+    color:var(--desk-accent)!important;
+    background:linear-gradient(145deg,color-mix(in srgb,var(--desk-glass) 90%,var(--desk-accent) 10%),color-mix(in srgb,var(--desk-bg-2) 82%,transparent))!important;
+    border-color:var(--desk-line);box-shadow:0 7px 18px rgba(0,0,0,.14),inset 0 1px rgba(255,255,255,.14);
+  }
+  .desktop-page .app-icon-label{color:var(--desk-muted);}
+  .desktop-page .app-icon:hover .app-icon-img{border-color:var(--desk-accent);box-shadow:0 10px 24px rgba(0,0,0,.22);}
   .app-icon-img svg{width:26px;height:26px;position:relative;z-index:1;}
   .app-icon-img::after{
     content:'';position:absolute;top:-30%;left:-10%;width:70%;height:70%;
@@ -1633,8 +1652,8 @@
   .memory-lock-error{min-height:20px;margin-top:9px;font-size:12px;color:var(--danger);}
   .memory-lock-btn{margin-top:4px;height:46px;border-radius:14px;}
   .desktop-lock-button{
-    margin-top:10px;border:1px solid var(--line);background:var(--surface-glass);
-    color:var(--paper-dim);border-radius:999px;padding:5px 11px;
+    margin-top:10px;border:1px solid var(--desk-line);background:var(--desk-glass);
+    color:var(--desk-muted);border-radius:999px;padding:5px 11px;
     font:500 11px var(--sans);cursor:pointer;
   }
   .desktop-lock-button:active{transform:scale(.97);}
@@ -1642,22 +1661,23 @@
   /* ===== Leith · 此刻：只读内部状态 ===== */
   .time-desire-widget{
     --widget-state-bg:#f4eee5;--widget-text:#4f4848;--widget-muted:#847978;--widget-line:rgba(79,72,72,.12);--widget-accent:#b4847d;--widget-accent-2:#d0a393;--widget-chip:rgba(255,255,255,.38);
-    width:min(100%,680px);margin:2px auto 28px;overflow:hidden;border-radius:28px;display:flex;flex-direction:column;
+    width:min(100%,680px);margin:2px auto 28px;overflow:hidden;border-radius:28px;display:flex;flex-direction:column;flex:0 0 auto;
     border:1px solid var(--widget-line);background:var(--widget-state-bg);
     box-shadow:0 18px 46px rgba(0,0,0,.18),inset 0 1px rgba(255,255,255,.04);
   }
   .desktop-time{
     text-align:center;font-family:var(--serif-display);
     font-size:clamp(42px,11vw,74px);font-weight:500;letter-spacing:.025em;color:var(--time-ink);
-    font-variant-numeric:tabular-nums;user-select:none;pointer-events:none;line-height:.92;
+    font-variant-numeric:tabular-nums;user-select:none;pointer-events:none;line-height:1.05;
     text-shadow:0 1px 18px var(--time-glow);position:relative;z-index:3;
   }
   .time-sky-panel{
     --time-paper:#eee9de;--time-ink:#3f4b55;--time-muted:#66747e;--time-accent:#d56c55;--time-shadow:#b8a892;--time-glow:rgba(255,255,255,.45);
-    width:100%;min-height:218px;margin:0;padding:28px 22px 17px;
+    width:100%;min-height:0;aspect-ratio:1360/749;margin:0;padding:28px 22px 17px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
     position:relative;isolation:isolate;overflow:hidden;border-radius:0;
     border:0;
-    background-color:var(--time-paper);background-size:cover;background-position:center;background-repeat:no-repeat;
+    background-color:var(--time-paper);background-size:100% 100%;background-position:center;background-repeat:no-repeat;
     box-shadow:inset 0 1px rgba(255,255,255,.16);
     transition:background .8s ease,border-color .8s ease,color .8s ease;cursor:pointer;color:inherit;font:inherit;text-align:initial;
   }
@@ -1689,7 +1709,7 @@
   html[data-sky-phase="deepnight"] .time-desire-widget{--widget-state-bg:#111d31;--widget-text:#e8e5df;--widget-muted:#aeb5c1;--widget-line:rgba(218,224,234,.12);--widget-accent:#d1bd76;--widget-accent-2:#667fa8;--widget-chip:rgba(255,255,255,.045);}
   @media(prefers-reduced-motion:reduce){.time-painter-scene{animation:none}}
   .desire-card{
-    display:block;width:100%;height:clamp(310px,44vh,390px);margin:0;padding:25px 25px 22px;
+    display:block;width:100%;height:clamp(390px,48vh,460px);margin:0;padding:27px 25px 24px;
     color:var(--widget-text);text-align:left;font:inherit;cursor:pointer;
     border:0;border-radius:0;
     background:
@@ -1763,13 +1783,15 @@
   .mcp-tool-permission strong{font-size:11px}.mcp-tool-permission small{display:block;color:var(--paper-dim);font-size:9px;margin-top:2px;line-height:1.45;}
   @media(max-width:620px){.mcp-add-form{grid-template-columns:1fr}.mcp-add-form button{width:100%;}}
   @media(max-width:520px){
-    .time-desire-widget{height:clamp(390px,52vh,440px);border-radius:23px}
-    .time-sky-panel{flex:0 0 132px;min-height:132px;padding:18px 18px 10px;background-position:center 58%}
-    .desktop-time{font-size:48px}.time-sky-meta{margin-top:7px}
+    .desktop-page{padding-left:10px;padding-right:10px;gap:12px}
+    .time-desire-widget{height:auto;width:100%;border-radius:23px;margin-bottom:22px}
+    .time-sky-panel{flex:none;min-height:0;aspect-ratio:1360/749;padding:18px 18px 12px;background-size:100% 100%;background-position:center}
+    .desktop-time{font-size:clamp(48px,16vw,66px);line-height:1.05}.time-sky-meta{margin-top:7px}
     .time-preview-strip{flex:0 0 42px;justify-content:flex-start;flex-wrap:nowrap;overflow-x:auto;padding:7px 12px;scrollbar-width:none}
     .time-preview-strip::-webkit-scrollbar{display:none}.time-preview-btn{flex:0 0 auto}
-    .desire-card{flex:1 1 auto;min-height:0;height:auto;padding:20px 18px 22px;}
-    .desire-bars{grid-template-columns:1fr;gap:8px;}
+    .desire-card{flex:none;min-height:0;height:380px;padding:22px 18px 24px;}
+    .desire-bars{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 10px;}
+    .desire-bar-row{grid-template-columns:28px minmax(0,1fr) 22px;gap:5px;font-size:10px;}
     .desire-card-emotion{font-size:15px;}
     .desire-detail-hero,.desire-detail-section{padding:18px;}
     .emotion-radar-wrap{grid-template-columns:1fr;}
