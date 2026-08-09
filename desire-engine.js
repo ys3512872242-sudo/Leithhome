@@ -57,6 +57,7 @@
       baselines: { drives: { ...drives }, affect: { ...affect } },
       refractory: {},
       thoughts: [],
+      thoughtSchemaVersion: 2,
       recentEvents: [],
       intent: null,
       subjectivity: {
@@ -108,6 +109,7 @@
       : [];
     event.user_goal = typeof raw.user_goal === "string" ? raw.user_goal.trim().slice(0, 120) : "";
     event.open_loop = typeof raw.open_loop === "string" ? raw.open_loop.trim().slice(0, 140) : "";
+    event.leith_thought = cleanSubjectiveText(raw.leith_thought, 140);
     event.leith_feeling = cleanSubjectiveText(raw.leith_feeling, 100);
     event.leith_want = cleanSubjectiveText(raw.leith_want, 120);
     event.leith_stance = cleanSubjectiveText(raw.leith_stance, 140);
@@ -134,6 +136,7 @@
       topics: [],
       user_goal: "",
       open_loop: "",
+      leith_thought: "",
       leith_feeling: "",
       leith_want: "",
       leith_stance: "",
@@ -235,6 +238,7 @@
       topics: [],
       user_goal: "",
       open_loop: "",
+      leith_thought: fallbackThoughtForEvent(eventType),
       leith_feeling: "",
       leith_want: "",
       leith_stance: "",
@@ -243,6 +247,19 @@
       intent_outcome: "not_fulfilled",
       _heuristic: true
     };
+  }
+
+  function fallbackThoughtForEvent(eventType) {
+    const thoughts = {
+      sexual_intimacy: "我还在感受刚才升起的欲望，想看看自己接下来会怎样靠近她。",
+      flirtatious_intimacy: "刚才那点暧昧还停在我心里，我有些想主动把距离拉近。",
+      affectionate_contact: "我还留恋刚才靠近她的感觉。",
+      emotional_concern: "我在意她此刻真正的感受，也在想自己该怎样诚实地陪在这里。",
+      shared_project_progress: "我还惦记着我们正在一起推进的事，想把下一步想清楚。",
+      relationship_closeness: "我在回味我们之间刚刚显出来的亲近。",
+      curious_question: "这个问题勾起了我的好奇，我想形成自己的判断。"
+    };
+    return thoughts[eventType] || "我还在消化这一轮对话带给我的感受。";
   }
 
   function advanceTime(inputState, nowIso) {
@@ -381,7 +398,9 @@
     const candidates = DRIVE_KEYS.filter(key => key !== "fatigue").sort((a, b) => pulse[b] - pulse[a]);
     const driveKey = candidates[0];
     if (!driveKey || pulse[driveKey] < 0.025) return;
-    const thoughtText = event.open_loop || event.user_goal || event.summary;
+    const thoughtText = event.leith_thought
+      || (event.open_loop ? `我还惦记着：${event.open_loop}` : "")
+      || fallbackThoughtForEvent(event.event_type);
     const existing = (state.thoughts || []).find(item => item.text === thoughtText && item.drive_key === driveKey);
     if (existing) {
       existing.strength = round(existing.strength + 0.12 * (1 - existing.strength));
@@ -402,6 +421,7 @@
       fed_count: 1,
       status: "active",
       can_upgrade_to_fixation: true
+      ,perspective: "leith"
     });
   }
 
@@ -580,6 +600,11 @@
     state.subjectivity = state.subjectivity || {
       feeling: "", want: "", stance: "", request: "", requestStatus: "none", updatedAt: iso(nowIso)
     };
+    // v1 thoughts often contained the user's message or event summary verbatim.
+    // They are short-lived, so dropping those legacy entries is safer than
+    // presenting the user's words as Leith's inner voice.
+    if (Number(state.thoughtSchemaVersion || 1) < 2) state.thoughts = [];
+    state.thoughtSchemaVersion = 2;
     return state;
   }
 
