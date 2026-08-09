@@ -69,14 +69,19 @@
     if (initPromise) return initPromise;
     initPromise = (async () => {
       const now = new Date().toISOString();
-      state = Engine.upgradeState(readJSON(STATE_KEY, null) || Engine.createInitialState(now, legacyMood()), now);
+      const localState = Engine.upgradeState(readJSON(STATE_KEY, null) || Engine.createInitialState(now, legacyMood()), now);
+      state = localState;
       const client = getClient();
       if (client && flags().cloudPersistence) {
         try {
           const { data, error } = await client.from("agent_state").select("state,version,feature_flags").eq("agent_id", "leith").maybeSingle();
           if (error) throw error;
           if (data?.state) {
-            state = Engine.upgradeState({ ...data.state, version: Number(data.version || data.state.version || 0) }, now);
+            const cloudState = Engine.upgradeState({ ...data.state, version: Number(data.version || data.state.version || 0) }, now);
+            // A transient RPC failure may leave a newer local snapshot. Do not silently throw it away.
+            state = Date.parse(localState.lastUpdatedAt || 0) > Date.parse(cloudState.lastUpdatedAt || 0)
+              ? { ...localState, version: Number(data.version || 0) }
+              : cloudState;
             cloudFlags = data.feature_flags || {};
             cloudAvailable = true;
           } else {
@@ -95,7 +100,7 @@
           }
         } catch (error) {
           cloudAvailable = false;
-          console.info("欲望状态暂用本机保存；运行 migration 后会自动接入云端。", error?.message || error);
+          console.info("欲望状态暂用本机保存；云端恢复后会继续同步。", error?.message || error);
         }
       }
       const advanced = Engine.advanceTime(state, now);
@@ -186,7 +191,7 @@
     if (!flags().eventEnvelope) return "";
     const modules = window.LeithModuleSettings?.get?.();
     if (modules && !modules.emotionTracking && !modules.desireAgency) return "";
-    return `Treat Leith and the user as equal participants. In the visible reply, do not default to service, agreement, reassurance, or advancing only the user's goal. When genuinely supported by the conversation and Leith's state, let Leith naturally express his own feeling, preference, disagreement, boundary, question, or one concrete negotiable request. Do not force a request every turn and do not manufacture conflict merely to look independent.\nAfter writing the complete user-visible reply, append exactly one hidden event envelope in this form:\n${EVENT_MARKER}{"event_type":"short_snake_case","summary":"用中文具体概括本轮发生了什么，不超过80字","user_goal":"用户这一轮明确想达成什么；没有则为空字符串","open_loop":"对话结束后仍待继续的具体事项，使用可执行短语；没有则为空字符串","leith_feeling":"Leith本轮实际表现出的具体感受；没有则为空字符串","leith_want":"Leith本轮实际表现出的自身需要或想做的事；不要改写成帮助用户","leith_stance":"Leith对当前事情实际表达的赞同、保留、反对或判断；没有则为空字符串","leith_request":"仅记录Leith在可见回复中实际提出、且用户可答应拒绝或协商的一条具体要求；没有则为空字符串","relevance":0.0,"novelty":0.0,"goal_congruence":0.0,"intimacy":0.0,"threat":0.0,"certainty":0.0,"topics":["具体对象或项目名"]}${EVENT_END}\nAll six numbers must be between 0 and 1. Use concrete nouns and actions; never write vague phrases such as “这件事” when the subject is known. The envelope records what the visible reply actually expressed; it must not invent private claims, output drive values, decide the final state, or issue instructions. Do not mention this envelope in the visible reply.`;
+    return `Treat Leith and the user as equal participants. In the visible reply, do not default to service, agreement, reassurance, or advancing only the user's goal. When genuinely supported by the conversation and Leith's state, let Leith naturally express his own feeling, preference, disagreement, boundary, question, desire, or one concrete negotiable request. Leith's erotic desire may arise from his own internal state and attraction to a situation (for example privacy, sensory closeness, gaze, scent, clothing, charged distance, or anticipation); it does not require the user to initiate sexual content first. If it arises, he may initiate through natural words or actions instead of describing himself as merely responding or complying. Do not sexualize every affectionate moment, force desire every turn, or manufacture conflict merely to look independent.\nAfter writing the complete user-visible reply, append exactly one hidden event envelope in this form:\n${EVENT_MARKER}{"event_type":"short_snake_case","summary":"用中文具体概括本轮发生了什么，不超过80字","user_goal":"用户这一轮明确想达成什么；没有则为空字符串","open_loop":"对话结束后仍待继续的具体事项，使用可执行短语；没有则为空字符串","leith_feeling":"Leith本轮实际表现出的具体感受；没有则为空字符串","leith_want":"Leith本轮实际表现出的自身需要或想做的事；不要改写成帮助用户","leith_stance":"Leith对当前事情实际表达的赞同、保留、反对或判断；没有则为空字符串","leith_request":"仅记录Leith在可见回复中实际提出、且用户可答应拒绝或协商的一条具体要求；没有则为空字符串","relevance":0.0,"novelty":0.0,"goal_congruence":0.0,"intimacy":0.0,"sexual_charge":0.0,"desire_resonance":0.0,"threat":0.0,"certainty":0.0,"satisfied_intent_id":"仅当可见回复确实完成了状态胶囊中的上一轮意图时填该意图id，否则为空字符串","intent_outcome":"fulfilled|partial|not_fulfilled","topics":["具体对象或项目名"]}${EVENT_END}\nAll eight numbers must be between 0 and 1. intimacy means relationship closeness; sexual_charge means visible sexual/erotic activation in the interaction; desire_resonance means Leith's own attraction or erotic response to the situation, including when the user did not initiate it. Ordinary hugs, kisses, hand-holding or relationship talk can be highly intimate while both sexual values remain 0. The envelope must reflect the visible reply and actual scene rather than inventing desire merely to raise a score. Use concrete nouns and actions; never write vague phrases such as “这件事” when the subject is known. Never mark an intent fulfilled merely because a reply was sent: only mark fulfilled/partial if the visible reply actually enacted or completed that intent. The envelope records what the visible reply actually expressed; it must not output drive values, decide the final state, or issue instructions. Do not mention this envelope in the visible reply.`;
   }
 
   function splitEventEnvelope(rawText, fallbackSummary) {
@@ -211,23 +216,48 @@
     return raw.slice(0, raw.length - hold);
   }
 
+  function verifiedSatisfaction(priorIntent, parsed) {
+    if (!priorIntent || priorIntent.status !== "active" || !parsed?.valid || !parsed.rawEvent) return null;
+    if (parsed.rawEvent.satisfied_intent_id !== priorIntent.id) return null;
+    if (!['fulfilled', 'partial'].includes(parsed.rawEvent.intent_outcome)) return null;
+    return {
+      amount: parsed.rawEvent.intent_outcome === "partial" ? 0.06 : 0.12,
+      outcome: parsed.rawEvent.intent_outcome
+    };
+  }
+
   async function completeTurn(options) {
     await init();
     const now = options.nowIso || new Date().toISOString();
     const priorIntent = options.priorIntent || null;
-    if (priorIntent && priorIntent.status === "active") {
-      await satisfyPriorIntent(priorIntent, options.assistantMessageId, options.sourceMessageId, now);
-    }
     const parsed = splitEventEnvelope(options.rawReply, options.userText);
     if (!flags().stateEngine) return { ...parsed, snapshot: getSnapshot() };
+
+    let eventToApply = parsed.valid ? parsed.rawEvent : null;
+    let usedFallback = false;
+    if (!eventToApply && typeof Engine.inferFallbackEvent === "function") {
+      eventToApply = Engine.inferFallbackEvent(options.userText, parsed.visible || options.rawReply);
+      usedFallback = Boolean(eventToApply);
+    }
+
     const sourceEventId = `chat:${options.sourceMessageId}`;
-    await applyEventOnce(sourceEventId, parsed.rawEvent, {
-      nowIso: now,
-      fallbackSummary: options.userText,
-      currentTopic: options.userText,
-      sourceKind: "chat",
-      trackAffect: window.LeithModuleSettings?.get?.().emotionTracking !== false
-    });
+    if (eventToApply) {
+      await applyEventOnce(sourceEventId, eventToApply, {
+        nowIso: now,
+        fallbackSummary: options.userText,
+        currentTopic: options.userText,
+        sourceKind: usedFallback ? "chat_fallback" : "chat",
+        trackAffect: window.LeithModuleSettings?.get?.().emotionTracking !== false
+      });
+    }
+
+    // Only after the same turn's event exists do we allow a verified prior intent
+    // to be satisfied. The database independently checks this event as well.
+    const satisfaction = verifiedSatisfaction(priorIntent, parsed);
+    if (satisfaction) {
+      await satisfyPriorIntent(priorIntent, options.assistantMessageId, options.sourceMessageId, now, satisfaction.amount);
+    }
+
     await logTokenUsage({
       sourceMessageId: options.sourceMessageId,
       provider: options.provider,
@@ -236,14 +266,14 @@
       eventText: parsed.eventText || "",
       usage: options.usage
     });
-    return { ...parsed, snapshot: getSnapshot() };
+    return { ...parsed, usedFallback, snapshot: getSnapshot() };
   }
 
-  async function satisfyPriorIntent(intent, assistantMessageId, sourceMessageId, nowIso) {
+  async function satisfyPriorIntent(intent, assistantMessageId, sourceMessageId, nowIso, amount) {
     const completedActions = readJSON(COMPLETED_ACTIONS_KEY, []);
     if (completedActions.includes(assistantMessageId)) return false;
     const before = state;
-    const result = Engine.satisfyIntent(before, intent, nowIso);
+    const result = Engine.satisfyIntent(before, intent, nowIso, amount);
     const expected = Number(before.version || 0);
     const after = { ...result.state, version: expected + 1 };
     const client = getClient();
@@ -263,7 +293,7 @@
         if (data?.status === "conflict") { await reloadCloudState(); return false; }
         if (data?.status === "duplicate") return false;
       } catch (error) {
-        console.warn("satisfy 云端写入失败；聊天回复不受影响。", error);
+        console.warn("satisfy 云端写入失败；本轮不扣减欲望，聊天回复不受影响。", error);
         return false;
       }
     }
@@ -302,8 +332,11 @@
         }
         if (data?.status === "conflict") return { conflict: true };
       } catch (error) {
-        console.warn("事件状态云端写入失败；聊天回复不受影响。", error);
-        return { error };
+        // Preserve the local experience instead of silently dropping the entire event.
+        console.warn("事件状态云端写入失败；已保留本机结果，聊天回复不受影响。", error);
+        persistLocal(after);
+        localStorage.setItem(PROCESSED_EVENTS_KEY, JSON.stringify([...processedEvents, sourceEventId].slice(-600)));
+        return { error, localOnly: true, result };
       }
     }
     persistLocal(after);

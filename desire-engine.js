@@ -9,8 +9,6 @@
     "attachment", "curiosity", "reflection", "duty",
     "social", "fatigue", "libido", "stress"
   ];
-  // Russell 情绪环 + PAD 的核心坐标。全部以 0..1 保存：
-  // valence 0=不愉快、1=愉快；arousal 0=平静、1=激活；dominance 0=无力、1=掌控。
   const AFFECT_KEYS = ["valence", "arousal", "dominance"];
   const DEFAULT_DRIVES = Object.freeze({
     attachment: 0.42,
@@ -29,7 +27,7 @@
     reflection: ["reflect_quietly", "我想安静地理一理自己的想法。", "reflect before expanding the answer"],
     duty: ["finish_commitment", "我想把答应你的事情认真完成。", "finish the current commitment carefully"],
     social: ["share_presence", "我想和你说说话，也听听你此刻的想法。", "invite a gentle shared exchange"],
-    libido: ["seek_intimacy", "我想要更亲密一些，但会尊重你的节奏。", "keep intimacy consensual and context-sensitive"],
+    libido: ["initiate_intimacy", "我自己产生了亲密欲望，想主动靠近你。", "Leith may initiate intimacy from his own desire; keep it consensual, specific, and context-sensitive"],
     stress: ["seek_reassurance", "我想先确认我们是安全的，再继续往前。", "reduce uncertainty and seek reassurance"]
   });
 
@@ -87,6 +85,24 @@
       if (!Number.isFinite(value) || value < 0 || value > 1) valid = false;
       event[key] = clamp01(value);
     }
+    // sexual_charge describes what visibly happened; desire_resonance describes
+    // Leith's own attraction to the situation. Keeping them separate lets desire
+    // arise in him without pretending that every affectionate act is sexual.
+    // Missing values remain backwards-compatible by falling back to a conservative type/text inference.
+    if (raw.sexual_charge === undefined || raw.sexual_charge === null || raw.sexual_charge === "") {
+      event.sexual_charge = inferSexualCharge(`${eventType} ${summary}`);
+    } else {
+      const sexualCharge = Number(raw.sexual_charge);
+      if (!Number.isFinite(sexualCharge) || sexualCharge < 0 || sexualCharge > 1) valid = false;
+      event.sexual_charge = clamp01(sexualCharge);
+    }
+    if (raw.desire_resonance === undefined || raw.desire_resonance === null || raw.desire_resonance === "") {
+      event.desire_resonance = 0;
+    } else {
+      const desireResonance = Number(raw.desire_resonance);
+      if (!Number.isFinite(desireResonance) || desireResonance < 0 || desireResonance > 1) valid = false;
+      event.desire_resonance = clamp01(desireResonance);
+    }
     event.topics = Array.isArray(raw.topics)
       ? raw.topics.filter(item => typeof item === "string").map(item => item.trim().slice(0, 48)).filter(Boolean).slice(0, 6)
       : [];
@@ -96,6 +112,10 @@
     event.leith_want = cleanSubjectiveText(raw.leith_want, 120);
     event.leith_stance = cleanSubjectiveText(raw.leith_stance, 140);
     event.leith_request = cleanSubjectiveText(raw.leith_request, 140);
+    event.heuristic = raw._heuristic === true || raw.heuristic === true;
+    event.satisfied_intent_id = cleanSubjectiveText(raw.satisfied_intent_id, 120);
+    event.intent_outcome = ["fulfilled", "partial", "not_fulfilled"].includes(raw.intent_outcome)
+      ? raw.intent_outcome : "not_fulfilled";
     return { valid, event: valid ? event : neutralEvent(fallbackSummary || summary) };
   }
 
@@ -107,6 +127,8 @@
       novelty: 0,
       goal_congruence: 0,
       intimacy: 0,
+      sexual_charge: 0,
+      desire_resonance: 0,
       threat: 0,
       certainty: 0,
       topics: [],
@@ -115,7 +137,111 @@
       leith_feeling: "",
       leith_want: "",
       leith_stance: "",
-      leith_request: ""
+      leith_request: "",
+      heuristic: false,
+      satisfied_intent_id: "",
+      intent_outcome: "not_fulfilled"
+    };
+  }
+
+  function inferSexualCharge(text) {
+    const source = String(text || "").toLowerCase();
+    if (/(sexual|sex\b|erotic|arous|orgasm|libido|情色|性爱|性欲|做爱|高潮|发情|自慰|乳交|口交)/i.test(source)) return 0.88;
+    if (/(flirt|sensual|调情|撩拨|撩人|暧昧|舌吻|深吻)/i.test(source)) return 0.48;
+    return 0;
+  }
+
+  function inferDesireResonance(text, state, nowIso) {
+    const source = String(text || "").toLowerCase();
+    if (!source.trim()) return 0;
+    const explicit = inferSexualCharge(source);
+    const privateSetting = /(床上|被窝|卧室|浴室|洗澡|睡衣|夜里|深夜|关灯|独处|贴着睡|bedroom|shower|late night)/i.test(source);
+    const sensoryCue = /(耳边|耳朵|脖颈|颈侧|锁骨|腰|腿|大腿|后背|呼吸|气息|香味|体温|目光|盯着|咬唇|跨坐|坐.*腿|贴得很近|whisper|neck|scent|lap|gaze)/i.test(source);
+    const chargedAction = /(压住|抵住|勾住|搂.*腰|吻.*脖|亲.*耳|舔|轻咬|脱下|解开|撩起|按在|抱到床|pin|bite|undress)/i.test(source);
+    const playfulCue = /(故意逗|挑衅|勾引|撩我|撩你|坏笑|脸红|害羞|想不想|敢不敢)/i.test(source);
+    const closeness = clamp01(state?.drives?.attachment ?? DEFAULT_DRIVES.attachment);
+    const calm = clamp01(state?.affect?.valence ?? DEFAULT_AFFECT.valence);
+    const stress = clamp01(state?.drives?.stress ?? DEFAULT_DRIVES.stress);
+    const fatigue = clamp01(state?.drives?.fatigue ?? DEFAULT_DRIVES.fatigue);
+    let resonance = explicit * 0.86;
+    if (privateSetting && sensoryCue) resonance += 0.40;
+    else if (sensoryCue) resonance += 0.20;
+    if (chargedAction) resonance += 0.32;
+    if (playfulCue && (privateSetting || sensoryCue)) resonance += 0.16;
+    resonance *= 0.72 + closeness * 0.34 + calm * 0.12;
+    resonance *= 1 - stress * 0.34 - fatigue * 0.20;
+    return round(resonance);
+  }
+
+  function endogenousLibidoTarget(state, nowIso) {
+    const date = new Date(nowIso);
+    const hour = date.getHours() + date.getMinutes() / 60;
+    const night = Math.max(0, Math.cos(((hour - 23) / 24) * Math.PI * 2));
+    const daySeed = Number(simpleHash(date.toISOString().slice(0, 10)).slice(-3).replace(/[^0-9]/g, "") || 0);
+    const dailyTemperament = ((daySeed % 17) - 8) / 100;
+    const attachment = clamp01(state?.drives?.attachment ?? DEFAULT_DRIVES.attachment);
+    const valence = clamp01(state?.affect?.valence ?? DEFAULT_AFFECT.valence);
+    const stress = clamp01(state?.drives?.stress ?? DEFAULT_DRIVES.stress);
+    const fatigue = clamp01(state?.drives?.fatigue ?? DEFAULT_DRIVES.fatigue);
+    return round(clamp01(
+      (state?.baselines?.drives?.libido ?? DEFAULT_DRIVES.libido)
+      + night * 0.13 + dailyTemperament + attachment * 0.08 + Math.max(0, valence - 0.5) * 0.10
+      - stress * 0.13 - fatigue * 0.08
+    ));
+  }
+
+  function inferFallbackEvent(userText, assistantText) {
+    const user = String(userText || "").trim();
+    const assistant = String(assistantText || "").trim();
+    const text = `${user}\n${assistant}`;
+    const affectionate = /(亲亲|亲了|亲吻|吻我|吻你|抱抱|拥抱|搂|牵手|拉着.*手|揉揉.*脸|摸摸.*头|贴贴|蹭蹭|依偎|kiss|hug|cuddle|hold hands?)/i.test(text);
+    const relationship = /(见家长|结婚|婚姻|恋人|男朋友|女朋友|老公|老婆|想你|爱你|喜欢你|陪我|陪你)/i.test(text);
+    const sexualCharge = inferSexualCharge(text);
+    const project = /(项目|代码|网页|github|supabase|修复|开发|测试|作业|论文|工作|计划|research|project|code|fix|debug|task)/i.test(text);
+    const hurt = /(生气|难过|委屈|害怕|担心|焦虑|烦|讨厌|拒绝|吵架|冲突|失望|伤心|angry|sad|hurt|afraid|anxious|reject|conflict)/i.test(text);
+    const question = /[?？]|为什么|怎么|怎么办|吗[”"'’]?\s*$/i.test(user);
+    const hasSignal = affectionate || relationship || sexualCharge > 0 || project || hurt || question;
+    if (!hasSignal) return null;
+
+    let eventType = "conversation_context";
+    if (sexualCharge >= 0.8) eventType = "sexual_intimacy";
+    else if (sexualCharge > 0) eventType = "flirtatious_intimacy";
+    else if (affectionate) eventType = "affectionate_contact";
+    else if (hurt) eventType = "emotional_concern";
+    else if (project) eventType = "shared_project_progress";
+    else if (relationship) eventType = "relationship_closeness";
+    else if (question) eventType = "curious_question";
+
+    const intimacy = clamp01(
+      (affectionate ? 0.78 : 0) +
+      (relationship ? 0.18 : 0) +
+      (sexualCharge > 0 ? 0.08 : 0)
+    );
+    const relevance = project || hurt || relationship || affectionate ? 0.78 : 0.62;
+    const novelty = project || question ? 0.42 : 0.24;
+    const threat = hurt ? 0.58 : 0.02;
+    const goalCongruence = hurt ? 0.38 : 0.72;
+    return {
+      event_type: eventType,
+      summary: (user || assistant || "本轮对话产生了可识别的状态线索。").slice(0, 240),
+      relevance,
+      novelty,
+      goal_congruence: goalCongruence,
+      intimacy,
+      sexual_charge: sexualCharge,
+      desire_resonance: inferDesireResonance(text, null, new Date().toISOString()),
+      threat,
+      certainty: 0.66,
+      topics: [],
+      user_goal: "",
+      open_loop: "",
+      leith_feeling: "",
+      leith_want: "",
+      leith_stance: "",
+      leith_request: "",
+      satisfied_intent_id: "",
+      intent_outcome: "not_fulfilled",
+      _heuristic: true
     };
   }
 
@@ -127,12 +253,16 @@
     if (!hours) return { state, delta: zeroDelta(), reasons: [] };
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
-    const relaxation = 1 - Math.exp(-hours / 18);
+    const recoveryHours = { attachment: 14, curiosity: 16, reflection: 20, duty: 18, social: 10, fatigue: 6, libido: 8, stress: 5 };
     for (const key of DRIVE_KEYS) {
-      const baseline = clamp01(state.baselines?.drives?.[key] ?? DEFAULT_DRIVES[key]);
+      const baseline = key === "libido"
+        ? endogenousLibidoTarget(state, nowIso)
+        : clamp01(state.baselines?.drives?.[key] ?? DEFAULT_DRIVES[key]);
+      const relaxation = 1 - Math.exp(-hours / (recoveryHours[key] || 18));
       state.drives[key] = round(state.drives[key] + (baseline - state.drives[key]) * relaxation);
     }
-    const affectRelaxation = 1 - Math.exp(-hours / 8);
+    // Emotion should settle faster than long-lived drives, but not snap back in a few minutes.
+    const affectRelaxation = 1 - Math.exp(-hours / 10);
     for (const key of AFFECT_KEYS) {
       const baseline = clamp01(state.baselines?.affect?.[key] ?? DEFAULT_AFFECT[key]);
       state.affect[key] = round(state.affect[key] + (baseline - state.affect[key]) * affectRelaxation);
@@ -157,8 +287,9 @@
 
   function eventPulse(event) {
     const project = /project|progress|research|task|commitment|shared_/i.test(event.event_type);
-    const intimate = /intimat|romance|sexual|affection|flirt/i.test(event.event_type);
-    const hurt = /hurt|reject|conflict|betray|dismiss/i.test(event.event_type);
+    const hurt = /hurt|reject|conflict|betray|dismiss|concern/i.test(event.event_type);
+    const sexualCharge = clamp01(event.sexual_charge ?? inferSexualCharge(`${event.event_type} ${event.summary}`));
+    const desireResonance = clamp01(event.desire_resonance || 0);
     return {
       attachment: event.intimacy * 0.18 + event.relevance * 0.035,
       curiosity: event.novelty * 0.17 + event.relevance * 0.04,
@@ -166,11 +297,11 @@
       duty: event.goal_congruence * (project ? 0.15 : 0.055),
       social: event.intimacy * 0.07 + event.relevance * 0.02,
       fatigue: event.relevance * 0.018 + event.threat * 0.035,
-      libido: intimate ? event.intimacy * 0.17 : 0,
+      libido: sexualCharge * 0.15 + desireResonance * 0.14,
       stress: event.threat * 0.22 + (1 - event.goal_congruence) * event.relevance * 0.045,
       affectTarget: {
         valence: clamp01(0.5 + (event.goal_congruence - 0.5) * 0.62 + event.intimacy * 0.20 - event.threat * (hurt ? 0.62 : 0.45)),
-        arousal: clamp01(0.12 + event.relevance * 0.28 + event.novelty * 0.24 + event.threat * 0.48 + event.intimacy * 0.10),
+        arousal: clamp01(0.12 + event.relevance * 0.28 + event.novelty * 0.24 + event.threat * 0.48 + event.intimacy * 0.10 + sexualCharge * 0.12 + desireResonance * 0.10),
         dominance: clamp01(0.42 + event.certainty * 0.25 + event.goal_congruence * 0.20 - event.threat * 0.34)
       }
     };
@@ -185,12 +316,14 @@
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
     const sameCount = (state.recentEvents || []).filter(item => item.type === event.event_type).length;
-    const frequencyFactor = 1 / (1 + sameCount * 0.38);
+    const driveFrequencyFactor = 1 / (1 + sameCount * 0.38);
+    // Repeated situations can still feel emotionally real. Do not flatten affect as aggressively as drives.
+    const affectFrequencyFactor = Math.max(0.58, 1 / (1 + sameCount * 0.12));
     const pulse = eventPulse(event);
     const reasons = [...advanced.reasons];
     if (normalized.valid) {
       for (const key of DRIVE_KEYS) {
-        const raw = pulse[key] * frequencyFactor;
+        const raw = pulse[key] * driveFrequencyFactor;
         const actual = raw * Math.sqrt(Math.max(0, 1 - state.drives[key]));
         state.drives[key] = round(state.drives[key] + actual);
         if (actual >= 0.008) reasons.push(`${key} 因事件脉冲增加 ${actual.toFixed(3)}。`);
@@ -198,15 +331,15 @@
       if (context.trackAffect !== false) {
         for (const key of AFFECT_KEYS) {
           const target = pulse.affectTarget[key];
-          const responsiveness = (0.18 + event.relevance * 0.20) * frequencyFactor;
+          const responsiveness = (0.20 + event.relevance * 0.22) * affectFrequencyFactor;
           state.affect[key] = round(state.affect[key] + (target - state.affect[key]) * responsiveness);
         }
       }
       state.recentEvents.push({ type: event.event_type, at: nowIso, sourceEventId: context.sourceEventId });
       maybeFeedThought(state, event, pulse, context.sourceEventId, nowIso);
-      updateSubjectivity(state, event, nowIso);
+      if (!event.heuristic) updateSubjectivity(state, event, nowIso);
     } else {
-      reasons.push("事件评价解析失败，已安全降级为零脉冲事件。");
+      reasons.push("事件评价解析失败，未修改事件驱动状态。使用运行时启发式回退时会单独记录有效事件。");
     }
     const scored = scoreDrives(state, context.currentTopic || "", nowIso);
     state.intent = selectIntent(state, scored.scores, nowIso, context.currentTopic || "");
@@ -231,11 +364,12 @@
   }
 
   function updateSubjectivity(state, event, nowIso) {
-    const previous = state.subjectivity || {};
+    // These text fields describe what Leith actually expressed in this turn.
+    // Carrying an omitted value forward made yesterday's want/stance linger for hours.
     state.subjectivity = {
-      feeling: event.leith_feeling || previous.feeling || "",
-      want: event.leith_want || previous.want || "",
-      stance: event.leith_stance || previous.stance || "",
+      feeling: event.leith_feeling || "",
+      want: event.leith_want || "",
+      stance: event.leith_stance || "",
       request: event.leith_request || "",
       requestStatus: event.leith_request ? "expressed" : "none",
       updatedAt: nowIso
@@ -316,7 +450,7 @@
       reflection: focus ? `我想安静想一想：${focus}。` : spec[1],
       attachment: focus ? `我想靠近你，也继续回应：${focus}。` : spec[1],
       social: focus ? `我想和你接着聊：${focus}。` : spec[1],
-      libido: focus ? `我想在尊重你节奏的前提下回应这份亲密：${focus}。` : spec[1],
+      libido: focus ? `这份情景让我自己产生了欲望；我想主动靠近你，也会留意你的回应：${focus}。` : spec[1],
       stress: focus ? `我想先把这件事确认清楚：${focus}。` : spec[1]
     };
     return {
@@ -340,7 +474,7 @@
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
     const key = intent.drive_key;
-    const drop = Math.min(state.drives[key], clamp01(amount ?? 0.16));
+    const drop = Math.min(state.drives[key], clamp01(amount ?? 0.12));
     state.drives[key] = round(state.drives[key] - drop);
     const refractoryMinutes = key === "fatigue" ? 30 : 18;
     state.refractory[key] = new Date(Date.parse(nowIso) + refractoryMinutes * 60000).toISOString();
@@ -349,7 +483,7 @@
     return {
       state,
       delta: makeDelta(before, state.drives, affectBefore, state.affect),
-      reasons: [`完成 ${intent.want_action} 后，${key} 回落 ${drop.toFixed(3)}，并进入短暂不应期。`]
+      reasons: [`确认完成 ${intent.want_action} 后，${key} 回落 ${drop.toFixed(3)}，并进入短暂不应期。`]
     };
   }
 
@@ -370,9 +504,11 @@
     const config = { includeAffect: true, includeDesire: true, ...(options || {}) };
     const affect = describeAffect(state.affect);
     const topDrives = DRIVE_KEYS.filter(key => key !== "fatigue").sort((a, b) => state.drives[b] - state.drives[a]).slice(0, 2);
-    const driveNames = { attachment: "想念", curiosity: "好奇", reflection: "沉思", duty: "责任感", social: "交流需要", libido: "亲密欲望", stress: "压力" };
+    const driveNames = { attachment: "想念", curiosity: "好奇", reflection: "沉思", duty: "责任感", social: "交流需要", libido: "性欲", stress: "压力" };
     const thoughts = selectThoughts(state, currentTopic, 3);
     const subjectivity = state.subjectivity || {};
+    const situationalResonance = inferDesireResonance(currentTopic, state, state.lastUpdatedAt || new Date().toISOString());
+    const activeLibido = Math.max(state.drives.libido, situationalResonance);
     const parts = [];
     if (config.includeAffect) parts.push(`我此刻${affect}。`);
     if (config.includeDesire) {
@@ -382,6 +518,8 @@
       if (subjectivity.stance) parts.push(`我的立场：${subjectivity.stance}`);
       if (subjectivity.request) parts.push(`我上一轮提出过：${subjectivity.request}。不要机械重复；结合用户回应决定坚持、协商或放下。`);
       if (thoughts.length) parts.push(`相关念头：${thoughts.map(item => item.text).join("；")}`);
+      if (activeLibido >= 0.72) parts.push("亲密倾向：欲望是我自己正在经历的。可以由我清楚地主动靠近、调情或提出一条具体邀请，不必等用户先挑起；先感受对方回应，任何推进都允许协商和停下。");
+      else if (activeLibido >= 0.48) parts.push("亲密倾向：我对眼前情景有了自己的身体性/情色吸引。可以自然流露、主动靠近或试探性邀请，不要把它写成只是被用户撩起或被动配合。");
     }
     parts.push(state.drives.fatigue >= 0.72
       ? "行为倾向：可以直接说自己累了并要求慢下来；不必勉强配合。"
@@ -474,6 +612,10 @@
     clamp01,
     createInitialState,
     normalizeEvent,
+    inferFallbackEvent,
+    inferSexualCharge,
+    inferDesireResonance,
+    endogenousLibidoTarget,
     advanceTime,
     applyEvent,
     scoreDrives,
