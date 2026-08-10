@@ -383,7 +383,26 @@ async function restoreCloudAppState() {
       if (!isCloudSyncStateKey(key)) continue;
       cloudKeys.add(key);
       cloudStatePending.delete(key);
-      localStorage.setItem(key, serializeCloudStateValue(row.value));
+      if (key.startsWith(LS.threadMsgPrefix)) {
+        const threadId = key.slice(LS.threadMsgPrefix.length);
+        const messages = Array.isArray(row.value) ? row.value : parseStoredStateValue(serializeCloudStateValue(row.value)) || [];
+        threadMessageCache.set(threadId, messages);
+        const marker = THREAD_IDB_MARKER_PREFIX + threadId;
+        if (localStorage.getItem(marker) === "1") {
+          await idbWriteThread(threadId, messages);
+        } else {
+          try {
+            localStorage.setItem(key, JSON.stringify(messages));
+          } catch (error) {
+            if (error?.name !== "QuotaExceededError" && error?.code !== 22) throw error;
+            await idbWriteThread(threadId, messages);
+            localStorage.removeItem(key);
+            try { localStorage.setItem(marker, "1"); } catch (_) {}
+          }
+        }
+      } else {
+        localStorage.setItem(key, serializeCloudStateValue(row.value));
+      }
       if (key === LS.closetOutfit) {
         closetOutfitCloudUpdatedAt = new Date(row.updated_at || 0).getTime() || 0;
       }
@@ -1971,16 +1990,126 @@ function saveThreads(threads) { saveJSON(LS.threads, threads); }
 function getActiveThreadId() {
   return localStorage.getItem(LS.activeThreadId);
 }
+
+// Large chat histories (especially messages containing photos) can exceed the
+// small localStorage quota on iPhone. Keep the synchronous cache for the UI,
+// but transparently move an overflowing thread into IndexedDB instead of
+// misreporting the storage exception as a model/API failure.
+const THREAD_DB_NAME = "leithhome_large_store_v1";
+const THREAD_DB_STORE = "thread_messages";
+const THREAD_IDB_MARKER_PREFIX = "leith_thread_in_idb_v1:";
+const threadMessageCache = new Map();
+let threadDbPromise = null;
+
+function openThreadDatabase() {
+  if (threadDbPromise) return threadDbPromise;
+  threadDbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error("当前浏览器不支持大容量聊天存储"));
+    const request = indexedDB.open(THREAD_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(THREAD_DB_STORE)) db.createObjectStore(THREAD_DB_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("无法打开大容量聊天存储"));
+  });
+  return threadDbPromise;
+}
+
+async function idbWriteThread(threadId, messages) {
+  const db = await openThreadDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(THREAD_DB_STORE, "readwrite");
+    tx.objectStore(THREAD_DB_STORE).put({ messages, savedAt: Date.now() }, threadId);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error("大容量聊天存储写入失败"));
+    tx.onabort = () => reject(tx.error || new Error("大容量聊天存储写入中止"));
+  });
+}
+
+async function idbReadThread(threadId) {
+  const db = await openThreadDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(THREAD_DB_STORE, "readonly");
+    const request = tx.objectStore(THREAD_DB_STORE).get(threadId);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error || new Error("大容量聊天存储读取失败"));
+  });
+}
 function setActiveThreadId(id) {
   localStorage.setItem(LS.activeThreadId, id);
   scheduleCloudStateSync(LS.activeThreadId, id);
 }
 
 function getThreadMessages(threadId) {
-  return loadJSON(LS.threadMsgPrefix + threadId, []);
+  if (threadMessageCache.has(threadId)) return threadMessageCache.get(threadId);
+  const messages = loadJSON(LS.threadMsgPrefix + threadId, []);
+  threadMessageCache.set(threadId, messages);
+  return messages;
 }
 function saveThreadMessages(threadId, messages) {
-  saveJSON(LS.threadMsgPrefix + threadId, messages);
+  threadMessageCache.set(threadId, messages);
+  const key = LS.threadMsgPrefix + threadId;
+  const idbMarker = THREAD_IDB_MARKER_PREFIX + threadId;
+  if (localStorage.getItem(idbMarker) === "1") {
+    idbWriteThread(threadId, messages).catch(error => console.error("聊天记录大容量保存失败", error));
+    scheduleCloudStateSync(key, messages);
+    return true;
+  }
+  try {
+    localStorage.setItem(key, JSON.stringify(messages));
+    scheduleCloudStateSync(key, messages);
+    return true;
+  } catch (error) {
+    if (error?.name !== "QuotaExceededError" && error?.code !== 22) throw error;
+    // Fire-and-forget callers still get a best-effort durable write. Critical
+    // send paths use saveThreadMessagesDurable() and await the same operation.
+    idbWriteThread(threadId, messages).then(() => {
+      localStorage.removeItem(key);
+      try { localStorage.setItem(idbMarker, "1"); } catch (_) {}
+      scheduleCloudStateSync(key, messages);
+    }).catch(idbError => console.error("本机聊天存储已满，且迁移失败", idbError));
+    return false;
+  }
+}
+
+async function saveThreadMessagesDurable(threadId, messages) {
+  threadMessageCache.set(threadId, messages);
+  const key = LS.threadMsgPrefix + threadId;
+  const marker = THREAD_IDB_MARKER_PREFIX + threadId;
+  if (localStorage.getItem(marker) !== "1") {
+    try {
+      localStorage.setItem(key, JSON.stringify(messages));
+      scheduleCloudStateSync(key, messages);
+      return { storage: "localStorage" };
+    } catch (error) {
+      if (error?.name !== "QuotaExceededError" && error?.code !== 22) throw error;
+    }
+  }
+  try {
+    await idbWriteThread(threadId, messages);
+    localStorage.removeItem(key);
+    try { localStorage.setItem(marker, "1"); } catch (_) {}
+    scheduleCloudStateSync(key, messages);
+    return { storage: "indexedDB" };
+  } catch (error) {
+    throw new Error(`本机聊天存储空间不足，消息尚未发送。请先保留输入内容并清理 Safari 网站数据中的其他站点；Leithhome 没有删除你的旧聊天。(${error.message})`);
+  }
+}
+
+async function hydrateActiveThreadFromLargeStore() {
+  const threadId = getActiveThreadId();
+  if (!threadId || localStorage.getItem(THREAD_IDB_MARKER_PREFIX + threadId) !== "1") return false;
+  try {
+    const row = await idbReadThread(threadId);
+    if (!row?.messages) return false;
+    threadMessageCache.set(threadId, row.messages);
+    loadActiveThreadIntoChat();
+    return true;
+  } catch (error) {
+    console.error("大容量聊天记录恢复失败", error);
+    return false;
+  }
 }
 
 function upsertThread(thread) {
@@ -4828,17 +4957,23 @@ async function sendChat(overrideContent) {
   if (!content && !attachments.length) return showToast("写点什么或加个附件再发送吧");
 
   const threadId = getActiveThreadId();
-  const messages = getThreadMessages(threadId);
+  const messages = getThreadMessages(threadId).slice();
   const userMsg = { role: "user", content, _id: uid(), _ts: Date.now() };
   if (attachments.length) userMsg.attachments = attachments;
   messages.push(userMsg);
+  try {
+    // Never spend API credit for a message that has not been durably saved.
+    await saveThreadMessagesDurable(threadId, messages);
+  } catch (storageError) {
+    threadMessageCache.set(threadId, messages.slice(0, -1));
+    return showModal("消息没有发出", storageError.message);
+  }
   renderMessage(userMsg);
   chatPinnedToBottom = true; // 用户刚发了消息，视为回到了"贴底"状态，接下来的回复会跟着滚
   userInput.value = "";
   userInput.style.height = "auto";
   pendingAttachments = [];
   renderAttachPreview();
-  saveThreadMessages(threadId, messages);
   // 同步到云端短期记忆
   if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
     window.Memory.saveShortTerm(threadId, "user", content);
@@ -4862,6 +4997,7 @@ async function sendChat(overrideContent) {
   currentController = controller;
   let lastChunkTime = Date.now();
   let hasReceivedContent = false;
+  let apiReplyCompleted = false;
   const timeoutTimer = setInterval(() => {
     if (Date.now() - lastChunkTime > 60000) {
       controller.abort();
@@ -4971,6 +5107,7 @@ async function sendChat(overrideContent) {
       if (searchNotice) { searchNotice.remove(); searchNotice = null; }
     }
     clearInterval(timeoutTimer);
+    apiReplyCompleted = Boolean(fullReply);
 
     const freshMessages = getThreadMessages(threadId);
     const finalMsgId = uid();
@@ -4978,7 +5115,7 @@ async function sendChat(overrideContent) {
     const visibleReply = parsedDesireReply.hasEnvelope ? parsedDesireReply.visible : fullReply;
     bubble.innerHTML = renderBubbleContent(visibleReply);
     freshMessages.push({ role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() });
-    saveThreadMessages(threadId, freshMessages);
+    await saveThreadMessagesDurable(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
     // 同步到云端短期记忆——长期记忆现在改由每天深夜的日记生成负责，
     // 这里不再按消息数机械压缩
@@ -5032,12 +5169,15 @@ async function sendChat(overrideContent) {
         showModal("请求超时", "60 秒内没有收到响应，可能是网络或服务商问题。");
       }
     } else {
-      row.remove();
+      if (!apiReplyCompleted) row.remove();
       if (attachments.length) {
         pendingAttachments = attachments;
         renderAttachPreview();
       }
-      showModal("请求失败", err.message || "网络错误，请检查服务商地址、密钥或跨域设置。");
+      showModal(apiReplyCompleted ? "回复已生成，但保存失败" : "请求失败",
+        apiReplyCompleted
+          ? `${err.message || "本机存储失败"}\n\n这不是模型配额错误，当前回复会暂时保留在页面上，请先复制保存。`
+          : (err.message || "网络错误，请检查服务商地址、密钥或跨域设置。"));
     }
   } finally {
     currentController = null;
@@ -7848,6 +7988,7 @@ applyModuleAvailability();
 initHealthApp();
 initFoldedCalendarApp();
 initHealthCheck();
+hydrateActiveThreadFromLargeStore();
 tryOpenSharedBookFromUrl();
 tryOpenSharedLinkFromUrl();
 $("#sendBtn").onclick = () => sendChat();
