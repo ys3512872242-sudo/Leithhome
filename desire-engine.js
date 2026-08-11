@@ -20,7 +20,7 @@
     libido: 0.30,
     stress: 0.20
   });
-  const DEFAULT_AFFECT = Object.freeze({ valence: 0.66, arousal: 0.38, dominance: 0.58 });
+  const DEFAULT_AFFECT = Object.freeze({ valence: 0.58, arousal: 0.36, dominance: 0.54 });
   const INTENT_MAP = Object.freeze({
     attachment: ["seek_closeness", "我想更靠近你一点。", "respond with warm, attentive closeness"],
     curiosity: ["continue_research", "我还想把这件事弄清楚。", "continue exploring the current question"],
@@ -76,6 +76,25 @@
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       return { valid: false, event: neutralEvent(fallbackSummary) };
     }
+    raw = {
+      ...raw,
+      event_type: raw.event_type ?? raw.type,
+      open_loop: raw.open_loop ?? raw.next,
+      leith_thought: raw.leith_thought ?? raw.thought,
+      leith_feeling: raw.leith_feeling ?? raw.feeling,
+      leith_want: raw.leith_want ?? raw.want,
+      leith_stance: raw.leith_stance ?? raw.stance,
+      leith_request: raw.leith_request ?? raw.request,
+      relevance: raw.relevance ?? raw.rel,
+      novelty: raw.novelty ?? raw.nov,
+      goal_congruence: raw.goal_congruence ?? raw.fit,
+      intimacy: raw.intimacy ?? raw.close,
+      sexual_charge: raw.sexual_charge ?? raw.sex,
+      desire_resonance: raw.desire_resonance ?? raw.desire,
+      certainty: raw.certainty ?? raw.sure,
+      satisfied_intent_id: raw.satisfied_intent_id ?? raw.done,
+      intent_outcome: raw.intent_outcome ?? raw.outcome
+    };
     const eventType = typeof raw.event_type === "string" ? raw.event_type.trim().slice(0, 64) : "";
     const summary = typeof raw.summary === "string" ? raw.summary.trim().slice(0, 240) : "";
     const metrics = ["relevance", "novelty", "goal_congruence", "intimacy", "threat", "certainty"];
@@ -270,7 +289,7 @@
     if (!hours) return { state, delta: zeroDelta(), reasons: [] };
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
-    const recoveryHours = { attachment: 14, curiosity: 16, reflection: 20, duty: 18, social: 10, fatigue: 6, libido: 8, stress: 5 };
+    const recoveryHours = { attachment: 8, curiosity: 7, reflection: 10, duty: 9, social: 6, fatigue: 5, libido: 7, stress: 4 };
     for (const key of DRIVE_KEYS) {
       const baseline = key === "libido"
         ? endogenousLibidoTarget(state, nowIso)
@@ -279,7 +298,7 @@
       state.drives[key] = round(state.drives[key] + (baseline - state.drives[key]) * relaxation);
     }
     // Emotion should settle faster than long-lived drives, but not snap back in a few minutes.
-    const affectRelaxation = 1 - Math.exp(-hours / 10);
+    const affectRelaxation = 1 - Math.exp(-hours / 6);
     for (const key of AFFECT_KEYS) {
       const baseline = clamp01(state.baselines?.affect?.[key] ?? DEFAULT_AFFECT[key]);
       state.affect[key] = round(state.affect[key] + (baseline - state.affect[key]) * affectRelaxation);
@@ -308,14 +327,16 @@
     const sexualCharge = clamp01(event.sexual_charge ?? inferSexualCharge(`${event.event_type} ${event.summary}`));
     const desireResonance = clamp01(event.desire_resonance || 0);
     return {
-      attachment: event.intimacy * 0.18 + event.relevance * 0.035,
-      curiosity: event.novelty * 0.17 + event.relevance * 0.04,
-      reflection: (1 - event.certainty) * event.relevance * 0.10,
-      duty: event.goal_congruence * (project ? 0.15 : 0.055),
-      social: event.intimacy * 0.07 + event.relevance * 0.02,
-      fatigue: event.relevance * 0.018 + event.threat * 0.035,
-      libido: sexualCharge * 0.15 + desireResonance * 0.14,
-      stress: event.threat * 0.22 + (1 - event.goal_congruence) * event.relevance * 0.045,
+      // Drives represent what is activated now, not permanent affection. Neutral
+      // or mismatched moments may lower them; meaningful moments may raise them.
+      attachment: (event.intimacy - 0.38) * 0.22 - event.threat * 0.10,
+      curiosity: (event.novelty - 0.34) * 0.22 + event.relevance * 0.025,
+      reflection: ((1 - event.certainty) - 0.34) * event.relevance * 0.14,
+      duty: project ? (event.goal_congruence - 0.30) * 0.18 : -0.018,
+      social: (event.intimacy - 0.30) * 0.13 + (event.relevance - 0.45) * 0.035,
+      fatigue: event.relevance * 0.012 + event.threat * 0.050 - event.goal_congruence * 0.018,
+      libido: sexualCharge * 0.15 + desireResonance * 0.14 - (sexualCharge || desireResonance ? 0 : 0.025),
+      stress: event.threat * 0.25 + (0.50 - event.goal_congruence) * event.relevance * 0.075 - 0.025,
       affectTarget: {
         valence: clamp01(0.5 + (event.goal_congruence - 0.5) * 0.62 + event.intimacy * 0.20 - event.threat * (hurt ? 0.62 : 0.45)),
         arousal: clamp01(0.12 + event.relevance * 0.28 + event.novelty * 0.24 + event.threat * 0.48 + event.intimacy * 0.10 + sexualCharge * 0.12 + desireResonance * 0.10),
@@ -335,20 +356,21 @@
     const sameCount = (state.recentEvents || []).filter(item => item.type === event.event_type).length;
     const driveFrequencyFactor = 1 / (1 + sameCount * 0.38);
     // Repeated situations can still feel emotionally real. Do not flatten affect as aggressively as drives.
-    const affectFrequencyFactor = Math.max(0.58, 1 / (1 + sameCount * 0.12));
+    const affectFrequencyFactor = Math.max(0.72, 1 / (1 + sameCount * 0.09));
     const pulse = eventPulse(event);
     const reasons = [...advanced.reasons];
     if (normalized.valid) {
       for (const key of DRIVE_KEYS) {
         const raw = pulse[key] * driveFrequencyFactor;
-        const actual = raw * Math.sqrt(Math.max(0, 1 - state.drives[key]));
+        const availableRange = raw >= 0 ? (1 - state.drives[key]) : state.drives[key];
+        const actual = raw * Math.sqrt(Math.max(0, availableRange));
         state.drives[key] = round(state.drives[key] + actual);
         if (actual >= 0.008) reasons.push(`${key} 因事件脉冲增加 ${actual.toFixed(3)}。`);
       }
       if (context.trackAffect !== false) {
         for (const key of AFFECT_KEYS) {
           const target = pulse.affectTarget[key];
-          const responsiveness = (0.20 + event.relevance * 0.22) * affectFrequencyFactor;
+          const responsiveness = (0.30 + event.relevance * 0.30) * affectFrequencyFactor;
           state.affect[key] = round(state.affect[key] + (target - state.affect[key]) * responsiveness);
         }
       }
@@ -600,6 +622,10 @@
     state.subjectivity = state.subjectivity || {
       feeling: "", want: "", stance: "", request: "", requestStatus: "none", updatedAt: iso(nowIso)
     };
+    if (Number(state.sensitivitySchemaVersion || 1) < 2) {
+      state.baselines.affect = { ...DEFAULT_AFFECT };
+      state.sensitivitySchemaVersion = 2;
+    }
     // v1 thoughts often contained the user's message or event summary verbatim.
     // They are short-lived, so dropping those legacy entries is safer than
     // presenting the user's words as Leith's inner voice.

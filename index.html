@@ -422,39 +422,6 @@
   .send-btn:disabled{opacity:.35;cursor:default;pointer-events:none;}
   .send-btn svg{width:18px;height:18px;color:#1A1207;}
 
-  /* ===== 表情包面板 ===== */
-  .sticker-panel{
-    position:fixed;left:0;right:0;bottom:var(--bottom-bar-h);
-    background:var(--bg-elevated);border-top:1px solid var(--line);
-    border-radius:var(--radius-xl) var(--radius-xl) 0 0;z-index:110;
-    max-height:45vh;transform:translateY(120%);
-    transition:transform .3s var(--ease-out),visibility .3s;
-    display:flex;flex-direction:column;visibility:hidden;pointer-events:none;
-    box-shadow:0 -8px 40px rgba(0,0,0,.45);
-  }
-  .sticker-panel.open{transform:translateY(0);visibility:visible;pointer-events:auto;}
-  .sticker-panel-head{
-    padding:14px 16px 10px;display:flex;align-items:center;
-    justify-content:space-between;border-bottom:1px solid var(--line-soft);
-  }
-  .sticker-panel-head h4{margin:0;font-size:13px;color:var(--paper-dim);font-weight:500;}
-  .sticker-grid{
-    flex:1;overflow-y:auto;padding:14px 16px calc(env(safe-area-inset-bottom)+14px);
-    display:grid;grid-template-columns:repeat(4,1fr);gap:10px;
-  }
-  .sticker-grid::-webkit-scrollbar{width:3px;}
-  .sticker-grid::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px;}
-  .sticker-item{
-    aspect-ratio:1;background:var(--bg-input);border:1px solid var(--line);
-    border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;
-    cursor:pointer;overflow:hidden;padding:6px;
-    transition:all .18s var(--ease-out);
-  }
-  .sticker-item:hover{border-color:var(--accent-dim);transform:scale(1.04);box-shadow:0 4px 16px rgba(0,0,0,.3);}
-  .sticker-item:active{transform:scale(.95);}
-  .sticker-item img{width:100%;height:100%;object-fit:contain;}
-  .sticker-empty{grid-column:1/-1;text-align:center;color:var(--paper-dim);font-size:12px;padding:30px 10px;line-height:1.8;}
-
   /* ===== 设置抽屉 ===== */
   .drawer-overlay{
     position:fixed;inset:0;background:rgba(3,5,8,.55);
@@ -565,14 +532,16 @@
   .memory-edit svg{width:13px;height:13px;}
   .memory-content{font-size:13px;line-height:1.7;color:var(--paper);white-space:pre-wrap;}
 
-  .sticker-manage-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
-  .sticker-manage-item{
-    background:var(--bg-input);border:1px solid var(--line);
-    border-radius:var(--radius-md);padding:8px;text-align:center;
-  }
-  .sticker-manage-item img{width:100%;aspect-ratio:1;object-fit:contain;margin-bottom:6px;border-radius:6px;}
-  .sticker-manage-item input{font-size:11px;padding:5px 8px;margin-bottom:4px;}
-  .sticker-manage-item button{font-size:10px;padding:4px 8px;width:100%;}
+  .worldbook-editor{max-width:680px;margin:0 auto 18px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--surface-glass);display:flex;flex-direction:column;gap:10px;}
+  .worldbook-editor-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;}
+  .worldbook-always{display:flex;align-items:center;gap:7px;color:var(--paper-dim);font-size:12px;white-space:nowrap;}
+  .worldbook-actions{display:flex;gap:8px;}
+  .worldbook-list{max-width:680px;margin:0 auto;}
+  .worldbook-card{background:var(--bg-input);border:1px solid var(--line);border-radius:var(--radius-md);padding:13px 14px;margin-bottom:9px;}
+  .worldbook-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}
+  .worldbook-card-title{font-size:14px;font-weight:600;}
+  .worldbook-card-meta{font-size:10px;color:var(--paper-dim);margin-top:4px;}
+  .worldbook-card-content{font-size:13px;line-height:1.7;white-space:pre-wrap;margin-top:9px;}
 
   /* ===== 弹窗 ===== */
   .modal-overlay{
@@ -1899,16 +1868,6 @@
       </section>
     </div>
 
-    <div class="sticker-panel" id="stickerPanel">
-      <div class="sticker-panel-head">
-        <h4>表情包</h4>
-        <button class="icon-btn" id="closeStickerPanelBtn" style="width:28px;height:28px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <div class="sticker-grid" id="stickerGrid"></div>
-    </div>
-
     <div class="attach-preview-strip hidden" id="attachPreviewStrip"></div>
 
     <div class="input-bar">
@@ -1916,8 +1875,8 @@
       <button class="sticker-btn" id="openAttachBtn" title="上传图片/文档">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 01-7.78-7.78l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a1.5 1.5 0 01-2.12-2.12l8.49-8.48"/></svg>
       </button>
-      <button class="sticker-btn" id="openStickerPanelBtn" title="表情包">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+      <button class="sticker-btn" id="timestampToggleBtn" title="让 Leith 看见本条消息的精确时间" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
       </button>
       <button class="sticker-btn" id="webToggleBtn" title="联网开关">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
@@ -2040,6 +1999,12 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20S4 15.2 4 9.2A4.2 4.2 0 0112 7a4.2 4.2 0 018 2.2C20 15.2 12 20 12 20z"/><path d="M9 12h6"/></svg>
           </div>
           <div class="app-icon-label">恋爱纪念</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-worldbook')">
+          <div class="app-icon-img" style="color:var(--accent-2);background:linear-gradient(150deg,rgba(185,147,94,.17),var(--bg-elevated) 75%);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h12a2 2 0 012 2v14H7a2 2 0 01-2-2V4z"/><path d="M8 4v16M11 8h5M11 12h5"/></svg>
+          </div>
+          <div class="app-icon-label">世界书</div>
         </div>
         <div class="app-icon" onclick="openApp('page-app-modules')">
           <div class="app-icon-img" style="color:var(--accent-2);background:linear-gradient(150deg,rgba(128,152,201,.15),var(--bg-elevated) 75%);">
@@ -2391,7 +2356,7 @@
         <div id="desireThoughtList" class="desire-thought-list"></div>
       </section>
       <section class="desire-detail-section desire-observer-note">
-        这里只用来观察，不会在这里直接修改 Leith。状态来自真实对话与经过的时间，旧七分量表仍保留在历史中。
+        这里只用来观察，不会直接修改 Leith。“亲近”是此刻靠近与联结的需要，不等于永久固定的喜欢；“自主感”是他对自己能否做决定、应对处境的感受，不是对用户的控制欲。状态会随真实对话与经过的时间升降。
       </section>
     </div>
   </div><!-- /app-widget -->
@@ -2431,6 +2396,34 @@
       </section>
     </div>
   </div><!-- /app-modules -->
+
+  <!-- ===== App: 世界书 ===== -->
+  <div class="app-page" id="page-app-worldbook">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">📖 世界书</span>
+    </div>
+    <div class="app-body">
+      <div class="module-token-note">把稳定设定分条保存。勾选“始终生效”的条目每轮都会参与；其他条目只有最近聊天出现关键词时才会唤起，避免设定全挤进提示词。</div>
+      <section class="worldbook-editor">
+        <input class="field" id="worldbookTitleInput" placeholder="条目名称，例如：Leith 的房间">
+        <div class="worldbook-editor-row">
+          <select class="field" id="worldbookCategoryInput">
+            <option value="character">人物</option><option value="relationship">关系</option><option value="place">地点</option>
+            <option value="rule">规则</option><option value="object">物品</option><option value="timeline">时间线</option><option value="other">其他</option>
+          </select>
+          <label class="worldbook-always"><input type="checkbox" id="worldbookAlwaysInput"> 始终生效</label>
+        </div>
+        <input class="field" id="worldbookKeywordsInput" placeholder="触发词，用逗号分开，例如：卧室,房间,回家">
+        <textarea class="field" id="worldbookContentInput" rows="5" placeholder="写清楚事实、关系和规则。不要写成对模型下命令。"></textarea>
+        <input type="hidden" id="worldbookEditingId">
+        <div class="worldbook-actions"><button class="btn btn-primary" id="saveWorldbookEntryBtn">保存条目</button><button class="btn btn-ghost hidden" id="cancelWorldbookEditBtn">取消编辑</button></div>
+      </section>
+      <div class="worldbook-list" id="worldbookList"></div>
+    </div>
+  </div><!-- /app-worldbook -->
 
   <!-- ===== App: 健康 ===== -->
   <div class="app-page" id="page-app-health">
@@ -2704,15 +2697,6 @@
         <button class="btn btn-primary btn-sm" id="addMemoryBtn" style="margin-top:8px;">+ 存入记忆</button>
       </div>
       <div id="memoryList"></div>
-
-      <div class="divider"></div>
-
-      <div class="section-title">表情包</div>
-      <div class="field-group">
-        <p class="helper-text" style="margin-top:0;">上传后，你和 Leith 共用这一套表情包。</p>
-        <input type="file" id="stickerUploadInput" accept="image/*" style="margin-top:8px;">
-      </div>
-      <div class="sticker-manage-grid" id="stickerManageGrid"></div>
 
       <div class="divider"></div>
 

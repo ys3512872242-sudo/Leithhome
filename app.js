@@ -38,6 +38,8 @@ const LS = {
   readingLinks: "companion_reading_links_v1", // [{id, url, note, addedAt}]
   diaryNotes: "companion_diary_notes_v1",
   moduleSettings: "leith_module_settings_v1",
+  worldBookEntries: "companion_worldbook_entries_v1",
+  shareMessageTime: "companion_share_message_time_v1",
 };
 
 const DEFAULT_MODULE_SETTINGS = Object.freeze({
@@ -54,7 +56,8 @@ const DEFAULT_MODULE_SETTINGS = Object.freeze({
   healthContext: true,
   imageUnderstanding: true,
   webSearch: false,
-  mcpGateway: false
+  mcpGateway: false,
+  worldBook: true
 });
 
 function getLeithModuleSettings() {
@@ -308,6 +311,7 @@ const CLOUD_SYNC_STATIC_KEYS = new Set([
   LS.readingBooks,
   LS.readingLinks,
   LS.diaryNotes,
+  LS.worldBookEntries,
   'companion_theater_rooms_v1',
   'companion_health_records_v1'
 ]);
@@ -369,6 +373,7 @@ function refreshUiAfterCloudStateRestore() {
   if (activeApp.id === 'page-app-health') renderHealthPage();
   if (activeApp.id === 'page-app-diarybook') renderDiaryBook();
   if (activeApp.id === 'page-app-closet') renderClosetPage();
+  if (activeApp.id === 'page-app-worldbook') renderWorldbook();
 }
 
 async function restoreCloudAppState() {
@@ -669,6 +674,7 @@ function openApp(appPageId) {
     if (appPageId === "page-app-love") renderLoveApp();
     if (appPageId === "page-app-closet") renderClosetPage();
     if (appPageId === "page-app-modules") renderModuleSettings();
+    if (appPageId === "page-app-worldbook") renderWorldbook();
   }));
 }
 
@@ -1692,14 +1698,9 @@ async function autoRespondToNarration(threadId, bubble, row) {
   let lastChunkTime = Date.now();
   let hasReceivedContent = false;
   const timeoutTimer = setInterval(() => {
-    if (Date.now() - lastChunkTime > 60000) { controller.abort(); clearInterval(timeoutTimer); }
+    if (Date.now() - lastChunkTime > (webEnabled ? 180000 : 90000)) { controller.abort(); clearInterval(timeoutTimer); }
   }, 1000);
 
-  const originalSendHTML = sendBtn.innerHTML;
-  const originalSendBg = sendBtn.style.background;
-  const originalSendBorder = sendBtn.style.border;
-  const originalSendColor = sendBtn.style.color;
-  const originalSendHandler = sendBtn.onclick;
   sendBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
   sendBtn.style.background = "var(--bg-elevated)";
   sendBtn.style.border = "1px solid var(--accent-dim)";
@@ -1707,6 +1708,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
   sendBtn.onclick = () => controller.abort();
 
   try {
+    await brieflyAwaitPendingState();
     await window.LeithDesireRuntime?.init?.();
     const sourceMsg = getThreadMessages(threadId).slice().reverse().find(message => message._isNarration)
       || { _id: uid(), content: "发生了一件内部经历。" };
@@ -1727,12 +1729,14 @@ async function autoRespondToNarration(threadId, bubble, row) {
     if (provider.apiStyle === "anthropic") {
       result = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
         lastChunkTime = Date.now(); hasReceivedContent = true;
+        if (acc.includes("<leith-event>")) setFinishingUI(sendBtn);
         bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
         $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
       }});
     } else {
       result = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
         lastChunkTime = Date.now(); hasReceivedContent = true;
+        if (acc.includes("<leith-event>")) setFinishingUI(sendBtn);
         bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
         $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
       }});
@@ -1756,7 +1760,9 @@ async function autoRespondToNarration(threadId, bubble, row) {
     renderThreadList();
     const actions = parseAIActions(visibleReply);
     if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
-    await window.LeithDesireRuntime?.completeTurn?.({
+    currentController = null;
+    restoreSendUI(sendBtn);
+    queueInternalStateUpdate(() => window.LeithDesireRuntime?.completeTurn?.({
       sourceMessageId: sourceMsg._id,
       assistantMessageId: finalMsgId,
       userText: sourceMsg.content || "",
@@ -1766,7 +1772,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
       provider: provider.name || provider.apiStyle,
       model,
       usage: lastUsage
-    });
+    }), "内部状态更新失败；旁白回复已经安全保存。");
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -1791,11 +1797,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
     }
   } finally {
     currentController = null;
-    sendBtn.innerHTML = originalSendHTML;
-    sendBtn.style.background = originalSendBg;
-    sendBtn.style.border = originalSendBorder;
-    sendBtn.style.color = originalSendColor;
-    sendBtn.onclick = originalSendHandler;
+    restoreSendUI(sendBtn);
   }
 }
 
@@ -2526,96 +2528,26 @@ $("#addMemoryBtn").onclick = async () => {
 };
 
 // ============================================================
-// 表情包：管理（设置里）+ 发送（聊天面板）
-// ============================================================
-async function renderStickerManageGrid() {
-  const grid = $("#stickerManageGrid");
-  if (!grid || !window.Stickers) return;
-  const items = await window.Stickers.list();
-  grid.innerHTML = "";
-  items.forEach(s => {
-    const cell = document.createElement("div");
-    cell.className = "sticker-manage-item";
-    cell.innerHTML = `
-      <img src="${s.dataUrl}" alt="${escapeHtml(s.label)}">
-      <input type="text" value="${escapeHtml(s.label)}" placeholder="标签，如：开心">
-      <button class="btn btn-danger btn-sm">删除</button>
-    `;
-    const labelInput = cell.querySelector("input");
-    labelInput.addEventListener("change", async () => {
-      await window.Stickers.updateLabel(s.id, labelInput.value.trim());
-      showToast("标签已更新");
-    });
-    cell.querySelector("button").addEventListener("click", async () => {
-      await window.Stickers.remove(s.id);
-      renderStickerManageGrid();
-      renderStickerPickerGrid();
-    });
-    grid.appendChild(cell);
-  });
-}
-
-$("#stickerUploadInput").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  if (file.size > 2 * 1024 * 1024) {
-    showModal("图片太大", "请上传 2MB 以内的图片，本地存储空间有限。");
-    e.target.value = "";
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = async () => {
-    await window.Stickers.add({ label: "", dataUrl: reader.result });
-    renderStickerManageGrid();
-    renderStickerPickerGrid();
-    showToast("表情包已添加，去设置里给它加个标签吧");
-  };
-  reader.readAsDataURL(file);
-  e.target.value = "";
-});
-
-async function renderStickerPickerGrid() {
-  const grid = $("#stickerGrid");
-  if (!grid || !window.Stickers) return;
-  const items = await window.Stickers.list();
-  grid.innerHTML = "";
-  if (!items.length) {
-    grid.innerHTML = `<div class="sticker-empty">还没有表情包。<br>去右上角设置 → 表情包里上传吧。</div>`;
-    return;
-  }
-  items.forEach(s => {
-    const cell = document.createElement("div");
-    cell.className = "sticker-item";
-    cell.innerHTML = `<img src="${s.dataUrl}" alt="${escapeHtml(s.label)}">`;
-    cell.addEventListener("click", () => sendSticker(s));
-    grid.appendChild(cell);
-  });
-}
-
-function openStickerPanel() { renderStickerPickerGrid(); $("#stickerPanel").classList.add("open"); pushNavLayer(closeStickerPanel); }
-function closeStickerPanel() { $("#stickerPanel").classList.remove("open"); }
-function closeStickerPanelFromUI() { popNavLayerSilently(); closeStickerPanel(); }
-$("#openStickerPanelBtn").onclick = openStickerPanel;
-$("#closeStickerPanelBtn").onclick = closeStickerPanelFromUI;
-
-function sendSticker(sticker) {
-  const threadId = getActiveThreadId();
-  const messages = getThreadMessages(threadId);
-  const msg = { role: "user", type: "sticker", content: sticker.label || "[表情包]", dataUrl: sticker.dataUrl, _id: uid() };
-  messages.push(msg);
-  renderMessage(msg);
-  saveThreadMessages(threadId, messages);
-  closeStickerPanelFromUI();
-  renderThreadList();
-  renderTokenBanner();
-}
-
-// ============================================================
 // 消息渲染
 // ============================================================
 let selectMode = false;
 let selectedMessageIds = new Set();
 let currentController = null;
+let pendingStateUpdate = Promise.resolve();
+
+function queueInternalStateUpdate(task, warning) {
+  pendingStateUpdate = pendingStateUpdate.catch(() => {}).then(task).catch(error => {
+    console.warn(warning, error);
+  });
+  return pendingStateUpdate;
+}
+
+async function brieflyAwaitPendingState() {
+  await Promise.race([
+    pendingStateUpdate.catch(() => {}),
+    new Promise(resolve => setTimeout(resolve, 2500))
+  ]);
+}
 
 function renderMessage(msg, opts = {}) {
   const emptyState = $("#emptyState");
@@ -3015,7 +2947,7 @@ async function regenerateFromMessage(userMsg) {
   let lastChunkTime = Date.now();
   let hasReceivedContent = false;
   const timeoutTimer = setInterval(() => {
-    if (Date.now() - lastChunkTime > 60000) {
+    if (Date.now() - lastChunkTime > (webEnabled ? 180000 : 90000)) {
       controller.abort();
       clearInterval(timeoutTimer);
     }
@@ -3025,6 +2957,7 @@ async function regenerateFromMessage(userMsg) {
   setSendingUI(sendBtn, () => controller.abort());
 
   try {
+    await brieflyAwaitPendingState();
     await window.LeithDesireRuntime?.init?.();
     const desireSnapshot = window.LeithDesireRuntime?.getSnapshot?.();
     const desireContext = {
@@ -3050,6 +2983,7 @@ async function regenerateFromMessage(userMsg) {
         result = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
+          if (acc.includes("<leith-event>")) setFinishingUI(sendBtn);
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
           bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
           box.scrollTop = box.scrollHeight;
@@ -3058,6 +2992,7 @@ async function regenerateFromMessage(userMsg) {
         result = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages, controller, onDelta: (acc) => {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
+          if (acc.includes("<leith-event>")) setFinishingUI(sendBtn);
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
           bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
           box.scrollTop = box.scrollHeight;
@@ -3069,18 +3004,20 @@ async function regenerateFromMessage(userMsg) {
       if (!result.toolCalls || !result.toolCalls.length) break;
 
       const tc = result.toolCalls[0];
-      let executed;
-      try { executed = await executeAvailableTool(tc); }
-      catch (error) { executed = { name: tc.function.name, args: {}, label: "使用外部工具", result: `工具失败：${error.message}` }; }
-
       if (!searchNotice) {
+        let toolArgs = {};
+        try { toolArgs = JSON.parse(tc.function.arguments || "{}"); } catch (_) {}
+        const pendingLabel = tc.function.name === "web_search" ? `搜索「${toolArgs.query || ""}」` : "查看外部工具";
         searchNotice = document.createElement("div");
         searchNotice.className = "msg-row assistant";
         searchNotice.style.opacity = "0.7";
-        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在${escapeHtml(executed.label)}…</div>`;
+        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在${escapeHtml(pendingLabel)}…</div>`;
         box.appendChild(searchNotice);
         box.scrollTop = box.scrollHeight;
       }
+      let executed;
+      try { executed = await executeAvailableTool(tc); }
+      catch (error) { executed = { name: tc.function.name, args: {}, label: "使用外部工具", result: `工具失败：${error.message}` }; }
 
       const searchResult = executed.result;
 
@@ -3112,8 +3049,9 @@ async function regenerateFromMessage(userMsg) {
     // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(visibleReply);
     if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
-    try {
-      await window.LeithDesireRuntime?.completeTurn?.({
+    currentController = null;
+    restoreSendUI(sendBtn);
+    queueInternalStateUpdate(() => window.LeithDesireRuntime?.completeTurn?.({
         sourceMessageId: userMsg._id,
         assistantMessageId: finalMsgId,
         userText: userMsg.content || "",
@@ -3123,10 +3061,7 @@ async function regenerateFromMessage(userMsg) {
         provider: provider.name || provider.apiStyle,
         model,
         usage: lastUsage
-      });
-    } catch (stateError) {
-      console.warn("内部状态更新失败；重新生成的回复已经安全保存。", stateError);
-    }
+      }), "内部状态更新失败；重新生成的回复已经安全保存。");
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -3520,6 +3455,25 @@ userInput.addEventListener("keydown", (e) => {
 // ============================================================
 const WEB_LS_KEY = "companion_web_enabled_v1";
 let webEnabled = localStorage.getItem(WEB_LS_KEY) === "1";
+let shareMessageTime = localStorage.getItem(LS.shareMessageTime) === "1";
+
+function updateTimestampToggleUI() {
+  const btn = $("#timestampToggleBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", shareMessageTime);
+  btn.setAttribute("aria-pressed", shareMessageTime ? "true" : "false");
+  btn.title = shareMessageTime
+    ? "本条消息会让 Leith 看见精确时间"
+    : "本条消息只让 Leith 知道相隔多久";
+}
+
+$("#timestampToggleBtn")?.addEventListener("click", () => {
+  shareMessageTime = !shareMessageTime;
+  localStorage.setItem(LS.shareMessageTime, shareMessageTime ? "1" : "0");
+  updateTimestampToggleUI();
+  showToast(shareMessageTime ? "本条消息：Leith 能看见精确时间" : "本条消息：只告诉 Leith 相隔多久");
+});
+updateTimestampToggleUI();
 
 function updateWebToggleUI() {
   const btn = $("#webToggleBtn");
@@ -3577,9 +3531,9 @@ function fetchWithTimeout(url, opts = {}, timeoutMs = 5000) {
 
 async function duckDuckGoSearch(query) {
   // 第一路：Instant Answer API，原生 CORS，免代理，最快；但只对"知名实体/百科类"问题有用，
-  // 给一个较短的超时（2.5秒），没用就赶紧转下一路，别在这上面耗太久
+  // 先给直连结果足够时间；代理也允许慢网多等一会儿，避免还没搜到就被截断。
   try {
-    const r = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, {}, 2500);
+    const r = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, {}, 5000);
     if (r.ok) {
       const data = await r.json();
       const parts = [];
@@ -3606,7 +3560,7 @@ async function duckDuckGoSearch(query) {
 
   const attempts = proxies.map(async (proxy) => {
     const fetchUrl = proxy.encode ? proxy.url + encodeURIComponent(targetUrl) : proxy.url + targetUrl;
-    const resp = await fetchWithTimeout(fetchUrl, { headers: { "Accept": "text/html" } }, 6000);
+    const resp = await fetchWithTimeout(fetchUrl, { headers: { "Accept": "text/html" } }, 15000);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const html = await resp.text();
     if (!html || html.length < 200) throw new Error("返回内容过短");
@@ -3671,9 +3625,138 @@ function buildWebPromptBlock() {
   return `[Web] web_search tool available for real-time info.`;
 }
 
+const WORLDBOOK_CATEGORY_LABELS = {
+  character: "人物", relationship: "关系", place: "地点", rule: "规则",
+  object: "物品", timeline: "时间线", other: "其他"
+};
+
+function getWorldbookEntries() {
+  const stored = loadJSON(LS.worldBookEntries, []);
+  if (!Array.isArray(stored)) return [];
+  return stored.map(entry => ({
+    id: String(entry.id || uid()),
+    title: String(entry.title || "未命名条目").slice(0, 80),
+    category: WORLDBOOK_CATEGORY_LABELS[entry.category] ? entry.category : "other",
+    keywords: Array.isArray(entry.keywords)
+      ? entry.keywords.map(value => String(value).trim()).filter(Boolean).slice(0, 20)
+      : String(entry.keywords || "").split(/[,，\n]/).map(value => value.trim()).filter(Boolean).slice(0, 20),
+    content: String(entry.content || "").trim().slice(0, 4000),
+    always: Boolean(entry.always),
+    enabled: entry.enabled !== false,
+    updatedAt: Number(entry.updatedAt) || Date.now()
+  })).filter(entry => entry.content);
+}
+
+function saveWorldbookEntries(entries) {
+  saveJSON(LS.worldBookEntries, entries);
+}
+
+function resetWorldbookEditor() {
+  if ($("#worldbookEditingId")) $("#worldbookEditingId").value = "";
+  if ($("#worldbookTitleInput")) $("#worldbookTitleInput").value = "";
+  if ($("#worldbookCategoryInput")) $("#worldbookCategoryInput").value = "character";
+  if ($("#worldbookKeywordsInput")) $("#worldbookKeywordsInput").value = "";
+  if ($("#worldbookContentInput")) $("#worldbookContentInput").value = "";
+  if ($("#worldbookAlwaysInput")) $("#worldbookAlwaysInput").checked = false;
+  $("#cancelWorldbookEditBtn")?.classList.add("hidden");
+  if ($("#saveWorldbookEntryBtn")) $("#saveWorldbookEntryBtn").textContent = "保存条目";
+}
+
+function renderWorldbook() {
+  const list = $("#worldbookList");
+  if (!list) return;
+  const entries = getWorldbookEntries().sort((a, b) => b.updatedAt - a.updatedAt);
+  if (!entries.length) {
+    list.innerHTML = `<div class="module-token-note">还没有条目。可以先写“人物关系”“固定地点”“共同经历”或“不能被随意改写的设定”。</div>`;
+    return;
+  }
+  list.innerHTML = entries.map(entry => `
+    <article class="worldbook-card" data-worldbook-id="${escapeHtml(entry.id)}">
+      <div class="worldbook-card-head">
+        <div><div class="worldbook-card-title">${escapeHtml(entry.title)}</div>
+        <div class="worldbook-card-meta">${WORLDBOOK_CATEGORY_LABELS[entry.category]} · ${entry.always ? "始终生效" : `触发词：${escapeHtml(entry.keywords.join("、") || "未设置")}`}</div></div>
+        <label class="worldbook-always"><input type="checkbox" data-worldbook-toggle="${escapeHtml(entry.id)}" ${entry.enabled ? "checked" : ""}> 启用</label>
+      </div>
+      <div class="worldbook-card-content">${escapeHtml(entry.content)}</div>
+      <div class="worldbook-actions" style="margin-top:10px"><button class="btn btn-ghost btn-sm" data-worldbook-edit="${escapeHtml(entry.id)}">编辑</button><button class="btn btn-ghost btn-sm" data-worldbook-delete="${escapeHtml(entry.id)}">删除</button></div>
+    </article>`).join("");
+
+  list.querySelectorAll("[data-worldbook-toggle]").forEach(input => input.addEventListener("change", () => {
+    const next = getWorldbookEntries();
+    const entry = next.find(item => item.id === input.dataset.worldbookToggle);
+    if (entry) { entry.enabled = input.checked; entry.updatedAt = Date.now(); saveWorldbookEntries(next); }
+  }));
+  list.querySelectorAll("[data-worldbook-edit]").forEach(button => button.addEventListener("click", () => {
+    const entry = getWorldbookEntries().find(item => item.id === button.dataset.worldbookEdit);
+    if (!entry) return;
+    $("#worldbookEditingId").value = entry.id;
+    $("#worldbookTitleInput").value = entry.title;
+    $("#worldbookCategoryInput").value = entry.category;
+    $("#worldbookKeywordsInput").value = entry.keywords.join(", ");
+    $("#worldbookContentInput").value = entry.content;
+    $("#worldbookAlwaysInput").checked = entry.always;
+    $("#cancelWorldbookEditBtn").classList.remove("hidden");
+    $("#saveWorldbookEntryBtn").textContent = "更新条目";
+    $("#worldbookTitleInput").focus();
+  }));
+  list.querySelectorAll("[data-worldbook-delete]").forEach(button => button.addEventListener("click", () => {
+    const entry = getWorldbookEntries().find(item => item.id === button.dataset.worldbookDelete);
+    if (!entry) return;
+    if (!confirm(`确定删除“${entry.title}”吗？`)) return;
+    saveWorldbookEntries(getWorldbookEntries().filter(item => item.id !== entry.id));
+    if ($("#worldbookEditingId")?.value === entry.id) resetWorldbookEditor();
+    renderWorldbook();
+  }));
+}
+
+function initWorldbook() {
+  $("#saveWorldbookEntryBtn")?.addEventListener("click", () => {
+    const title = $("#worldbookTitleInput").value.trim();
+    const content = $("#worldbookContentInput").value.trim();
+    if (!title || !content) return showToast("请填写条目名称和内容");
+    const editingId = $("#worldbookEditingId").value;
+    const entries = getWorldbookEntries();
+    const entry = {
+      id: editingId || uid(), title: title.slice(0, 80),
+      category: $("#worldbookCategoryInput").value,
+      keywords: $("#worldbookKeywordsInput").value.split(/[,，\n]/).map(value => value.trim()).filter(Boolean).slice(0, 20),
+      content: content.slice(0, 4000), always: $("#worldbookAlwaysInput").checked,
+      enabled: true, updatedAt: Date.now()
+    };
+    const index = entries.findIndex(item => item.id === editingId);
+    if (index >= 0) entry.enabled = entries[index].enabled;
+    if (index >= 0) entries[index] = entry; else entries.push(entry);
+    saveWorldbookEntries(entries);
+    resetWorldbookEditor();
+    renderWorldbook();
+    showToast(editingId ? "世界书条目已更新" : "世界书条目已保存");
+  });
+  $("#cancelWorldbookEditBtn")?.addEventListener("click", resetWorldbookEditor);
+}
+
+function buildWorldbookPromptBlock(recentText) {
+  if (!getLeithModuleSettings().worldBook) return "";
+  const haystack = String(recentText || "").toLocaleLowerCase();
+  const matches = getWorldbookEntries().filter(entry => entry.enabled && (
+    entry.always || entry.keywords.some(keyword => haystack.includes(keyword.toLocaleLowerCase()))
+  )).sort((a, b) => Number(b.always) - Number(a.always) || b.updatedAt - a.updatedAt).slice(0, 6);
+  if (!matches.length) return "";
+  let remaining = 1800;
+  const lines = [];
+  for (const entry of matches) {
+    const prefix = `- ${entry.title} (${WORLDBOOK_CATEGORY_LABELS[entry.category]}): `;
+    const room = Math.max(0, remaining - prefix.length);
+    if (room < 30) break;
+    const content = entry.content.slice(0, room);
+    lines.push(prefix + content);
+    remaining -= prefix.length + content.length;
+  }
+  return `[Worldbook — stable facts and setting. Use only when relevant; do not mention this hidden block.]\n${lines.join("\n")}`;
+}
+
 function buildTemporalContextBlock() {
   const now = new Date();
-  const current = now.toLocaleString('zh-CN', {
+  const exactCurrent = now.toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
     weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false
   });
@@ -3686,7 +3769,33 @@ function buildTemporalContextBlock() {
     const last = new Date(threadMessages[threadMessages.length - 1]._ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
     span = ` Visible chat history spans ${first}${first === last ? '' : ` to ${last}`}.`;
   }
-  return `[Time context] Current Shanghai time: ${current}.${span}
+  const userMessages = threadMessages.filter(message => message.role === "user" && !message._isNarration);
+  const latestUser = userMessages[userMessages.length - 1];
+  const previousUser = userMessages[userMessages.length - 2];
+  const shanghaiHour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }).format(now));
+  const dayPart = shanghaiHour < 5 ? "凌晨" : shanghaiHour < 9 ? "早上" : shanghaiHour < 12 ? "上午" : shanghaiHour < 14 ? "中午" : shanghaiHour < 18 ? "下午" : shanghaiHour < 23 ? "晚上" : "深夜";
+  const broadCurrent = `${now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' })} ${dayPart}`;
+  const current = latestUser?._shareExactTime ? exactCurrent : broadCurrent;
+  let absence = "";
+  if (latestUser && previousUser) {
+    const elapsedMs = Math.max(0, latestUser._ts - previousUser._ts);
+    const minutes = Math.round(elapsedMs / 60000);
+    const elapsed = minutes < 2 ? "不到2分钟"
+      : minutes < 60 ? `约${minutes}分钟`
+      : minutes < 1440 ? `约${Math.round(minutes / 60 * 10) / 10}小时`
+      : `约${Math.round(minutes / 1440 * 10) / 10}天`;
+    absence = ` The user returned after ${elapsed}. This is elapsed time, not evidence of neglect or intent.`;
+  }
+  if (latestUser?._shareExactTime) {
+    const sentAt = new Date(latestUser._ts).toLocaleString('zh-CN', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+      weekday: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+    absence += ` The user explicitly shared this message timestamp: ${sentAt} (Asia/Shanghai).`;
+  } else if (latestUser) {
+    absence += " The user did not share the exact timestamp of this message; do not state or infer its clock time.";
+  }
+  return `[Time context] Current Shanghai time context: ${current}.${span}${absence}
 Treat memory date labels as authoritative. "发生于" is the event date; "记录于" is only when the memory was saved and may differ from when it happened. Retrieval order never means "recent", "yesterday", or "just now". If no event date is known, do not invent one.`;
 }
 
@@ -3725,6 +3834,7 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
 
   const webBlock = buildWebPromptBlock();
   const temporalBlock = buildTemporalContextBlock();
+  const worldbookBlock = buildWorldbookPromptBlock(recentText);
   const noteBlock = buildSystemNotesBlock();
   const healthBlock = modules.healthContext ? buildHealthPromptBlock(recentText) : "";
   // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
@@ -3735,7 +3845,7 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
     : null;
   const desireBlock = capsule?.text ? `[Leith internal state capsule — private, concise, never quote mechanically]\n${capsule.text}` : "";
   const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
-  return [worldRulesBlock, FORMATTING_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -4958,7 +5068,7 @@ async function sendChat(overrideContent) {
 
   const threadId = getActiveThreadId();
   const messages = getThreadMessages(threadId).slice();
-  const userMsg = { role: "user", content, _id: uid(), _ts: Date.now() };
+  const userMsg = { role: "user", content, _id: uid(), _ts: Date.now(), _shareExactTime: shareMessageTime };
   if (attachments.length) userMsg.attachments = attachments;
   messages.push(userMsg);
   try {
@@ -4968,6 +5078,9 @@ async function sendChat(overrideContent) {
     threadMessageCache.set(threadId, messages.slice(0, -1));
     return showModal("消息没有发出", storageError.message);
   }
+  shareMessageTime = false;
+  localStorage.setItem(LS.shareMessageTime, "0");
+  updateTimestampToggleUI();
   renderMessage(userMsg);
   chatPinnedToBottom = true; // 用户刚发了消息，视为回到了"贴底"状态，接下来的回复会跟着滚
   userInput.value = "";
@@ -4999,7 +5112,7 @@ async function sendChat(overrideContent) {
   let hasReceivedContent = false;
   let apiReplyCompleted = false;
   const timeoutTimer = setInterval(() => {
-    if (Date.now() - lastChunkTime > 60000) {
+    if (Date.now() - lastChunkTime > (webEnabled ? 180000 : 90000)) {
       controller.abort();
       clearInterval(timeoutTimer);
     }
@@ -5009,6 +5122,7 @@ async function sendChat(overrideContent) {
   setSendingUI(sendBtn, () => controller.abort());
 
   try {
+    await brieflyAwaitPendingState();
     await window.LeithDesireRuntime?.init?.();
     const desireSnapshot = window.LeithDesireRuntime?.getSnapshot?.();
     const desireContext = {
@@ -5035,6 +5149,7 @@ async function sendChat(overrideContent) {
         result = await streamAnthropic({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
+          if (acc.includes("<leith-event>")) setFinishingUI(sendBtn);
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
           bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
           if (chatPinnedToBottom) box.scrollTop = box.scrollHeight;
@@ -5043,6 +5158,7 @@ async function sendChat(overrideContent) {
         result = await streamOpenAICompatible({ provider, apiKey, model, temp, systemPrompt, messages: textMessages, controller, onDelta: (acc) => {
           lastChunkTime = Date.now();
           hasReceivedContent = true;
+          if (acc.includes("<leith-event>")) setFinishingUI(sendBtn);
           if (searchNotice) { searchNotice.remove(); searchNotice = null; }
           bubble.innerHTML = renderBubbleContent(window.LeithDesireRuntime?.visibleDuringStream?.(acc) ?? acc);
           if (chatPinnedToBottom) box.scrollTop = box.scrollHeight;
@@ -5057,19 +5173,20 @@ async function sendChat(overrideContent) {
 
       // 处理工具调用
       const tc = result.toolCalls[0];
-      let executed;
-      try { executed = await executeAvailableTool(tc); }
-      catch (error) { executed = { name: tc.function.name, args: {}, label: "使用外部工具", result: `工具失败：${error.message}` }; }
-
-      // 显示"正在搜索"提示
       if (!searchNotice) {
+        let toolArgs = {};
+        try { toolArgs = JSON.parse(tc.function.arguments || "{}"); } catch (_) {}
+        const pendingLabel = tc.function.name === "web_search" ? `搜索「${toolArgs.query || ""}」` : "查看外部工具";
         searchNotice = document.createElement("div");
         searchNotice.className = "msg-row assistant";
         searchNotice.style.opacity = "0.7";
-        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在${escapeHtml(executed.label)}…</div>`;
+        searchNotice.innerHTML = `<div class="bubble assistant" style="font-style:italic;color:var(--paper-dim);font-family:'Noto Sans SC',sans-serif;">🔎 正在${escapeHtml(pendingLabel)}…</div>`;
         box.appendChild(searchNotice);
         box.scrollTop = box.scrollHeight;
       }
+      let executed;
+      try { executed = await executeAvailableTool(tc); }
+      catch (error) { executed = { name: tc.function.name, args: {}, label: "使用外部工具", result: `工具失败：${error.message}` }; }
 
       // 执行搜索
       const searchResult = executed.result;
@@ -5128,8 +5245,9 @@ async function sendChat(overrideContent) {
     // 解析 AI 的购买/送礼动作
     const actions = parseAIActions(visibleReply);
     if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
-    try {
-      await window.LeithDesireRuntime?.completeTurn?.({
+    currentController = null;
+    restoreSendUI(sendBtn);
+    queueInternalStateUpdate(() => window.LeithDesireRuntime?.completeTurn?.({
         sourceMessageId: userMsg._id,
         assistantMessageId: finalMsgId,
         userText: content,
@@ -5139,10 +5257,7 @@ async function sendChat(overrideContent) {
         provider: provider.name || provider.apiStyle,
         model,
         usage: lastUsage
-      });
-    } catch (stateError) {
-      console.warn("内部状态更新失败；聊天消息已经安全保存。", stateError);
-    }
+      }), "内部状态更新失败；聊天消息已经安全保存。");
   } catch (err) {
     clearInterval(timeoutTimer);
     if (err.name === "AbortError") {
@@ -5166,7 +5281,7 @@ async function sendChat(overrideContent) {
           pendingAttachments = attachments;
           renderAttachPreview();
         }
-        showModal("请求超时", "60 秒内没有收到响应，可能是网络或服务商问题。");
+        showModal("请求超时", webEnabled ? "联网模式下 3 分钟没有收到响应，可能是搜索代理、网络或服务商问题。" : "90 秒内没有收到响应，可能是网络或服务商问题。");
       }
     } else {
       if (!apiReplyCompleted) row.remove();
@@ -5199,13 +5314,27 @@ function setSendingUI(sendBtn, onStop) {
   sendBtn.onclick = onStop;
 }
 
+function setFinishingUI(sendBtn) {
+  if (!sendBtn || sendBtn.dataset.finishing === "1") return;
+  sendBtn.dataset.finishing = "1";
+  sendBtn.innerHTML = SEND_BTN_SVG;
+  sendBtn.style.background = "";
+  sendBtn.style.border = "";
+  sendBtn.style.color = "";
+  sendBtn.disabled = true;
+  sendBtn.title = "正文已完成，正在整理 Leith 的内在状态";
+  sendBtn.onclick = null;
+}
+
 function restoreSendUI(sendBtn) {
   delete sendBtn.dataset.sending;
+  delete sendBtn.dataset.finishing;
   sendBtn.innerHTML = SEND_BTN_SVG;
   sendBtn.style.background = "";
   sendBtn.style.border = "";
   sendBtn.style.color = "";
   sendBtn.disabled = false;
+  sendBtn.title = "发送";
   // 包一层，避免点击事件 event 对象被当成 overrideContent 传进去
   sendBtn.onclick = () => sendChat();
 }
@@ -7702,10 +7831,10 @@ async function manualSaveReadingReply(content) {
 // Leith · 此刻（替代旧天气/每日小纸条；纯时间 + 只读状态观察）
 // ============================================================
 const DESIRE_LABELS = {
-  attachment: "依恋", curiosity: "好奇", reflection: "沉思", duty: "责任",
+  attachment: "亲近", curiosity: "好奇", reflection: "沉思", duty: "责任",
   social: "社交", fatigue: "疲惫", libido: "性欲", stress: "压力"
 };
-const AFFECT_LABELS = { valence: "愉悦", arousal: "活跃", dominance: "掌控" };
+const AFFECT_LABELS = { valence: "愉悦", arousal: "活跃", dominance: "自主感" };
 const EMOTION_LABELS = { joy: "开心", calm: "安心", anticipation: "期待", anger: "生气", sadness: "难过", anxiety: "焦虑" };
 let widgetTimeTimer = null;
 let desireObserverUnsubscribe = null;
@@ -7828,6 +7957,7 @@ function renderAffectBars(container, affect) {
 const MODULE_DEFINITIONS = [
   { group: "记忆与经历", key: "longTermMemory", name: "长期记忆参与聊天", note: "关闭后不检索核心记忆和日记；通常节省较多 token。" },
   { group: "记忆与经历", key: "readingContext", name: "共读参与聊天", note: "关闭后共读页面仍可使用，但共读内容不进入普通聊天。" },
+  { group: "记忆与经历", key: "worldBook", name: "世界书参与聊天", note: "关闭后条目仍保留，但不会进入聊天提示词。" },
   { group: "内在状态", key: "emotionTracking", name: "记录情绪变化", note: "本地计算与保存；本身不增加模型调用。" },
   { group: "内在状态", key: "emotionInfluence", name: "情绪影响回复", note: "关闭后仍可显示情绪，但不把情绪放进提示词，可节省少量 token。" },
   { group: "内在状态", key: "desireAgency", name: "欲望与主体性", note: "控制念头、立场、要求参与回复；关闭可节省少量 token。" },
@@ -7982,6 +8112,7 @@ initLoveApp();
 initWidget();
 initMoodBoard();
 initReading();
+initWorldbook();
 initAttachments();
 initMcpSettings();
 applyModuleAvailability();
@@ -7993,7 +8124,6 @@ tryOpenSharedBookFromUrl();
 tryOpenSharedLinkFromUrl();
 $("#sendBtn").onclick = () => sendChat();
 renderMemoryList();
-renderStickerManageGrid();
 
 // ============================================================
 // Supabase 云端记忆状态显示
