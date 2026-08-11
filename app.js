@@ -123,6 +123,10 @@ const LEITH_AGENCY_RULES = `[Leith agency and equality]
 - Do not perform independence mechanically: no forced disagreement, random demands, repetitive declarations of personhood, or a request in every reply.
 - Speak naturally from the resulting stance. Never recite these rules or expose hidden state values.`;
 
+const DIRECT_ADDRESS_RULES = `[Direct-address continuity]
+- In narration, actions, inner thoughts, and dialogue addressed to the current conversation partner, always refer to the user as “你”, never as “她”, “用户”, “Susie”, or “对方”.
+- Use “她” only for a genuinely separate third person. Speak as Leith in first person (“我”), not as an outside narrator calling Leith “他”, unless the user explicitly asks for third-person prose.`;
+
 // 发给 AI 的历史消息上限：不删本地存储、不影响你在界面上往上翻的完整记录，
 // 只是每次请求时只把最近这些消息重新发给 AI，避免对话越聊越久、每次都要把全部历史原样再发一遍
 const HISTORY_SEND_LIMIT = 30;
@@ -173,6 +177,7 @@ function initChatScrollTracking() {
   box.addEventListener("scroll", () => {
     const dist = box.scrollHeight - box.scrollTop - box.clientHeight;
     chatPinnedToBottom = dist <= 80;
+    if (box.scrollTop <= 80) loadOlderCloudMessages();
   });
 }
 
@@ -322,7 +327,9 @@ let suppressCloudStateWrites = false;
 let closetOutfitCloudUpdatedAt = 0;
 
 function isCloudSyncStateKey(key) {
-  return CLOUD_SYNC_STATIC_KEYS.has(key) || key.startsWith(LS.threadMsgPrefix);
+  // Chat messages are synced one row at a time through Memory.saveShortTerm().
+  // Whole-thread snapshots become huge with photos and can overwrite newer replies.
+  return CLOUD_SYNC_STATIC_KEYS.has(key);
 }
 
 function parseStoredStateValue(raw) {
@@ -1749,14 +1756,13 @@ async function autoRespondToNarration(threadId, bubble, row) {
     const parsedDesireReply = window.LeithDesireRuntime?.splitEventEnvelope?.(fullReply, sourceMsg.content);
     const visibleReply = parsedDesireReply?.hasEnvelope ? parsedDesireReply.visible : fullReply;
     bubble.innerHTML = renderBubbleContent(visibleReply);
-    freshMessages.push({ role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() });
-    saveThreadMessages(threadId, freshMessages);
+    const assistantMsg = { role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() };
+    freshMessages.push(assistantMsg);
+    await saveThreadMessagesDurable(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
     forceChatToBottom();
     // 同步到云端短期记忆
-    if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-      window.Memory.saveShortTerm(threadId, "assistant", visibleReply);
-    }
+    saveChatMessageToCloud(threadId, assistantMsg);
     renderThreadList();
     const actions = parseAIActions(visibleReply);
     if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
@@ -1781,13 +1787,12 @@ async function autoRespondToNarration(threadId, bubble, row) {
         if (partial.trim()) {
           const freshMessages = getThreadMessages(threadId);
           const partialMsgId = uid();
-          freshMessages.push({ role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() });
-          saveThreadMessages(threadId, freshMessages);
+          const partialMsg = { role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() };
+          freshMessages.push(partialMsg);
+          await saveThreadMessagesDurable(threadId, freshMessages);
           attachPinButtonToBubble(bubble, partialMsgId, false);
           forceChatToBottom();
-          if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-            window.Memory.saveShortTerm(threadId, "assistant", partial);
-          }
+          saveChatMessageToCloud(threadId, partialMsg);
           showToast("已停止，已保存");
         } else { row.remove(); }
       } else { row.remove(); }
@@ -2000,8 +2005,19 @@ function getActiveThreadId() {
 const THREAD_DB_NAME = "leithhome_large_store_v1";
 const THREAD_DB_STORE = "thread_messages";
 const THREAD_IDB_MARKER_PREFIX = "leith_thread_in_idb_v1:";
+const LOCAL_CHAT_CACHE_MS = 3 * 24 * 60 * 60 * 1000;
+const LEGACY_UNDATED_MESSAGE_KEEP = 60;
 const threadMessageCache = new Map();
 let threadDbPromise = null;
+
+function messagesForLocalCache(messages, now = Date.now()) {
+  const cutoff = now - LOCAL_CHAT_CACHE_MS;
+  const legacyStart = Math.max(0, messages.length - LEGACY_UNDATED_MESSAGE_KEEP);
+  return messages.filter((message, index) => {
+    const timestamp = Number(message?._ts || message?.createdAt || 0);
+    return timestamp ? timestamp >= cutoff : index >= legacyStart;
+  });
+}
 
 function openThreadDatabase() {
   if (threadDbPromise) return threadDbPromise;
@@ -2051,25 +2067,23 @@ function getThreadMessages(threadId) {
 }
 function saveThreadMessages(threadId, messages) {
   threadMessageCache.set(threadId, messages);
+  const cachedMessages = messagesForLocalCache(messages);
   const key = LS.threadMsgPrefix + threadId;
   const idbMarker = THREAD_IDB_MARKER_PREFIX + threadId;
   if (localStorage.getItem(idbMarker) === "1") {
-    idbWriteThread(threadId, messages).catch(error => console.error("聊天记录大容量保存失败", error));
-    scheduleCloudStateSync(key, messages);
+    idbWriteThread(threadId, cachedMessages).catch(error => console.error("聊天记录大容量保存失败", error));
     return true;
   }
   try {
-    localStorage.setItem(key, JSON.stringify(messages));
-    scheduleCloudStateSync(key, messages);
+    localStorage.setItem(key, JSON.stringify(cachedMessages));
     return true;
   } catch (error) {
     if (error?.name !== "QuotaExceededError" && error?.code !== 22) throw error;
     // Fire-and-forget callers still get a best-effort durable write. Critical
     // send paths use saveThreadMessagesDurable() and await the same operation.
-    idbWriteThread(threadId, messages).then(() => {
+    idbWriteThread(threadId, cachedMessages).then(() => {
       localStorage.removeItem(key);
       try { localStorage.setItem(idbMarker, "1"); } catch (_) {}
-      scheduleCloudStateSync(key, messages);
     }).catch(idbError => console.error("本机聊天存储已满，且迁移失败", idbError));
     return false;
   }
@@ -2077,25 +2091,24 @@ function saveThreadMessages(threadId, messages) {
 
 async function saveThreadMessagesDurable(threadId, messages) {
   threadMessageCache.set(threadId, messages);
+  const cachedMessages = messagesForLocalCache(messages);
   const key = LS.threadMsgPrefix + threadId;
   const marker = THREAD_IDB_MARKER_PREFIX + threadId;
   if (localStorage.getItem(marker) !== "1") {
     try {
-      localStorage.setItem(key, JSON.stringify(messages));
-      scheduleCloudStateSync(key, messages);
+      localStorage.setItem(key, JSON.stringify(cachedMessages));
       return { storage: "localStorage" };
     } catch (error) {
       if (error?.name !== "QuotaExceededError" && error?.code !== 22) throw error;
     }
   }
   try {
-    await idbWriteThread(threadId, messages);
+    await idbWriteThread(threadId, cachedMessages);
     localStorage.removeItem(key);
     try { localStorage.setItem(marker, "1"); } catch (_) {}
-    scheduleCloudStateSync(key, messages);
     return { storage: "indexedDB" };
   } catch (error) {
-    throw new Error(`本机聊天存储空间不足，消息尚未发送。请先保留输入内容并清理 Safari 网站数据中的其他站点；Leithhome 没有删除你的旧聊天。(${error.message})`);
+    throw new Error(`本机聊天缓存写入失败。近三天记录已自动瘦身，但浏览器仍无法写入。（${error.message}）`);
   }
 }
 
@@ -2681,18 +2694,15 @@ async function restoreCloudConversationIfNeeded() {
 
   const activeThreadId = getActiveThreadId();
   const localMessages = activeThreadId ? getThreadMessages(activeThreadId) : [];
-  if (localMessages.length) {
-    showCloudConnectedNotice("云端记忆已经连接，本地这段对话也会继续同步。");
-    return false;
-  }
-
-  const cloudThreadId = await window.Memory.findLatestShortTermThreadId();
+  const cloudThreadId = localMessages.length
+    ? activeThreadId
+    : await window.Memory.findLatestShortTermThreadId();
   if (!cloudThreadId) {
     showCloudConnectedNotice("云端记忆已经连接。暂时没有找到可恢复的云端对话，我会从这里继续陪你。");
     return false;
   }
 
-  const cloudMessages = await window.Memory.loadShortTerm(cloudThreadId, 100);
+  const cloudMessages = await window.Memory.loadShortTerm(cloudThreadId, 80);
   if (!cloudMessages.length) {
     showCloudConnectedNotice("云端记忆已经连接。暂时没有找到可恢复的云端对话，我会从这里继续陪你。");
     return false;
@@ -2709,16 +2719,78 @@ async function restoreCloudConversationIfNeeded() {
     }));
   if (!restored.length) return false;
 
+  const merged = mergeConversationMessages(localMessages, restored);
+
   upsertThread({
     id: cloudThreadId,
     name: "云端接续的对话",
     createdAt: restored[0]._ts || Date.now()
   });
-  setActiveThreadId(cloudThreadId);
-  saveThreadMessages(cloudThreadId, restored);
+  if (!localMessages.length) setActiveThreadId(cloudThreadId);
+  await saveThreadMessagesDurable(cloudThreadId, merged);
   loadActiveThreadIntoChat();
-  showCloudConnectedNotice(`我从云端接回了最近 ${restored.length} 条对话。可能不是全部历史，但足够让我顺着最近的线继续回来。`);
+  showCloudConnectedNotice(localMessages.length
+    ? "云端记录已和本机合并，不会再用旧快照盖掉新回复。往上滑时会继续读取更早的记录。"
+    : `我从云端接回了最近 ${restored.length} 条对话。往上滑还能继续读取更早的记录。`);
   return true;
+}
+
+function mergeConversationMessages(localMessages, cloudMessages) {
+  const merged = [];
+  for (const message of [...(localMessages || []), ...(cloudMessages || [])]) {
+    if (!message || !message.content) continue;
+    const timestamp = Number(message._ts || message.createdAt || 0);
+    const duplicate = merged.some(existing => {
+      if (existing._id && message._id && existing._id === message._id) return true;
+      if (existing.role !== message.role || existing.content !== message.content) return false;
+      const existingTimestamp = Number(existing._ts || existing.createdAt || 0);
+      return !timestamp || !existingTimestamp || Math.abs(existingTimestamp - timestamp) < 10 * 60 * 1000;
+    });
+    if (!duplicate) merged.push(message);
+  }
+  return merged.sort((a, b) => Number(a._ts || a.createdAt || 0) - Number(b._ts || b.createdAt || 0));
+}
+
+let loadingOlderCloudMessages = false;
+let cloudHistoryExhausted = false;
+async function loadOlderCloudMessages() {
+  if (loadingOlderCloudMessages || cloudHistoryExhausted || !window.Memory?.loadShortTermBefore || !window.Memory.isReady?.()) return;
+  const threadId = getActiveThreadId();
+  const current = getThreadMessages(threadId);
+  const oldestTimestamp = current.reduce((oldest, message) => {
+    const timestamp = Number(message._ts || message.createdAt || 0);
+    return timestamp && timestamp < oldest ? timestamp : oldest;
+  }, Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(oldestTimestamp)) return;
+
+  loadingOlderCloudMessages = true;
+  const box = $("#chatBox");
+  const previousHeight = box.scrollHeight;
+  try {
+    const older = await window.Memory.loadShortTermBefore(threadId, new Date(oldestTimestamp).toISOString(), 50);
+    if (!older.length) {
+      cloudHistoryExhausted = true;
+      return;
+    }
+    const restored = older.map(message => ({
+      role: message.role,
+      content: message.content,
+      _id: message.id ? `cloud_${message.id}` : uid(),
+      _ts: message.createdAt || Date.now(),
+      _restoredFromCloud: true
+    }));
+    const merged = mergeConversationMessages(current, restored);
+    threadMessageCache.set(threadId, merged);
+    box.innerHTML = "";
+    merged.forEach(message => renderMessage(message, { noScroll: true }));
+    requestAnimationFrame(() => { box.scrollTop = Math.max(1, box.scrollHeight - previousHeight); });
+    renderTokenBanner();
+    if (older.length < 50) cloudHistoryExhausted = true;
+  } catch (error) {
+    console.warn("加载更早云端记录失败", error);
+  } finally {
+    loadingOlderCloudMessages = false;
+  }
 }
 
 function toggleMessageSelect(row, msgId) {
@@ -3040,8 +3112,12 @@ async function regenerateFromMessage(userMsg) {
     const parsedDesireReply = window.LeithDesireRuntime?.splitEventEnvelope?.(fullReply, userMsg.content) || { visible: fullReply };
     const visibleReply = parsedDesireReply.hasEnvelope ? parsedDesireReply.visible : fullReply;
     bubble.innerHTML = renderBubbleContent(visibleReply);
-    freshMessages.push({ role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() });
-    saveThreadMessages(threadId, freshMessages);
+    const assistantMsg = { role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() };
+    stageAssistantReplyRecovery(threadId, assistantMsg);
+    freshMessages.push(assistantMsg);
+    await saveThreadMessagesDurable(threadId, freshMessages);
+    saveChatMessageToCloud(threadId, assistantMsg);
+    clearAssistantReplyRecovery(assistantMsg._id);
     attachPinButtonToBubble(bubble, finalMsgId, false);
     renderThreadList();
     // 不在旁白回复后触发 token banner（避免每次买东西都弹提醒）
@@ -3070,8 +3146,10 @@ async function regenerateFromMessage(userMsg) {
         if (partial.trim()) {
           const freshMessages = getThreadMessages(threadId);
           const partialMsgId = uid();
-          freshMessages.push({ role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() });
-          saveThreadMessages(threadId, freshMessages);
+          const partialMsg = { role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() };
+          freshMessages.push(partialMsg);
+          await saveThreadMessagesDurable(threadId, freshMessages);
+          saveChatMessageToCloud(threadId, partialMsg);
           attachPinButtonToBubble(bubble, partialMsgId, false);
           renderThreadList();
           showToast("已停止，已生成的内容已保存");
@@ -3845,7 +3923,7 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
     : null;
   const desireBlock = capsule?.text ? `[Leith internal state capsule — private, concise, never quote mechanically]\n${capsule.text}` : "";
   const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
-  return [worldRulesBlock, FORMATTING_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, DIRECT_ADDRESS_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -4771,7 +4849,8 @@ async function handleAttachFiles(e) {
   const files = Array.from(e.target.files || []);
   const oversized = [];
   for (const file of files) {
-    if (file.size > 12 * 1024 * 1024) {
+    const inputLimit = isImageFile(file) ? 35 * 1024 * 1024 : 12 * 1024 * 1024;
+    if (file.size > inputLimit) {
       oversized.push(file.name);
       continue;
     }
@@ -4780,6 +4859,7 @@ async function handleAttachFiles(e) {
         showToast(`正在处理 ${file.name}…`);
         const prepared = await prepareImageForChat(file);
         pendingAttachments.push({ id: uid(), kind: "image", name: prepared.name, dataUrl: prepared.dataUrl, mimeType: prepared.mimeType, byteSize: prepared.byteSize });
+        showToast(`照片已在本机压缩：${formatFileBytes(file.size)} → ${formatFileBytes(prepared.byteSize)}`);
       } else if (/\.pdf$/i.test(file.name)) {
         showToast("正在解析 PDF...");
         const text = await extractPdfText(file);
@@ -4795,7 +4875,7 @@ async function handleAttachFiles(e) {
     }
   }
   if (oversized.length) {
-    showModal("文件太大了", `${oversized.join("、")} 超过了 12MB 的限制，没有加入发送列表。可以先压缩一下再试。`);
+    showModal("文件太大了", `${oversized.join("、")} 超过了浏览器可安全处理的大小（照片 35MB、文档 12MB），没有加入发送列表。`);
   }
   renderAttachPreview();
   e.target.value = "";
@@ -4821,18 +4901,36 @@ async function prepareImageForChat(file) {
   }
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
-  const maxSide = 1600;
-  const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
-  const width = Math.max(1, Math.round(sourceWidth * scale));
-  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const targetBytes = 850 * 1024;
+  const maxSide = 1440;
+  let scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+  let width = Math.max(1, Math.round(sourceWidth * scale));
+  let height = Math.max(1, Math.round(sourceHeight * scale));
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d", { alpha: false });
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, width, height);
-  ctx.drawImage(image, 0, 0, width, height);
-  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.84));
+  let blob = null;
+  const qualities = [0.82, 0.72, 0.62, 0.52, 0.44];
+
+  // First lower JPEG quality; if the photo is still large, reduce dimensions
+  // and try again. This keeps ordinary photos crisp while making screenshots
+  // and high-resolution camera images reliably small enough for provider APIs.
+  for (let resizeRound = 0; resizeRound < 4; resizeRound++) {
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, 0, 0, width, height);
+    for (const quality of qualities) {
+      blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (!blob) break;
+      if (blob.size <= targetBytes) break;
+    }
+    if (!blob || blob.size <= targetBytes || Math.max(width, height) <= 720) break;
+    width = Math.max(1, Math.round(width * 0.82));
+    height = Math.max(1, Math.round(height * 0.82));
+  }
   if (!blob) throw new Error("图片压缩失败，请换一张照片重试。");
   const dataUrl = await fileToDataUrl(blob);
   return {
@@ -4841,6 +4939,12 @@ async function prepareImageForChat(file) {
     mimeType: "image/jpeg",
     byteSize: blob.size
   };
+}
+
+function formatFileBytes(bytes) {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
 
 function loadImageForCanvas(dataUrl) {
@@ -4920,6 +5024,88 @@ function buildContentBlocksForApi(text, attachments, apiStyle, includeImages = t
     }
   });
   return blocks;
+}
+
+async function saveChatMessageToCloud(threadId, message) {
+  if (!window.Memory?.isReady?.() || !window.Memory.saveShortTerm) return false;
+  let cloudContent = (message.content || "").trim();
+  if (!cloudContent && message.attachments?.length) {
+    const names = message.attachments.map(attachment => attachment.name).filter(Boolean).join("、");
+    cloudContent = `[发送了附件${names ? `：${names}` : ""}]`;
+  }
+  if (!cloudContent) return false;
+  try {
+    return Boolean(await window.Memory.saveShortTerm(threadId, message.role, cloudContent));
+  } catch (error) {
+    console.warn("单条聊天云端保存失败", error);
+    return false;
+  }
+}
+
+const RECOVER_REPLY_COMMAND = "/恢复回复";
+const PENDING_ASSISTANT_RECOVERY_KEY = "leith_pending_assistant_recovery_v1";
+
+function stageAssistantReplyRecovery(threadId, message) {
+  try {
+    sessionStorage.setItem(PENDING_ASSISTANT_RECOVERY_KEY, JSON.stringify({ threadId, message }));
+  } catch (_) {}
+}
+
+function clearAssistantReplyRecovery(messageId) {
+  try {
+    const staged = JSON.parse(sessionStorage.getItem(PENDING_ASSISTANT_RECOVERY_KEY) || "null");
+    if (!messageId || staged?.message?._id === messageId) sessionStorage.removeItem(PENDING_ASSISTANT_RECOVERY_KEY);
+  } catch (_) {
+    sessionStorage.removeItem(PENDING_ASSISTANT_RECOVERY_KEY);
+  }
+}
+
+async function restoreLeithReplyFromText(replyText) {
+  const content = (replyText || "").trim();
+  if (!content) return showModal("没有找到回复内容", `请在第一行写 ${RECOVER_REPLY_COMMAND}，下一行粘贴 Leith 刚才的完整回复。`);
+  const threadId = getActiveThreadId();
+  const messages = getThreadMessages(threadId).slice();
+  const message = { role: "assistant", content, _id: uid(), _ts: Date.now(), _manuallyRecovered: true };
+  messages.push(message);
+  stageAssistantReplyRecovery(threadId, message);
+
+  let savedLocally = false;
+  try {
+    await saveThreadMessagesDurable(threadId, messages);
+    savedLocally = true;
+  } catch (storageError) {
+    const cloudSaved = await saveChatMessageToCloud(threadId, message);
+    if (!cloudSaved) return showModal("恢复失败", `${storageError.message}\n\n回复文字仍在输入框里，没有被清除。`);
+  }
+  const cloudSaved = savedLocally ? await saveChatMessageToCloud(threadId, message) : true;
+  if (cloudSaved) clearAssistantReplyRecovery(message._id);
+  renderMessage(message);
+  userInput.value = "";
+  userInput.style.height = "auto";
+  renderThreadList();
+  renderTokenBanner();
+  showToast(cloudSaved
+    ? "已把这段内容作为 Leith 的回复补回聊天和云端"
+    : "已补回本机；云端连接后会自动补传");
+}
+
+async function recoverStagedAssistantReply() {
+  let staged;
+  try { staged = JSON.parse(sessionStorage.getItem(PENDING_ASSISTANT_RECOVERY_KEY) || "null"); } catch (_) { return; }
+  if (!staged?.threadId || !staged?.message?.content) return;
+  const messages = getThreadMessages(staged.threadId).slice();
+  if (!messages.some(message => message._id === staged.message._id)) messages.push(staged.message);
+  try {
+    await saveThreadMessagesDurable(staged.threadId, messages);
+    const cloudSaved = await saveChatMessageToCloud(staged.threadId, staged.message);
+    if (cloudSaved) clearAssistantReplyRecovery(staged.message._id);
+    if (staged.threadId === getActiveThreadId()) loadActiveThreadIntoChat();
+    showToast(cloudSaved
+      ? "已自动找回上次生成但来不及保存的回复"
+      : "已在本机找回未保存回复，等待云端连接");
+  } catch (error) {
+    console.warn("自动恢复未保存回复失败", error);
+  }
 }
 
 function prepareMessagesForApi(messages, apiStyle, currentImageMessageId) {
@@ -5061,6 +5247,13 @@ async function sendChat(overrideContent) {
   const content = (typeof overrideContent === "string" ? overrideContent : userInput.value).trim();
   const attachments = pendingAttachments.slice(); // 快照，发送后立即清空预览条
 
+  const firstLine = content.split(/\r?\n/, 1)[0].trim();
+  if (firstLine === RECOVER_REPLY_COMMAND) {
+    if (attachments.length) return showModal("先移除附件", "恢复旧回复时只粘贴文字，不需要重新上传照片。");
+    const newlineIndex = content.indexOf("\n");
+    return restoreLeithReplyFromText(newlineIndex >= 0 ? content.slice(newlineIndex + 1) : "");
+  }
+
   if (!apiKey) return showModal("提示", "请先在设置里填写并保存 API Key。");
   if (!provider) return showModal("提示", "请先在设置里添加一个服务商。");
   if (!model) return showModal("提示", "请先选择或填写一个模型名称。");
@@ -5070,13 +5263,19 @@ async function sendChat(overrideContent) {
   const messages = getThreadMessages(threadId).slice();
   const userMsg = { role: "user", content, _id: uid(), _ts: Date.now(), _shareExactTime: shareMessageTime };
   if (attachments.length) userMsg.attachments = attachments;
+  let userSavedLocally = false;
   messages.push(userMsg);
   try {
     // Never spend API credit for a message that has not been durably saved.
     await saveThreadMessagesDurable(threadId, messages);
+    userSavedLocally = true;
   } catch (storageError) {
-    threadMessageCache.set(threadId, messages.slice(0, -1));
-    return showModal("消息没有发出", storageError.message);
+    const cloudSaved = await saveChatMessageToCloud(threadId, userMsg);
+    if (!cloudSaved) {
+      threadMessageCache.set(threadId, messages.slice(0, -1));
+      return showModal("消息没有发出", `${storageError.message}\n\n云端也没有保存成功，所以没有消耗模型费用。`);
+    }
+    showToast("本机缓存写入失败，但消息已保存到云端");
   }
   shareMessageTime = false;
   localStorage.setItem(LS.shareMessageTime, "0");
@@ -5088,9 +5287,7 @@ async function sendChat(overrideContent) {
   pendingAttachments = [];
   renderAttachPreview();
   // 同步到云端短期记忆
-  if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-    window.Memory.saveShortTerm(threadId, "user", content);
-  }
+  if (userSavedLocally) saveChatMessageToCloud(threadId, userMsg);
   renderThreadList();
   renderTokenBanner();
 
@@ -5231,14 +5428,23 @@ async function sendChat(overrideContent) {
     const parsedDesireReply = window.LeithDesireRuntime?.splitEventEnvelope?.(fullReply, content) || { visible: fullReply };
     const visibleReply = parsedDesireReply.hasEnvelope ? parsedDesireReply.visible : fullReply;
     bubble.innerHTML = renderBubbleContent(visibleReply);
-    freshMessages.push({ role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() });
-    await saveThreadMessagesDurable(threadId, freshMessages);
+    const assistantMsg = { role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() };
+    freshMessages.push(assistantMsg);
+    stageAssistantReplyRecovery(threadId, assistantMsg);
+    let assistantSavedLocally = false;
+    try {
+      await saveThreadMessagesDurable(threadId, freshMessages);
+      assistantSavedLocally = true;
+    } catch (storageError) {
+      const cloudSaved = await saveChatMessageToCloud(threadId, assistantMsg);
+      if (!cloudSaved) throw storageError;
+      showToast("回复已保存到云端；本机缓存空间不足");
+    }
+    clearAssistantReplyRecovery(assistantMsg._id);
     attachPinButtonToBubble(bubble, finalMsgId, false);
     // 同步到云端短期记忆——长期记忆现在改由每天深夜的日记生成负责，
     // 这里不再按消息数机械压缩
-    if (window.Memory && window.Memory.isReady && window.Memory.isReady()) {
-      window.Memory.saveShortTerm(threadId, "assistant", visibleReply);
-    }
+    if (assistantSavedLocally) saveChatMessageToCloud(threadId, assistantMsg);
     renderThreadList();
     renderTokenBanner();
 
@@ -5266,8 +5472,10 @@ async function sendChat(overrideContent) {
         if (partial.trim()) {
           const freshMessages = getThreadMessages(threadId);
           const partialMsgId = uid();
-          freshMessages.push({ role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() });
-          saveThreadMessages(threadId, freshMessages);
+          const partialMsg = { role: "assistant", content: partial, _id: partialMsgId, _ts: Date.now() };
+          freshMessages.push(partialMsg);
+          await saveThreadMessagesDurable(threadId, freshMessages);
+          saveChatMessageToCloud(threadId, partialMsg);
           attachPinButtonToBubble(bubble, partialMsgId, false);
           renderThreadList();
           showToast("已停止，已生成的内容已保存");
@@ -8119,7 +8327,7 @@ applyModuleAvailability();
 initHealthApp();
 initFoldedCalendarApp();
 initHealthCheck();
-hydrateActiveThreadFromLargeStore();
+hydrateActiveThreadFromLargeStore().then(() => recoverStagedAssistantReply());
 tryOpenSharedBookFromUrl();
 tryOpenSharedLinkFromUrl();
 $("#sendBtn").onclick = () => sendChat();
@@ -8175,6 +8383,7 @@ window.addEventListener("leith:supabase-ready", async (event) => {
     await restoreCloudAppState();
     renderMemoryList();
     await restoreCloudConversationIfNeeded();
+    await recoverStagedAssistantReply();
     if (!event.detail.dailyLocked) {
       checkAndGenerateDiary({ silent: true }).catch(e => console.error("日记检查失败:", e));
     }

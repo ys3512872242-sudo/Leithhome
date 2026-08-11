@@ -1019,7 +1019,7 @@ const SupabaseMemoryAdapter = {
   // 短期记忆（对话消息）
   // ============================================================
   async saveShortTerm(threadId, role, content) {
-    if (!supabaseReady) return;
+    if (!supabaseReady || !content) return false;
     try {
       const { error } = await supabaseClient
         .from('memories')
@@ -1030,8 +1030,10 @@ const SupabaseMemoryAdapter = {
           role: role || 'user'
         }]);
       if (error) throw error;
+      return true;
     } catch (e) {
       console.error('短期记忆上传失败:', e);
+      return false;
     }
   },
 
@@ -1072,6 +1074,30 @@ const SupabaseMemoryAdapter = {
       }));
     } catch (e) {
       console.error('加载短期记忆失败:', e);
+      return [];
+    }
+  },
+
+  async loadShortTermBefore(threadId, beforeIso, limit = 50) {
+    if (!supabaseReady || !beforeIso) return [];
+    try {
+      const { data, error } = await supabaseClient
+        .from('memories')
+        .select('*')
+        .eq('type', 'short_term')
+        .eq('thread_id', threadId || 'global')
+        .lt('created_at', beforeIso)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data || []).slice().reverse().map(item => ({
+        id: String(item.id),
+        role: item.role || 'user',
+        content: item.content,
+        createdAt: new Date(item.created_at).getTime()
+      }));
+    } catch (e) {
+      console.error('加载更早短期记忆失败:', e);
       return [];
     }
   },
@@ -1694,6 +1720,7 @@ const LocalMemoryAdapter = {
   async saveShortTerm() {},
   async saveShortTermBatch() {},
   async loadShortTerm() { return []; },
+  async loadShortTermBefore() { return []; },
   async findLatestShortTermThreadId() { return ''; },
   async clearShortTerm() {},
   async clearThreadMemory() {},
