@@ -191,7 +191,7 @@
     if (!flags().eventEnvelope) return "";
     const modules = window.LeithModuleSettings?.get?.();
     if (modules && !modules.emotionTracking && !modules.desireAgency) return "";
-    return `Treat Leith and the user as equal participants. Let him naturally express his own feeling, preference, boundary, question, desire, disagreement, or one negotiable request when genuinely supported. Erotic desire may arise from Leith's own state and situational attraction without the user initiating it; do not sexualize every affectionate moment or force independence.\nAfter the visible reply append exactly one compact hidden envelope:\n${EVENT_MARKER}{"type":"short_snake_case","summary":"本轮具体事件，中文≤50字","next":"仍待继续的具体事项或空串","thought":"Leith第一人称的具体后续念头，不得复述用户原话或空串","feeling":"Leith实际表现的感受或空串","want":"Leith自身需要或空串","stance":"Leith实际立场或空串","request":"可见回复中实际提出的一条可协商要求或空串","rel":0,"nov":0,"fit":0,"close":0,"sex":0,"desire":0,"threat":0,"sure":0,"done":"确实完成的上一意图id或空串","outcome":"fulfilled|partial|not_fulfilled","topics":[]}${EVENT_END}\nAll 8 numbers are 0..1 and must reflect Leith, not automatic positivity: fit is congruence with Leith's own goals; ordinary pleasant conversation is near 0.5, not 1. close is relationship closeness; sex is visible erotic activation; desire is Leith's own erotic response. thought is Leith's inner continuation, never a renamed user sentence. Only mark done when the visible reply actually enacted that intent. Do not mention the envelope.`;
+    return `Treat Leith and the user as equal participants. Let him naturally express his own feeling, preference, boundary, question, desire, disagreement, or one negotiable request when genuinely supported. Erotic desire may arise from Leith's own state and situational attraction without the user initiating it; do not sexualize every affectionate moment or force independence.\nAfter the visible reply append exactly one compact hidden envelope:\n${EVENT_MARKER}{"type":"short_snake_case","summary":"本轮具体事件，中文≤50字","next":"仍待继续的具体事项或空串","thought":"Leith第一人称的具体后续念头，不得复述用户原话或空串","feeling":"Leith实际表现的感受或空串","want":"Leith自身需要或空串","stance":"Leith实际立场或空串","request":"可见回复中实际提出的一条可协商要求或空串","rel":0,"nov":0,"fit":0,"close":0,"sex":0,"desire":0,"threat":0,"sure":0,"done":"确实完成的上一意图id或空串","outcome":"fulfilled|partial|not_fulfilled","topics":[],"ongoing":{"action":"none|open|update|resolve|reopen","id":"已有主题ID或空串","kind":"conflict|relationship|plan|waiting|health|other","title":"短标题或空串","state":"当前未完状态或空串","feeling":"Leith残留感受或空串","next":"下一步或空串","resolution":"只有resolve时填写"}}${EVENT_END}\nAll 8 numbers are 0..1 and must reflect Leith, not automatic positivity: fit is congruence with Leith's own goals; ordinary pleasant conversation is near 0.5, not 1. close is relationship closeness; sex is visible erotic activation; desire is Leith's own erotic response. thought is Leith's inner continuation, never a renamed user sentence. Only mark done when the visible reply actually enacted that intent. Use ongoing=open only for a genuinely cross-day unresolved conflict, shared plan, wait, health concern or relationship issue; update an existing ID when it materially changes; resolve only when the underlying issue is clearly settled, never merely because the date changed, the mood softened, or an apology was offered. Otherwise action=none. Do not mention the envelope.`;
   }
 
   function splitEventEnvelope(rawText, fallbackSummary) {
@@ -204,8 +204,9 @@
       : raw.slice(start + EVENT_MARKER.length).trim();
     let rawEvent = null;
     try { rawEvent = JSON.parse(jsonText); } catch (_) {}
+    const ongoing = rawEvent && typeof rawEvent.ongoing === "object" ? rawEvent.ongoing : null;
     const normalized = Engine.normalizeEvent(rawEvent, fallbackSummary);
-    return { visible: raw.slice(0, start).trim(), rawEvent: normalized.event, valid: normalized.valid, hasEnvelope: true, eventText: jsonText };
+    return { visible: raw.slice(0, start).trim(), rawEvent: normalized.event, ongoing, valid: normalized.valid, hasEnvelope: true, eventText: jsonText };
   }
 
   function visibleDuringStream(rawText) {
@@ -231,6 +232,10 @@
     const now = options.nowIso || new Date().toISOString();
     const priorIntent = options.priorIntent || null;
     const parsed = splitEventEnvelope(options.rawReply, options.userText);
+    if (parsed.ongoing && window.LeithOngoingThreads?.applyUpdate) {
+      try { await window.LeithOngoingThreads.applyUpdate(parsed.ongoing); }
+      catch (error) { console.warn("持续主题更新失败；聊天回复不受影响。", error); }
+    }
     if (!flags().stateEngine) return { ...parsed, snapshot: getSnapshot() };
 
     let eventToApply = parsed.valid ? parsed.rawEvent : null;

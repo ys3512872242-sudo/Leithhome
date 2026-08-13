@@ -33,6 +33,7 @@ const LS = {
   closetRasterMigration: "companion_closet_raster_migration_v1",
   moodState: "companion_mood_state_v1",
   foldedDates: "companion_folded_dates_v1",
+  ongoingThreads: "leith_ongoing_threads_v1",
   // 共读小说
   readingBooks: "companion_reading_books_v1", // [{id, name, type, addedAt, progress, content}]
   readingLinks: "companion_reading_links_v1", // [{id, url, note, addedAt}]
@@ -1334,17 +1335,261 @@ function daysUntilDate(dateStr) {
   return Math.round((target - today) / 86400000);
 }
 
+const FIXED_CALENDAR_HOLIDAYS = Object.freeze({
+  "01-01": ["🎆", "元旦"],
+  "02-14": ["💌", "情人节"],
+  "03-08": ["🌷", "妇女节"],
+  "04-01": ["🃏", "愚人节"],
+  "05-01": ["🌿", "劳动节"],
+  "05-04": ["🌱", "青年节"],
+  "05-20": ["💕", "520"],
+  "05-21": ["💗", "521"],
+  "06-01": ["🎈", "儿童节"],
+  "09-10": ["📚", "教师节"],
+  "10-01": ["🇨🇳", "国庆节"],
+  "10-31": ["🎃", "万圣夜"],
+  "11-11": ["✨", "双十一"],
+  "12-24": ["🎄", "平安夜"],
+  "12-25": ["🎁", "圣诞节"]
+});
+
+const LUNAR_CALENDAR_HOLIDAYS = Object.freeze({
+  "1-1": ["🧧", "春节"], "1-15": ["🏮", "元宵节"], "2-2": ["🐉", "龙抬头"],
+  "5-5": ["🍃", "端午节"], "7-7": ["🌌", "七夕"], "7-15": ["🏮", "中元节"],
+  "8-15": ["🥮", "中秋节"], "9-9": ["🍂", "重阳节"], "12-8": ["🥣", "腊八节"],
+  "12-23": ["🧹", "小年"]
+});
+
+function getChineseCalendarParts(date) {
+  try {
+    const parts = new Intl.DateTimeFormat("zh-CN-u-ca-chinese", { month: "numeric", day: "numeric" }).formatToParts(date);
+    const month = Number(parts.find(part => part.type === "month")?.value);
+    const day = Number(parts.find(part => part.type === "day")?.value);
+    return Number.isFinite(month) && Number.isFinite(day) ? { month, day } : null;
+  } catch (_) { return null; }
+}
+
+function chineseLunarDayLabel(day) {
+  const labels = ["", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"];
+  return labels[day] || "";
+}
+
+function nthWeekdayOfMonth(date, weekday, nth) {
+  if (date.getDay() !== weekday) return false;
+  return Math.floor((date.getDate() - 1) / 7) + 1 === nth;
+}
+
+function getBuiltInHolidaysForDate(date) {
+  const rows = [];
+  const dateStr = formatLocalDate(date);
+  const md = dateStr.slice(5);
+  if (FIXED_CALENDAR_HOLIDAYS[md]) {
+    const [emoji, name] = FIXED_CALENDAR_HOLIDAYS[md];
+    rows.push({ id: `holiday:${dateStr}:${name}`, date: dateStr, emoji, name, note: "日历节日", actor: "calendar", builtIn: true });
+  }
+  if (date.getMonth() === 4 && nthWeekdayOfMonth(date, 0, 2)) rows.push({ id: `holiday:${dateStr}:母亲节`, date: dateStr, emoji: "🌹", name: "母亲节", note: "五月第二个星期日", actor: "calendar", builtIn: true });
+  if (date.getMonth() === 5 && nthWeekdayOfMonth(date, 0, 3)) rows.push({ id: `holiday:${dateStr}:父亲节`, date: dateStr, emoji: "💙", name: "父亲节", note: "六月第三个星期日", actor: "calendar", builtIn: true });
+  if (date.getMonth() === 10 && nthWeekdayOfMonth(date, 4, 4)) rows.push({ id: `holiday:${dateStr}:感恩节`, date: dateStr, emoji: "🫶", name: "感恩节", note: "十一月第四个星期四", actor: "calendar", builtIn: true });
+  const lunar = getChineseCalendarParts(date);
+  const lunarHoliday = lunar && LUNAR_CALENDAR_HOLIDAYS[`${lunar.month}-${lunar.day}`];
+  if (lunarHoliday) {
+    const [emoji, name] = lunarHoliday;
+    rows.push({ id: `holiday:${dateStr}:${name}`, date: dateStr, emoji, name, note: "农历节日", actor: "calendar", builtIn: true });
+  }
+  const tomorrow = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 12);
+  const tomorrowLunar = getChineseCalendarParts(tomorrow);
+  if (tomorrowLunar?.month === 1 && tomorrowLunar?.day === 1) {
+    rows.push({ id: `holiday:${dateStr}:除夕`, date: dateStr, emoji: "🧨", name: "除夕", note: "农历岁末", actor: "calendar", builtIn: true });
+  }
+  return rows;
+}
+
+function getUpcomingBuiltInHolidays(days = 90) {
+  const result = [];
+  const today = new Date(formatLocalDate() + "T12:00:00");
+  for (let offset = 0; offset <= days; offset++) {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset, 12);
+    result.push(...getBuiltInHolidaysForDate(date));
+  }
+  return result;
+}
+
 function buildFoldedDatesPromptLine() {
-  const visibleDates = getFoldedDates()
+  const visibleDates = [...getFoldedDates(), ...getUpcomingBuiltInHolidays(90)]
     .map(item => ({ ...item, days: daysUntilDate(item.date) }))
     .filter(item => item.days >= -7 && item.days <= 90)
     .sort((a, b) => Math.abs(a.days) - Math.abs(b.days))
     .slice(0, 12);
   if (!visibleDates.length) return "";
-  return `[Shared calendar — entries written by Susie or Leith and visible to both]
-${visibleDates.map(item => `- ${item.date} ${item.emoji || "📌"} ${item.name}${item.note ? ` — ${item.note}` : ""} (${item.actor === "leith" ? "added by Leith" : "added by Susie"})`).join("\n")}
+  return `[Shared calendar — personal entries and real holidays visible to both]
+${visibleDates.map(item => `- ${item.date} ${item.emoji || "📌"} ${item.name}${item.note ? ` — ${item.note}` : ""}${item.builtIn ? " (calendar holiday)" : ` (${item.actor === "leith" ? "added by Leith" : "added by Susie"})`}`).join("\n")}
 Treat these as real shared calendar entries. Mention them only when relevant; never pretend a planned date already happened.`;
 }
+
+// ===== 跨天持续主题（Open Threads）=====
+// 完整状态存 app_state；每轮只注入最多三条压缩摘要，不依赖聊天关键词命中。
+const ONGOING_THREADS_CLOUD_KEY = "leith_ongoing_threads_v1";
+let ongoingThreadsReady = false;
+let ongoingThreadsInitPromise = null;
+
+function normalizeOngoingThread(item) {
+  if (!item || typeof item !== "object") return null;
+  const status = ["active", "resolved"].includes(item.status) ? item.status : "active";
+  return {
+    id: String(item.id || uid()).slice(0, 80),
+    kind: ["conflict", "plan", "waiting", "health", "relationship", "other"].includes(item.kind) ? item.kind : "other",
+    title: String(item.title || "尚未说完的事").trim().slice(0, 48),
+    state: String(item.state || "仍在进行中").trim().slice(0, 160),
+    feeling: String(item.feeling || "").trim().slice(0, 100),
+    next: String(item.next || "").trim().slice(0, 120),
+    resolution: String(item.resolution || "").trim().slice(0, 140),
+    status,
+    startedAt: item.startedAt || new Date().toISOString(),
+    updatedAt: item.updatedAt || new Date().toISOString(),
+    resolvedAt: status === "resolved" ? (item.resolvedAt || new Date().toISOString()) : ""
+  };
+}
+
+function getOngoingThreads() {
+  return loadJSON(LS.ongoingThreads, []).map(normalizeOngoingThread).filter(Boolean);
+}
+
+function setOngoingThreads(items, syncCloud = true) {
+  const clean = (items || []).map(normalizeOngoingThread).filter(Boolean)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, 40);
+  saveJSON(LS.ongoingThreads, clean);
+  if (syncCloud && window.Memory?.isReady?.()) {
+    window.Memory.saveAppState?.(ONGOING_THREADS_CLOUD_KEY, clean).catch(error => console.warn("持续主题云端同步失败", error));
+  }
+  renderOngoingThreads();
+  return clean;
+}
+
+async function initOngoingThreads() {
+  if (ongoingThreadsReady) return getOngoingThreads();
+  if (ongoingThreadsInitPromise) return ongoingThreadsInitPromise;
+  ongoingThreadsInitPromise = (async () => {
+    let local = getOngoingThreads();
+    if (window.Memory?.isReady?.() && window.Memory.loadAppStateKey) {
+      const row = await window.Memory.loadAppStateKey(ONGOING_THREADS_CLOUD_KEY);
+      const cloud = Array.isArray(row?.value) ? row.value.map(normalizeOngoingThread).filter(Boolean) : [];
+      if (cloud.length) {
+        const merged = new Map(local.map(item => [item.id, item]));
+        cloud.forEach(item => {
+          const old = merged.get(item.id);
+          if (!old || Date.parse(item.updatedAt) >= Date.parse(old.updatedAt)) merged.set(item.id, item);
+        });
+        local = setOngoingThreads([...merged.values()], false);
+      } else if (local.length) {
+        window.Memory.saveAppState?.(ONGOING_THREADS_CLOUD_KEY, local).catch(() => {});
+      }
+    }
+    ongoingThreadsReady = true;
+    return local;
+  })().finally(() => { ongoingThreadsInitPromise = null; });
+  return ongoingThreadsInitPromise;
+}
+
+function ongoingThreadDays(item) {
+  const start = Date.parse(item.startedAt || item.updatedAt || Date.now());
+  return Math.max(1, Math.floor((Date.now() - start) / 86400000) + 1);
+}
+
+async function buildOngoingThreadsPromptBlock() {
+  const items = (await initOngoingThreads()).filter(item => item.status === "active").slice(0, 3);
+  if (!items.length) return "";
+  return `[Ongoing situations — always preserve across days until explicitly resolved]
+${items.map(item => `- ID:${item.id} | ${item.title}（第${ongoingThreadDays(item)}天）: ${item.state}${item.feeling ? `；Leith残留感受：${item.feeling}` : ""}${item.next ? `；下一步：${item.next}` : ""}`).join("\n")}
+Let these situations subtly shape tone, initiative and decisions even if the current topic changes. Do not mechanically mention them in every reply. A new day, pleasant small talk, apology alone, or temporary calm does NOT resolve one. Resolve only when the underlying matter is clearly completed or both participants explicitly treat it as settled.`;
+}
+
+function findOngoingThread(items, update) {
+  if (update.id) {
+    const exact = items.find(item => item.id === update.id);
+    if (exact) return exact;
+  }
+  const title = String(update.title || "").trim();
+  if (title) {
+    const sameTitle = items.find(item => item.status === "active" && (item.title.includes(title) || title.includes(item.title)));
+    if (sameTitle) return sameTitle;
+  }
+  if (update.kind === "conflict" || update.kind === "relationship") {
+    return items.find(item => item.status === "active" && (item.kind === "conflict" || item.kind === "relationship")) || null;
+  }
+  return null;
+}
+
+async function applyOngoingThreadUpdate(raw) {
+  if (!raw || typeof raw !== "object") return false;
+  const action = ["open", "update", "resolve", "reopen"].includes(raw.action) ? raw.action : "none";
+  if (action === "none") return false;
+  await initOngoingThreads();
+  const items = getOngoingThreads();
+  const now = new Date().toISOString();
+  let target = findOngoingThread(items, raw);
+  if (action === "open" && !target) {
+    target = normalizeOngoingThread({
+      id: uid(), kind: raw.kind, title: raw.title, state: raw.state,
+      feeling: raw.feeling, next: raw.next, status: "active", startedAt: now, updatedAt: now
+    });
+    items.unshift(target);
+  } else if (!target) {
+    return false;
+  } else {
+    Object.assign(target, {
+      kind: raw.kind || target.kind,
+      title: String(raw.title || target.title).slice(0, 48),
+      state: String(raw.state || target.state).slice(0, 160),
+      feeling: String(raw.feeling ?? target.feeling).slice(0, 100),
+      next: String(raw.next ?? target.next).slice(0, 120),
+      updatedAt: now
+    });
+  }
+  if (action === "resolve") {
+    target.status = "resolved";
+    target.resolution = String(raw.resolution || raw.state || "这件事已经告一段落。 ").trim().slice(0, 140);
+    target.resolvedAt = now;
+  } else if (action === "reopen") {
+    target.status = "active";
+    target.resolvedAt = "";
+    target.resolution = "";
+  }
+  setOngoingThreads(items);
+  return true;
+}
+
+function renderOngoingThreads() {
+  const activeBox = $("#ongoingThreadsList");
+  const resolvedBox = $("#resolvedThreadsList");
+  if (!activeBox) return;
+  const items = getOngoingThreads();
+  const active = items.filter(item => item.status === "active");
+  activeBox.innerHTML = active.length ? active.map(item => `
+    <article class="ongoing-thread-card" data-thread-id="${escapeHtml(item.id)}">
+      <div class="ongoing-thread-head"><strong>${escapeHtml(item.title)}</strong><span>第 ${ongoingThreadDays(item)} 天</span></div>
+      <p>${escapeHtml(item.state)}</p>
+      ${item.feeling ? `<small>余留感受 · ${escapeHtml(item.feeling)}</small>` : ""}
+      ${item.next ? `<small>正在尝试 · ${escapeHtml(item.next)}</small>` : ""}
+      <button class="ongoing-thread-resolve" data-resolve-thread="${escapeHtml(item.id)}">标记为已经解决</button>
+    </article>`).join("") : `<div class="ongoing-thread-empty">此刻没有悬而未决的事。</div>`;
+  activeBox.querySelectorAll("[data-resolve-thread]").forEach(button => {
+    button.onclick = async () => {
+      const item = getOngoingThreads().find(row => row.id === button.dataset.resolveThread);
+      if (!item || !confirm(`确认“${item.title}”已经解决了吗？`)) return;
+      await applyOngoingThreadUpdate({ action: "resolve", id: item.id, resolution: "Susie 手动确认这件事已经解决。" });
+    };
+  });
+  if (resolvedBox) {
+    const resolved = items.filter(item => item.status === "resolved").slice(0, 6);
+    resolvedBox.innerHTML = resolved.length ? resolved.map(item => `
+      <div class="resolved-thread-row"><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.resolution || "已经告一段落")}</small></div><button data-reopen-thread="${escapeHtml(item.id)}">重新打开</button></div>`).join("") : `<div class="ongoing-thread-empty">还没有已解决的主题。</div>`;
+    resolvedBox.querySelectorAll("[data-reopen-thread]").forEach(button => {
+      button.onclick = () => applyOngoingThreadUpdate({ action: "reopen", id: button.dataset.reopenThread, state: "这件事再次被提起，仍需继续面对。" });
+    });
+  }
+}
+
+window.LeithOngoingThreads = { init: initOngoingThreads, applyUpdate: applyOngoingThreadUpdate, render: renderOngoingThreads };
 
 // ===== 床头柜（每个对话独立）=====
 // 现在货架/成人用品区的每一次购买，不管是不是消耗品，都会摆进床头柜；
@@ -2452,9 +2697,9 @@ $("#saveConfigBtn").onclick = () => {
   updateStatusLabel();
   updateEffectiveModelHint();
   showToast(`配置已保存 · 实际调用 ${selectedModel}`);
-  lastHealthState = null; // 换了配置，之前的健康状态不再有参考意义
+  lastHealthState = null; // 不主动探测；等下一次真实调用更新状态
   consecutiveHealthFails = 0;
-  runHealthCheck({ silent: true });
+  setHealthDot(null);
 };
 
 $("#clearKeyBtn").onclick = () => {
@@ -3918,12 +4163,13 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
   // FORMATTING_RULES 无条件注入（跟聊天内容无关，任何时候都要遵守）；
   // 世界规则（WORLD_RULES_MINI / WORLD_RULES_FULL）现在跟着 shopRelevant 走
   const moodBlock = modules.emotionInfluence ? buildMoodPromptBlock() : "";
+  const ongoingBlock = await buildOngoingThreadsPromptBlock();
   const capsule = (modules.emotionInfluence || modules.desireAgency)
     ? (desireContext?.capsule || window.LeithDesireRuntime?.getCapsule(recentText))
     : null;
   const desireBlock = capsule?.text ? `[Leith internal state capsule — private, concise, never quote mechanically]\n${capsule.text}` : "";
   const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
-  return [worldRulesBlock, FORMATTING_RULES, DIRECT_ADDRESS_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, DIRECT_ADDRESS_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, ongoingBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -5124,13 +5370,11 @@ function prepareMessagesForApi(messages, apiStyle, currentImageMessageId) {
 }
 
 // ============================================================
-// 模型健康检测（主动探测，不依赖被动聊天失败）
+// 模型连接状态（只记录真实请求，绝不额外消耗一次模型调用）
 // ============================================================
-const HEALTH_CHECK_INTERVAL = 5 * 60 * 1000; // 5 分钟
 let healthCheckTimer = null;
 let healthResumeTimer = null;
 let appResumeBlockedUntil = 0;
-let healthChecking = false;
 let lastHealthState = null; // 'ok' | 'warn' | 'bad' | null，用于只在状态变化时提示，避免反复打扰
 let consecutiveHealthFails = 0;
 
@@ -5140,76 +5384,30 @@ function setHealthDot(state) {
   dot.className = "health-dot" + (state ? " " + state : "");
 }
 
-async function runHealthCheck(opts = {}) {
-  if (healthChecking) return; // 避免重叠探测
-  const apiKey = localStorage.getItem(LS.apiKey);
-  const provider = getActiveProvider();
-  const model = getSelectedChatModel();
+function markActualModelSuccess() {
+  consecutiveHealthFails = 0;
+  lastHealthState = "ok";
+  setHealthDot("ok");
+}
 
-  if (!apiKey || !provider || !model) {
-    setHealthDot(null);
-    lastHealthState = null;
-    return;
-  }
+function markActualModelFailure() {
+  consecutiveHealthFails++;
+  lastHealthState = "bad";
+  setHealthDot("bad");
+}
 
-  healthChecking = true;
-  setHealthDot("checking");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000); // 探测最多等15秒，不无限挂着
-
-  try {
-    // 用最短的探测消息，尽量少花 token
-    const probeMessages = [{ role: "user", content: "ping" }];
-    let result;
-    if (provider.apiStyle === "anthropic") {
-      result = await streamAnthropic({
-        provider, apiKey, model, temp: 0, systemPrompt: "回复一个字即可。",
-        messages: probeMessages, controller, onDelta: () => {}
-      });
-    } else {
-      result = await streamOpenAICompatible({
-        provider, apiKey, model, temp: 0, systemPrompt: "回复一个字即可。",
-        messages: probeMessages, controller, onDelta: () => {}
-      });
-    }
-    clearTimeout(timeout);
-    const ok = !!(result && typeof result.text === "string");
-    if (ok) {
-      consecutiveHealthFails = 0;
-      setHealthDot("ok");
-      if (lastHealthState === "bad" && !opts.silent) showToast(`${provider.name} 恢复正常了`);
-      lastHealthState = "ok";
-    } else {
-      throw new Error("探测无有效返回");
-    }
-  } catch (err) {
-    clearTimeout(timeout);
-    consecutiveHealthFails++;
-    console.warn("模型健康探测失败:", err);
-    setHealthDot("bad");
-    if (lastHealthState !== "bad" && !opts.silent) {
-      showToast(`⚠️ ${provider.name} · ${model} 现在好像连不上`);
-    }
-    lastHealthState = "bad";
-  } finally {
-    healthChecking = false;
-  }
+async function runHealthCheck() {
+  // 按次计费时禁止主动 ping。状态只由真实聊天、日记或共读请求更新。
+  showToast("已关闭付费模型探测；发送真实消息后会更新连接状态");
+  return null;
 }
 
 function scheduleHealthChecks() {
   clearInterval(healthCheckTimer);
-  if (document.hidden) return;
-  healthCheckTimer = setInterval(() => runHealthCheck(), HEALTH_CHECK_INTERVAL);
 }
 
 function initHealthCheck() {
-  // 首屏先让界面稳定，避免与云端记忆初始化、天气和日记检查同时抢占主线程。
-  healthResumeTimer = setTimeout(() => { if (!document.hidden) runHealthCheck({ silent: true }); }, 12000);
-  scheduleHealthChecks();
-
-  // App 从后台切回前台时，如果距上次探测已经有一阵子了，立刻再测一次
-  let lastVisibleCheck = Date.now();
+  // 只处理恢复期的其他后台任务，不调用模型。
   document.addEventListener("visibilitychange", () => {
     clearTimeout(healthResumeTimer);
     if (document.visibilityState === "hidden") {
@@ -5218,18 +5416,12 @@ function initHealthCheck() {
     } else {
       // iOS 刚从熄屏恢复的前几秒只恢复 UI，不立刻请求模型或 Supabase。
       appResumeBlockedUntil = Date.now() + 15000;
-      healthResumeTimer = setTimeout(() => {
-        if (!document.hidden && Date.now() - lastVisibleCheck > 60 * 1000) runHealthCheck({ silent: true });
-      }, 15000);
-      lastVisibleCheck = Date.now();
-      scheduleHealthChecks();
       scheduleOutfitSync(10000);
     }
   });
 
-  // 点状态胶囊，立刻手动测一次
+  // 点状态胶囊只解释状态来源，不产生一笔模型调用。
   $("#statusLabel").addEventListener("click", () => {
-    showToast("正在检测...");
     runHealthCheck();
   });
 }
@@ -5564,15 +5756,22 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
     body.tool_choice = "auto";
   }
 
-  const resp = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-    body: JSON.stringify(body),
-    signal: controller.signal
-  });
+  let resp;
+  try {
+    resp = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+  } catch (error) {
+    markActualModelFailure();
+    throw error;
+  }
 
   if (!resp.ok) {
     const errData = await resp.json().catch(() => ({}));
+    markActualModelFailure();
     throw new Error(errData?.error?.message || `HTTP ${resp.status}`);
   }
 
@@ -5636,12 +5835,15 @@ async function streamOpenAICompatible({ provider, apiKey, model, temp, systemPro
   // 关键修复：以前这里即使一个字都没解析出来，也会正常返回空字符串，
   // 导致界面上"发出去之后完全没反应"——现在明确抛错，让用户能看到"请求失败"的提示
   if (!fullReply && !toolCalls && rawBytesReceived && parseFailCount > 0) {
+    markActualModelFailure();
     throw new Error(`服务商返回的内容无法解析（可能是中转站不兼容当前请求格式，比如图片/文档附件）：${lastParseError?.message || "未知错误"}`);
   }
   if (!fullReply && !toolCalls && !rawBytesReceived) {
+    markActualModelFailure();
     throw new Error("服务商没有返回任何内容，请检查服务商地址、密钥或模型名称是否正确。");
   }
 
+  markActualModelSuccess();
   return { text: fullReply, toolCalls, usage };
 }
 
@@ -5663,19 +5865,26 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   };
   if (tools && tools.length) body.tools = tools;
 
-  const resp = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/messages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(body),
-    signal: controller.signal
-  });
+  let resp;
+  try {
+    resp = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+  } catch (error) {
+    markActualModelFailure();
+    throw error;
+  }
 
   if (!resp.ok) {
     const errData = await resp.json().catch(() => ({}));
+    markActualModelFailure();
     throw new Error(errData?.error?.message || `HTTP ${resp.status}`);
   }
 
@@ -5748,12 +5957,15 @@ async function streamAnthropic({ provider, apiKey, model, temp, systemPrompt, me
   // 关键修复：以前这里即使一个字都没解析出来，也会正常返回空字符串，
   // 导致界面上"发出去之后完全没反应"——现在明确抛错，让用户能看到"请求失败"的提示
   if (!fullReply && !toolCalls && rawBytesReceived && parseFailCount > 0) {
+    markActualModelFailure();
     throw new Error(`服务商返回的内容无法解析（可能是中转站不兼容当前请求格式，比如图片/文档附件）：${lastParseError?.message || "未知错误"}`);
   }
   if (!fullReply && !toolCalls && !rawBytesReceived) {
+    markActualModelFailure();
     throw new Error("服务商没有返回任何内容，请检查服务商地址、密钥或模型名称是否正确。");
   }
 
+  markActualModelSuccess();
   return { text: fullReply, toolCalls, usage };
 }
 
@@ -6524,7 +6736,7 @@ async function renderMemoryTree() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             </button>
           ${branch.id === "diary" ? `
-            <button class="mem-leaf-rewrite" onclick="event.stopPropagation();rewriteDiaryLeaf('${item.id}','${item.dateStr || ""}')" title="再写一次">
+            <button class="mem-leaf-rewrite" data-diary-rewrite="${item.dateStr || ""}" onclick="event.stopPropagation();rewriteDiaryLeaf('${item.id}','${item.dateStr || ""}')" title="再写一次">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 4v6h-6"/></svg>
             </button>
           ` : ''}<button class="mem-leaf-del" onclick="event.stopPropagation();deleteMemoryLeaf('${item.id}','${branch.id}')" title="删除">
@@ -6617,25 +6829,41 @@ async function rewriteDiaryLeaf(id, dateStr) {
   return await rewriteDiaryByDate(dateStr);
 }
 
+const diaryRewriteInFlight = new Set();
 async function rewriteDiaryByDate(dateStr) {
   if (!dateStr) return false;
+  if (diaryRewriteInFlight.has(dateStr)) {
+    showToast(`${dateStr} 正在重写，请稍等`);
+    return false;
+  }
   if (!window.Memory?.isReady?.()) {
     showToast("云端记忆还没连上");
     return false;
   }
   showToast(`正在重写 ${dateStr} 的日记...`);
+  diaryRewriteInFlight.add(dateStr);
+  document.querySelectorAll("[data-diary-rewrite], #diaryBookRewriteBtn").forEach(button => { button.disabled = true; });
   clearDiaryFailureCooling(dateStr);
   if (getLastDiaryDate() === dateStr) localStorage.removeItem(DIARY_LAST_DATE_LS);
   showDiarySplash();
   let ok = null;
+  let rewriteError = null;
   try {
     ok = await tryGenerateDiaryNowFor(dateStr, { forceRewrite: true });
+  } catch (error) {
+    console.error(`重写 ${dateStr} 日记失败:`, error);
+    rewriteError = error;
   } finally {
     hideDiarySplash();
+    diaryRewriteInFlight.delete(dateStr);
+    document.querySelectorAll("[data-diary-rewrite], #diaryBookRewriteBtn").forEach(button => { button.disabled = false; });
   }
   if ($("#memoryTree")) renderMemoryTree();
   if ($("#diaryBookPage")) await renderDiaryBook();
-  showToast(ok === "partial" ? "日记已重写一部分，内容太长可再点一次继续" : ok ? "日记已重新写好" : "这次没写成，稍后可再试");
+  if (rewriteError) showToast(`重写失败：${rewriteError.message || "模型暂时没有返回"}`);
+  else if (ok === null) showToast("这次没写成：请检查日记模型、API 额度或当天是否有聊天记录");
+  else if (ok === false) showToast("这一天没有可重写的聊天素材，原日记没有被覆盖");
+  else showToast(ok === "partial" ? "日记已重写一部分，内容太长可再点一次继续" : "日记已重新写好");
   return Boolean(ok);
 }
 
@@ -6795,9 +7023,15 @@ async function renderLoveApp() {
   const cells = Array.from({ length: firstWeekday }, () => `<button class="love-day is-empty"></button>`);
   for (let day = 1; day <= days; day++) {
     const dateStr = `${monthStr}-${String(day).padStart(2, "0")}`;
+    const calendarDate = new Date(loveMonthDate.getFullYear(), loveMonthDate.getMonth(), day, 12);
+    const builtIn = getBuiltInHolidaysForDate(calendarDate);
+    if (builtIn.length) calendarByDate.set(dateStr, [...(calendarByDate.get(dateStr) || []), ...builtIn]);
     const count = (byDate.get(dateStr) || []).length;
     const sticker = calendarByDate.get(dateStr)?.find(item => item.emoji)?.emoji || "";
-    cells.push(`<button class="love-day${dateStr === loveSelectedDate ? " is-selected" : ""}" data-love-date="${dateStr}" data-count="${Math.min(count, 4)}"><span class="love-day-number">${day}</span>${sticker ? `<span class="love-day-sticker">${escapeHtml(sticker)}</span>` : ""}${count ? `<span class="love-count">×${count}</span>` : ""}</button>`);
+    const lunar = getChineseCalendarParts(calendarDate);
+    const holidayName = builtIn[0]?.name || "";
+    const subLabel = holidayName || chineseLunarDayLabel(lunar?.day);
+    cells.push(`<button class="love-day${dateStr === loveSelectedDate ? " is-selected" : ""}" data-love-date="${dateStr}" data-count="${Math.min(count, 4)}"><span class="love-day-number">${day}</span>${sticker ? `<span class="love-day-sticker">${escapeHtml(sticker)}</span>` : ""}${subLabel ? `<span class="love-day-sub${holidayName ? " is-holiday" : ""}">${escapeHtml(subLabel)}</span>` : ""}${count ? `<span class="love-count">×${count}</span>` : ""}</button>`);
   }
   grid.innerHTML = cells.join("");
   grid.querySelectorAll("[data-love-date]").forEach(btn => {
@@ -6809,13 +7043,14 @@ async function renderLoveApp() {
 function renderLoveCalendarSelection() {
   document.querySelectorAll("[data-love-date]").forEach(btn => btn.classList.toggle("is-selected", btn.dataset.loveDate === loveSelectedDate));
   const entries = loveMonthRows.find(row => row.dateStr === loveSelectedDate)?.entries || [];
-  const calendarItems = getFoldedDates().filter(item => item.date === loveSelectedDate);
+  const selectedDate = new Date(loveSelectedDate + "T12:00:00");
+  const calendarItems = [...getBuiltInHolidaysForDate(selectedDate), ...getFoldedDates().filter(item => item.date === loveSelectedDate)];
   $("#loveSelectedTitle").innerText = `${loveSelectedDate} · ${entries.length} 次`;
   $("#loveCalendarNotes").innerHTML = calendarItems.length ? calendarItems.map(item => `
     <div class="love-calendar-note">
       <span class="love-calendar-sticker">${escapeHtml(item.emoji || "📌")}</span>
-      <div><strong>${escapeHtml(item.name || "我们的日子")}</strong>${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}<small>${item.actor === "leith" ? "Leith 添加" : "你添加"}</small></div>
-      <button class="msg-delete-btn" data-love-note-delete="${item.id}" title="删除">×</button>
+      <div><strong>${escapeHtml(item.name || "我们的日子")}</strong>${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}<small>${item.builtIn ? "日历节日" : item.actor === "leith" ? "Leith 添加" : "你添加"}</small></div>
+      ${item.builtIn ? `<span class="love-calendar-fixed">固定</span>` : `<button class="msg-delete-btn" data-love-note-delete="${item.id}" title="删除">×</button>`}
     </div>`).join("") : `<div class="helper-text">这一天还没有日期备注或贴纸。</div>`;
   document.querySelectorAll("[data-love-note-delete]").forEach(btn => {
     btn.onclick = () => { removeFoldedDate(btn.dataset.loveNoteDelete); renderLoveApp(); };
@@ -8049,6 +8284,7 @@ let desireObserverUnsubscribe = null;
 
 function initWidget() {
   updateWidgetTime();
+  initOngoingThreads().then(renderOngoingThreads).catch(() => renderOngoingThreads());
   if (widgetTimeTimer) clearInterval(widgetTimeTimer);
   widgetTimeTimer = setInterval(() => { if (!document.hidden) updateWidgetTime(); }, 30000);
   if (!desireObserverUnsubscribe) {
@@ -8079,6 +8315,7 @@ function updateWidgetPreview() {
 function refreshWidgetApp() {
   updateWidgetTime();
   renderDesireObserver();
+  initOngoingThreads().then(renderOngoingThreads).catch(error => console.warn("持续主题加载失败", error));
 }
 
 function renderDesireObserver() {
@@ -8378,9 +8615,12 @@ if ($("#testSupabaseBtn")) {
 window.addEventListener("leith:supabase-ready", async (event) => {
   updateSupabaseStatus();
   if (event.detail && event.detail.ok) {
+    ongoingThreadsReady = false;
     await syncCloudWardrobeCatalog();
     if (!event.detail.dailyLocked) hideMemoryLockScreen();
     await restoreCloudAppState();
+    await initOngoingThreads();
+    renderOngoingThreads();
     renderMemoryList();
     await restoreCloudConversationIfNeeded();
     await recoverStagedAssistantReply();

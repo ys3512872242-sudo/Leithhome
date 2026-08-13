@@ -1161,7 +1161,9 @@
   .love-day.is-empty{visibility:hidden;}
   .love-day-number{position:relative;z-index:1;}
   .love-day-sticker{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:23px;z-index:2;background:transparent;}
-  .love-count{position:absolute;right:3px;bottom:2px;font-size:9px;font-weight:700;}
+  .love-day-sub{position:absolute;left:2px;right:2px;bottom:2px;z-index:3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:7px;line-height:1.1;color:var(--paper-dim);}
+  .love-day-sub.is-holiday{color:var(--rose);font-weight:650;text-shadow:0 1px 4px var(--bg);}
+  .love-count{position:absolute;right:3px;bottom:2px;z-index:4;font-size:9px;font-weight:700;}
   .love-date-title{font-size:14px;color:var(--paper);margin-bottom:10px;}
   .love-occurrences{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
   .love-occurrence{border:1px solid var(--line-soft);border-radius:12px;padding:10px 12px;background:var(--bg-input);}
@@ -1177,6 +1179,7 @@
   .love-calendar-note strong{font-size:13px;color:var(--paper);font-weight:600;}
   .love-calendar-note p{font-size:12px;line-height:1.6;color:var(--paper-dim);margin:3px 0;}
   .love-calendar-note small{font-size:9px;color:var(--paper-dim);opacity:.7;}
+  .love-calendar-fixed{font-size:9px;color:var(--rose);padding-top:4px;text-align:center;}
   .love-calendar-form{display:grid;grid-template-columns:74px 1fr;gap:8px;}
   .love-calendar-form input,.love-calendar-form textarea{min-width:0;background:var(--bg-input);border:1px solid var(--line);border-radius:12px;padding:9px 11px;color:var(--paper);font:12px var(--sans);}
   .love-calendar-form textarea{grid-column:1/-1;resize:vertical;min-height:62px;}
@@ -1719,6 +1722,19 @@
   .desire-thought-list{display:flex;flex-direction:column;gap:9px;}
   .desire-thought-item{font-family:var(--serif);font-size:13px;line-height:1.65;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.025);}
   .desire-observer-note{font-size:11px;line-height:1.7;color:var(--paper-dim);}
+  .ongoing-thread-list{display:flex;flex-direction:column;gap:10px;margin-top:12px;}
+  .ongoing-thread-card{padding:14px 15px;border:1px solid rgba(201,126,147,.18);border-radius:16px;background:rgba(201,126,147,.055);}
+  .ongoing-thread-head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .ongoing-thread-head strong{font-size:14px;font-weight:600;color:var(--paper);}
+  .ongoing-thread-head span{font-size:9px;color:var(--rose);white-space:nowrap;}
+  .ongoing-thread-card p{font:13px/1.65 var(--serif);margin:8px 0 6px;}
+  .ongoing-thread-card small{display:block;font-size:10px;line-height:1.55;color:var(--paper-dim);margin-top:3px;}
+  .ongoing-thread-resolve,.resolved-thread-row button{border:0;background:transparent;color:var(--rose);font:10px var(--sans);padding:8px 0 0;cursor:pointer;}
+  .ongoing-thread-empty{padding:16px 4px;text-align:center;color:var(--paper-dim);font-size:11px;}
+  .resolved-thread-details{margin-top:12px;border-top:1px solid var(--line-soft);padding-top:10px;}
+  .resolved-thread-details summary{cursor:pointer;color:var(--paper-dim);font-size:10px;}
+  .resolved-thread-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 2px;border-bottom:1px solid var(--line-soft);}
+  .resolved-thread-row strong,.resolved-thread-row small{display:block;}.resolved-thread-row strong{font-size:12px;}.resolved-thread-row small{margin-top:3px;color:var(--paper-dim);font-size:9px;line-height:1.5;}
   .emotion-radar-wrap{display:grid;grid-template-columns:minmax(180px,260px) minmax(0,1fr);gap:18px;align-items:center;margin-top:12px;}
   .emotion-radar{width:100%;aspect-ratio:1;display:block;overflow:visible;}
   .emotion-radar .grid{fill:none;stroke:var(--line);stroke-width:1;}
@@ -1821,7 +1837,7 @@
       <div class="topbar-left">
         <div class="brand">
           <span class="brand-mark" id="brandMark">Leith</span>
-          <button class="brand-sub health-pill" id="statusLabel" title="点击立即检测">
+          <button class="brand-sub health-pill" id="statusLabel" title="连接状态来自最近一次真实调用，不会主动测试收费模型">
             <span class="health-dot" id="healthDot"></span><span id="statusLabelText">未连接</span>
           </button>
         </div>
@@ -2339,6 +2355,14 @@
       <section class="desire-detail-section desire-request-section">
         <div class="desire-detail-label">我向你提出的要求</div>
         <p id="desireDetailRequest">此刻没有需要向你提出的要求。</p>
+      </section>
+      <section class="desire-detail-section">
+        <div class="desire-detail-label">正在经历</div>
+        <div id="ongoingThreadsList" class="ongoing-thread-list"><div class="ongoing-thread-empty">正在接回持续中的事情...</div></div>
+        <details class="resolved-thread-details">
+          <summary>最近已经放下的事</summary>
+          <div id="resolvedThreadsList"></div>
+        </details>
       </section>
       <section class="desire-detail-section">
         <div class="desire-detail-label">此刻情绪</div>

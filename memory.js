@@ -815,7 +815,7 @@ const SupabaseMemoryAdapter = {
         period: item.period,
         createdAt: new Date(item.created_at).getTime(),
         intimacy: Array.isArray(item.intimacy) ? item.intimacy : []
-      }));
+      })).filter(item => String(item.content || '').trim());
     } catch (e) {
       console.error('加载日记失败:', e);
       return [];
@@ -832,7 +832,7 @@ const SupabaseMemoryAdapter = {
     try {
       const { data, error } = await supabaseClient
         .from('diary_entries')
-        .select('id, content')
+        .select('id, content, intimacy')
         .eq('period', 'day')
         .eq('date_str', dateStr)
         .limit(1);
@@ -840,7 +840,12 @@ const SupabaseMemoryAdapter = {
       // 一旦这一天已有有效正文，就视为正式封账。自动流程不得因为
       // covered_until、设备差异或后来同步到的新消息再次改写它；
       // 只有用户明确点“重新生成”才允许覆盖。
-      return Boolean(data?.length && !looksLikeDiaryRefusal(data[0].content));
+      if (!data?.length || looksLikeDiaryRefusal(data[0].content)) return false;
+      const content = String(data[0].content || '').trim();
+      const hasIntimacy = Array.isArray(data[0].intimacy) && data[0].intimacy.length > 0;
+      // 爱爱记录产生的空壳、或已有亲密记录却只写成“平淡的一天”的占位文案，
+      // 都不能封死当天真正的日记。
+      return !(content === '平淡的一天' && hasIntimacy);
     } catch (e) {
       console.error('检查指定日期日记失败:', e);
       return false;
@@ -1179,7 +1184,11 @@ const SupabaseMemoryAdapter = {
     } catch (e) {
       console.error('检查今日日记是否已存在失败（继续尝试生成）:', e);
     }
-    if (existingEntry && !forceRewrite && !looksLikeDiaryRefusal(existingEntry.content)) {
+    const existingIntimacy = Array.isArray(existingEntry?.intimacy) ? existingEntry.intimacy : [];
+    const existingContent = String(existingEntry?.content || '').trim();
+    const existingIsFinal = existingEntry && !looksLikeDiaryRefusal(existingContent)
+      && !(existingContent === '平淡的一天' && existingIntimacy.length);
+    if (existingIsFinal && !forceRewrite) {
       console.log(`🧠 ${dateStr} 的日记已经封账，自动流程不再改写`);
       return { dateStr, skipped: true, alreadyWritten: true };
     }
@@ -1211,7 +1220,7 @@ const SupabaseMemoryAdapter = {
       newMessages = mergeDiarySourceMessages(newMessages, options.sourceMessages);
     }
 
-    if (!newMessages.length) {
+    if (!newMessages.length && !existingIntimacy.length) {
       if (existingEntry && (!existingEntry.covered_until || new Date(existingEntry.covered_until).getTime() < new Date(dayEnd).getTime())) {
         try {
           await supabaseClient
@@ -1277,9 +1286,12 @@ const SupabaseMemoryAdapter = {
       sourceChars += messageChars;
     }
 
-    const dialogueText = cappedMessages
+    const intimacySource = existingIntimacy.length
+      ? `[当天已经确认保存的亲密记录] 共 ${existingIntimacy.length} 次；${existingIntimacy.map((entry, index) => `第${index + 1}次${Array.isArray(entry.tags) && entry.tags.length ? `（${entry.tags.join('、')}）` : ''}`).join('；')}。这是真实发生并由系统保存的当日记录，不得写成“平淡的一天”，也不得凭空补充记录中没有的具体细节。`
+      : '';
+    const dialogueText = [cappedMessages
       .map(m => `${m.role === 'assistant' ? 'Me' : 'Susie'}: ${m.content}`)
-      .join('\n');
+      .join('\n'), intimacySource].filter(Boolean).join('\n');
     // covered_until 只推进到"本次实际总结到的这一条"——如果本次被截断，剩下的部分
     // 仍然在 rangeStart 之后、covered_until 之前的空隙里？不会：covered_until 就是
     // cappedMessages 的最后一条，剩余的 newMessages 都在它之后，下次会被正常读到
