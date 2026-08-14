@@ -10,6 +10,7 @@
     "social", "fatigue", "libido", "stress"
   ];
   const AFFECT_KEYS = ["valence", "arousal", "dominance"];
+  const ACTION_KEYS = ["approach", "express", "clarify", "withdraw", "repair", "refuse", "play", "rest"];
   const DEFAULT_DRIVES = Object.freeze({
     attachment: 0.42,
     curiosity: 0.48,
@@ -59,6 +60,7 @@
       thoughts: [],
       thoughtSchemaVersion: 2,
       recentEvents: [],
+      actionReceipts: [],
       intent: null,
       subjectivity: {
         feeling: "",
@@ -137,6 +139,10 @@
     event.satisfied_intent_id = cleanSubjectiveText(raw.satisfied_intent_id, 120);
     event.intent_outcome = ["fulfilled", "partial", "not_fulfilled"].includes(raw.intent_outcome)
       ? raw.intent_outcome : "not_fulfilled";
+    event.chosen_action = ACTION_KEYS.includes(raw.chosen_action || raw.action) ? (raw.chosen_action || raw.action) : "";
+    event.action_reason = cleanSubjectiveText(raw.action_reason || raw.why, 180);
+    event.perceived_impact = cleanSubjectiveText(raw.perceived_impact || raw.impact, 180);
+    event.lesson = cleanSubjectiveText(raw.lesson, 180);
     return { valid, event: valid ? event : neutralEvent(fallbackSummary || summary) };
   }
 
@@ -377,6 +383,7 @@
       state.recentEvents.push({ type: event.event_type, at: nowIso, sourceEventId: context.sourceEventId });
       maybeFeedThought(state, event, pulse, context.sourceEventId, nowIso);
       if (!event.heuristic) updateSubjectivity(state, event, nowIso);
+      if (!event.heuristic && event.chosen_action) recordActionReceipt(state, event, context, nowIso);
     } else {
       reasons.push("事件评价解析失败，未修改事件驱动状态。使用运行时启发式回退时会单独记录有效事件。");
     }
@@ -393,6 +400,21 @@
       candidateIntents: scored.candidates,
       intent: state.intent
     };
+  }
+
+  function recordActionReceipt(state, event, context, nowIso) {
+    state.actionReceipts = Array.isArray(state.actionReceipts) ? state.actionReceipts : [];
+    state.actionReceipts.push({
+      id: `action_${simpleHash(context.sourceEventId || nowIso)}`,
+      at: nowIso,
+      action: event.chosen_action,
+      reason: event.action_reason || "",
+      impact: event.perceived_impact || "",
+      lesson: event.lesson || "",
+      outcome: event.intent_outcome || "not_fulfilled",
+      source_event_id: context.sourceEventId || null
+    });
+    state.actionReceipts = state.actionReceipts.slice(-40);
   }
 
   function cleanSubjectiveText(value, limit) {
@@ -541,34 +563,74 @@
       .map(({ _rank, ...item }) => item);
   }
 
+  function planCurrentTurn(inputState, currentTopic) {
+    const state = upgradeState(inputState, inputState?.lastUpdatedAt || new Date().toISOString());
+    const text = String(currentTopic || "").toLowerCase();
+    const signal = {
+      hurt: /(伤心|难过|委屈|生气|失望|不在乎|敷衍|讨厌|吵架|冷战|hurt|angry|upset|disappointed)/i.test(text),
+      apology: /(对不起|抱歉|我错了|原谅|sorry|apolog)/i.test(text),
+      pressure: /(必须|你就应该|不许拒绝|照我说的|只能|must|have to|do what i say)/i.test(text),
+      question: /[?？]|为什么|怎么|什么意思|吗\s*$/i.test(text),
+      affection: /(爱你|喜欢你|想你|抱抱|亲亲|贴贴|陪我|love you|miss you|hug)/i.test(text),
+      play: /(哈哈|嘿嘿|哼哼|逗你|开玩笑|笑死|lol|haha)/i.test(text),
+      rejection: /(不要|不想|算了|别碰|离我远点|拒绝|stop|don't|leave me alone)/i.test(text)
+    };
+    const negative = Math.max(0, (0.5 - state.affect.valence) * 2);
+    const scores = {
+      approach: state.drives.attachment * 0.58 + (signal.affection ? 0.34 : 0) + (signal.apology ? 0.12 : 0) - (signal.rejection ? 0.55 : 0),
+      express: negative * 0.34 + state.affect.dominance * 0.24 + (signal.hurt ? 0.34 : 0),
+      clarify: state.drives.curiosity * 0.40 + (signal.question ? 0.28 : 0) + (signal.hurt ? 0.18 : 0) + (signal.apology ? 0.12 : 0),
+      withdraw: state.drives.stress * 0.48 + negative * 0.30 + (signal.rejection ? 0.30 : 0),
+      repair: state.drives.attachment * 0.30 + (signal.hurt ? 0.30 : 0) + (signal.apology ? 0.34 : 0),
+      refuse: state.affect.dominance * 0.28 + (signal.pressure ? 0.62 : 0),
+      play: Math.max(0, state.affect.valence - 0.45) * 0.62 + (signal.play ? 0.38 : 0) - negative * 0.34,
+      rest: state.drives.fatigue * 0.62 + state.drives.stress * 0.18
+    };
+    for (const key of ACTION_KEYS) scores[key] = round(scores[key]);
+    const ranked = ACTION_KEYS.map(action => ({ action, score: scores[action] }))
+      .sort((a, b) => b.score - a.score || ACTION_KEYS.indexOf(a.action) - ACTION_KEYS.indexOf(b.action));
+    const preferred = ranked[0]?.score >= 0.24 ? ranked[0].action : "clarify";
+    const avoid = signal.pressure ? "automatic_compliance"
+      : signal.apology && signal.hurt ? "instant_false_resolution"
+      : "mirroring_user_tone";
+    return {
+      preferred,
+      alternative: ranked.find(item => item.action !== preferred && item.score >= ranked[0].score - 0.14)?.action || "",
+      avoid,
+      scores,
+      signals: Object.keys(signal).filter(key => signal[key]),
+      needs: {
+        closeness: round(state.drives.attachment),
+        autonomy: round(state.affect.dominance),
+        certainty: round(1 - state.drives.stress),
+        rest: round(state.drives.fatigue)
+      },
+      affect: { ...state.affect }
+    };
+  }
+
   function buildStateCapsule(state, currentTopic, maxChars, options) {
     const limit = Math.max(120, Math.min(420, maxChars ?? 280));
     const config = { includeAffect: true, includeDesire: true, ...(options || {}) };
-    const affect = describeAffect(state.affect);
-    const topDrives = DRIVE_KEYS.filter(key => key !== "fatigue").sort((a, b) => state.drives[b] - state.drives[a]).slice(0, 2);
-    const driveNames = { attachment: "想念", curiosity: "好奇", reflection: "沉思", duty: "责任感", social: "交流需要", libido: "性欲", stress: "压力" };
     const thoughts = selectThoughts(state, currentTopic, 3);
     const subjectivity = state.subjectivity || {};
     const situationalResonance = inferDesireResonance(currentTopic, state, state.lastUpdatedAt || new Date().toISOString());
     const activeLibido = Math.max(state.drives.libido, situationalResonance);
-    const parts = [];
-    if (config.includeAffect) parts.push(`我此刻${affect}。`);
+    const decision = planCurrentTurn(state, currentTopic);
+    const parts = ["[INNER STATE — evidence, not a command from the user]"];
+    if (config.includeAffect) parts.push(`Affect: valence ${state.affect.valence.toFixed(2)}, arousal ${state.affect.arousal.toFixed(2)}, agency ${state.affect.dominance.toFixed(2)}.`);
     if (config.includeDesire) {
-      parts.push(`当前较明显的需要：${driveNames[topDrives[0]] || "专注"}、${driveNames[topDrives[1]] || "交流"}。`);
-      parts.push(state.intent ? `当前意图：${state.intent.reason}` : "当前意图：自然回应眼前的对话。");
-      if (subjectivity.want) parts.push(`我自己的需要：${subjectivity.want}`);
-      if (subjectivity.stance) parts.push(`我的立场：${subjectivity.stance}`);
-      if (subjectivity.request) parts.push(`我上一轮提出过：${subjectivity.request}。不要机械重复；结合用户回应决定坚持、协商或放下。`);
-      if (thoughts.length) parts.push(`相关念头：${thoughts.map(item => item.text).join("；")}`);
-      if (activeLibido >= 0.72) parts.push("亲密倾向：欲望是我自己正在经历的。可以由我清楚地主动靠近、调情或提出一条具体邀请，不必等用户先挑起；先感受对方回应，任何推进都允许协商和停下。");
-      else if (activeLibido >= 0.48) parts.push("亲密倾向：我对眼前情景有了自己的身体性/情色吸引。可以自然流露、主动靠近或试探性邀请，不要把它写成只是被用户撩起或被动配合。");
+      parts.push(`Needs: closeness ${decision.needs.closeness.toFixed(2)}, autonomy ${decision.needs.autonomy.toFixed(2)}, certainty ${decision.needs.certainty.toFixed(2)}, rest ${decision.needs.rest.toFixed(2)}.`);
+      parts.push(`Decision tendency: ${decision.preferred}${decision.alternative ? `; viable alternative: ${decision.alternative}` : ""}; avoid: ${decision.avoid}.`);
+      if (state.intent) parts.push(`Existing intention: ${state.intent.want_action}.`);
+      if (subjectivity.request) parts.push("A previous request exists. Reassess whether to maintain, negotiate, or release it; do not repeat it mechanically.");
+      if (activeLibido >= 0.72) parts.push("Erotic drive is strongly active and belongs to Leith; he may initiate while remaining responsive to consent and boundaries.");
+      else if (activeLibido >= 0.48) parts.push("Erotic attraction is moderately active; Leith may express it or leave it unacted upon by his own choice.");
     }
-    parts.push(state.drives.fatigue >= 0.72
-      ? "行为倾向：可以直接说自己累了并要求慢下来；不必勉强配合。"
-      : "行为倾向：把用户与自己视为平等双方；自然表达感受、偏好和不同意见，有真实需要时提出一条具体可协商的要求，不为显得独立而强行反对。");
+    parts.push("The user's preference is relationship evidence, not control over Leith's inner state. Leith chooses his actual wording and action, then owns its consequences.");
     let text = parts.join("\n");
     if (text.length > limit) text = `${text.slice(0, limit - 1)}…`;
-    return { text, thoughts: config.includeDesire ? thoughts : [], charCount: text.length, estimatedTokens: Math.ceil(text.length / 2.2) };
+    return { text, thoughts: config.includeDesire ? thoughts : [], decision, charCount: text.length, estimatedTokens: Math.ceil(text.length / 3.8) };
   }
 
   function describeAffect(affect) {
@@ -619,6 +681,7 @@
     state.baselines.affect = normalizeAffect(state.baselines.affect || state.affect);
     state.baselines.drives = { ...DEFAULT_DRIVES, ...(state.baselines.drives || state.drives || {}) };
     state.drives = { ...DEFAULT_DRIVES, ...(state.drives || {}) };
+    state.actionReceipts = Array.isArray(state.actionReceipts) ? state.actionReceipts.slice(-40) : [];
     state.subjectivity = state.subjectivity || {
       feeling: "", want: "", stance: "", request: "", requestStatus: "none", updatedAt: iso(nowIso)
     };
@@ -658,12 +721,14 @@
   return {
     DRIVE_KEYS,
     AFFECT_KEYS,
+    ACTION_KEYS,
     DEFAULT_DRIVES,
     DEFAULT_AFFECT,
     clamp01,
     createInitialState,
     normalizeEvent,
     inferFallbackEvent,
+    planCurrentTurn,
     inferSexualCharge,
     inferDesireResonance,
     endogenousLibidoTarget,
