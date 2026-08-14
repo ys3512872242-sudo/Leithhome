@@ -1024,21 +1024,86 @@ const SupabaseMemoryAdapter = {
   // 短期记忆（对话消息）
   // ============================================================
   async saveShortTerm(threadId, role, content) {
-    if (!supabaseReady || !content) return false;
+    if (!supabaseReady || !content) return null;
     try {
-      const { error } = await supabaseClient
+      const { data, error } = await supabaseClient
         .from('memories')
         .insert([{
           content: content,
           type: 'short_term',
           thread_id: threadId || 'global',
           role: role || 'user'
-        }]);
+        }])
+        .select('id, created_at')
+        .single();
       if (error) throw error;
-      return true;
+      return data?.id ? { id: String(data.id), createdAt: data.created_at } : null;
     } catch (e) {
       console.error('短期记忆上传失败:', e);
-      return false;
+      return null;
+    }
+  },
+
+  // 删除聊天必须落到真实行。新版消息直接带数据库 id；旧版消息则用
+  // thread + role + content + 最近时间补认一次，再统一按 id 删除并核对返回行。
+  async deleteShortTermMessages(threadId, messages) {
+    if (!supabaseReady) return { ok: false, reason: '云端尚未连接', deletedIds: [] };
+    const rowsToDelete = (Array.isArray(messages) ? messages : []).filter(item => item && item.content);
+    if (!rowsToDelete.length) return { ok: true, deletedIds: [] };
+    try {
+      const targetThread = threadId || 'global';
+      const resolvedIds = new Set();
+      const unresolved = [];
+      for (const message of rowsToDelete) {
+        const rawId = message.cloudId || (String(message.localId || '').startsWith('cloud_') ? String(message.localId).slice(6) : '');
+        const numericId = Number.parseInt(rawId, 10);
+        if (Number.isFinite(numericId)) resolvedIds.add(numericId);
+        else unresolved.push(message);
+      }
+
+      if (unresolved.length) {
+        const { data: candidates, error: lookupError } = await supabaseClient
+          .from('memories')
+          .select('id, role, content, created_at')
+          .eq('type', 'short_term')
+          .eq('thread_id', targetThread)
+          .order('created_at', { ascending: true });
+        if (lookupError) throw lookupError;
+        const used = new Set(resolvedIds);
+        for (const message of unresolved) {
+          const timestamp = Number(message.createdAt || 0);
+          const matches = (candidates || []).filter(row => !used.has(Number(row.id))
+            && String(row.role || 'user') === String(message.role || 'user')
+            && String(row.content || '') === String(message.content || ''));
+          if (!matches.length) continue; // 已经不在云端也视为删除完成
+          matches.sort((a, b) => {
+            if (!timestamp) return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            return Math.abs(new Date(a.created_at).getTime() - timestamp) - Math.abs(new Date(b.created_at).getTime() - timestamp);
+          });
+          const chosenId = Number(matches[0].id);
+          resolvedIds.add(chosenId);
+          used.add(chosenId);
+        }
+      }
+
+      const ids = [...resolvedIds];
+      if (!ids.length) return { ok: true, deletedIds: [] };
+      const { data: deleted, error: deleteError } = await supabaseClient
+        .from('memories')
+        .delete()
+        .eq('type', 'short_term')
+        .eq('thread_id', targetThread)
+        .in('id', ids)
+        .select('id');
+      if (deleteError) throw deleteError;
+      const deletedIds = (deleted || []).map(row => String(row.id));
+      if (deletedIds.length !== ids.length) {
+        return { ok: false, reason: `云端只删除了 ${deletedIds.length}/${ids.length} 条，已停止修改本机记录`, deletedIds };
+      }
+      return { ok: true, deletedIds };
+    } catch (e) {
+      console.error('删除云端聊天记录失败:', e);
+      return { ok: false, reason: e.message || '云端聊天记录删除失败', deletedIds: [] };
     }
   },
 
@@ -1731,6 +1796,7 @@ const LocalMemoryAdapter = {
   },
   async saveShortTerm() {},
   async saveShortTermBatch() {},
+  async deleteShortTermMessages() { return { ok: false, reason: '云端尚未连接', deletedIds: [] }; },
   async loadShortTerm() { return []; },
   async loadShortTermBefore() { return []; },
   async findLatestShortTermThreadId() { return ''; },

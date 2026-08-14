@@ -1432,9 +1432,36 @@ const ONGOING_THREADS_CLOUD_KEY = "leith_ongoing_threads_v1";
 let ongoingThreadsReady = false;
 let ongoingThreadsInitPromise = null;
 
+function normalizeOngoingTimelineEntry(entry, fallbackAt) {
+  if (!entry || typeof entry !== "object") return null;
+  const type = ["opened", "progress", "resolved", "reopened"].includes(entry.type) ? entry.type : "progress";
+  return {
+    id: String(entry.id || uid()).slice(0, 80),
+    type,
+    at: entry.at || fallbackAt || new Date().toISOString(),
+    state: String(entry.state || "").trim().slice(0, 160),
+    feeling: String(entry.feeling || "").trim().slice(0, 100),
+    next: String(entry.next || "").trim().slice(0, 120)
+  };
+}
+
 function normalizeOngoingThread(item) {
   if (!item || typeof item !== "object") return null;
   const status = ["active", "resolved"].includes(item.status) ? item.status : "active";
+  const startedAt = item.startedAt || item.updatedAt || new Date().toISOString();
+  let timeline = Array.isArray(item.timeline)
+    ? item.timeline.map(entry => normalizeOngoingTimelineEntry(entry, startedAt)).filter(Boolean)
+    : [];
+  // 旧版只有一个会被反复覆盖的 state。升级后把它变成第一条时间线，标题保持不动。
+  if (!timeline.length && (item.state || item.feeling || item.next)) {
+    timeline = [normalizeOngoingTimelineEntry({
+      type: status === "resolved" ? "resolved" : "opened",
+      at: item.updatedAt || startedAt,
+      state: item.resolution || item.state,
+      feeling: item.feeling,
+      next: item.next
+    }, startedAt)];
+  }
   return {
     id: String(item.id || uid()).slice(0, 80),
     kind: ["conflict", "plan", "waiting", "health", "relationship", "other"].includes(item.kind) ? item.kind : "other",
@@ -1444,7 +1471,8 @@ function normalizeOngoingThread(item) {
     next: String(item.next || "").trim().slice(0, 120),
     resolution: String(item.resolution || "").trim().slice(0, 140),
     status,
-    startedAt: item.startedAt || new Date().toISOString(),
+    timeline: timeline.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(-30),
+    startedAt,
     updatedAt: item.updatedAt || new Date().toISOString(),
     resolvedAt: status === "resolved" ? (item.resolvedAt || new Date().toISOString()) : ""
   };
@@ -1495,12 +1523,33 @@ function ongoingThreadDays(item) {
   return Math.max(1, Math.floor((Date.now() - start) / 86400000) + 1);
 }
 
+function ongoingTimelineLabel(at) {
+  const date = new Date(at);
+  if (!Number.isFinite(date.getTime())) return "某一天";
+  return date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+}
+
+function appendOngoingTimeline(target, entry) {
+  const nextEntry = normalizeOngoingTimelineEntry(entry, new Date().toISOString());
+  if (!nextEntry) return false;
+  const timeline = Array.isArray(target.timeline) ? target.timeline.slice() : [];
+  const last = timeline[timeline.length - 1];
+  if (last && last.type === nextEntry.type && last.state === nextEntry.state
+    && last.feeling === nextEntry.feeling && last.next === nextEntry.next) return false;
+  timeline.push(nextEntry);
+  target.timeline = timeline.slice(-30);
+  return true;
+}
+
 async function buildOngoingThreadsPromptBlock() {
   const items = (await initOngoingThreads()).filter(item => item.status === "active").slice(0, 3);
   if (!items.length) return "";
-  return `[Ongoing situations — always preserve across days until explicitly resolved]
-${items.map(item => `- ID:${item.id} | ${item.title}（第${ongoingThreadDays(item)}天）: ${item.state}${item.feeling ? `；Leith残留感受：${item.feeling}` : ""}${item.next ? `；下一步：${item.next}` : ""}`).join("\n")}
-Let these situations subtly shape tone, initiative and decisions even if the current topic changes. Do not mechanically mention them in every reply. A new day, pleasant small talk, apology alone, or temporary calm does NOT resolve one. Resolve only when the underlying matter is clearly completed or both participants explicitly treat it as settled.`;
+  return `[Ongoing situations — stable parent topics with dated progress, preserved until explicitly resolved]
+${items.map(item => {
+  const recent = (item.timeline || []).slice(-3).map(entry => `${ongoingTimelineLabel(entry.at)} ${entry.state}`).filter(Boolean).join(" → ");
+  return `- ID:${item.id} | FIXED TITLE:${item.title}（第${ongoingThreadDays(item)}天）: ${item.state}${item.feeling ? `；Leith残留感受：${item.feeling}` : ""}${item.next ? `；下一步：${item.next}` : ""}${recent ? `；最近进展：${recent}` : ""}`;
+}).join("\n")}
+Treat each ID and FIXED TITLE as one stable parent situation. Never rename an existing title or create a replacement topic merely because its latest phase changed; use ongoing=update with the same ID to append progress. Let it subtly shape tone, initiative and decisions even if the current topic changes. Do not mechanically mention it in every reply. A new day, pleasant small talk, apology alone, or temporary calm does NOT resolve one. Resolve only when the underlying matter is clearly completed or both participants explicitly treat it as settled.`;
 }
 
 function findOngoingThread(items, update) {
@@ -1513,8 +1562,9 @@ function findOngoingThread(items, update) {
     const sameTitle = items.find(item => item.status === "active" && (item.title.includes(title) || title.includes(item.title)));
     if (sameTitle) return sameTitle;
   }
-  if (update.kind === "conflict" || update.kind === "relationship") {
-    return items.find(item => item.status === "active" && (item.kind === "conflict" || item.kind === "relationship")) || null;
+  if (update.action !== "open" && update.kind) {
+    const sameKind = items.filter(item => item.status === "active" && item.kind === update.kind);
+    if (sameKind.length === 1) return sameKind[0];
   }
   return null;
 }
@@ -1530,7 +1580,8 @@ async function applyOngoingThreadUpdate(raw) {
   if (action === "open" && !target) {
     target = normalizeOngoingThread({
       id: uid(), kind: raw.kind, title: raw.title, state: raw.state,
-      feeling: raw.feeling, next: raw.next, status: "active", startedAt: now, updatedAt: now
+      feeling: raw.feeling, next: raw.next, status: "active", startedAt: now, updatedAt: now,
+      timeline: [{ type: "opened", at: now, state: raw.state, feeling: raw.feeling, next: raw.next }]
     });
     items.unshift(target);
   } else if (!target) {
@@ -1538,21 +1589,25 @@ async function applyOngoingThreadUpdate(raw) {
   } else {
     Object.assign(target, {
       kind: raw.kind || target.kind,
-      title: String(raw.title || target.title).slice(0, 48),
       state: String(raw.state || target.state).slice(0, 160),
       feeling: String(raw.feeling ?? target.feeling).slice(0, 100),
       next: String(raw.next ?? target.next).slice(0, 120),
       updatedAt: now
     });
+    if (action === "update" || action === "open") {
+      appendOngoingTimeline(target, { type: "progress", at: now, state: target.state, feeling: target.feeling, next: target.next });
+    }
   }
   if (action === "resolve") {
     target.status = "resolved";
     target.resolution = String(raw.resolution || raw.state || "这件事已经告一段落。 ").trim().slice(0, 140);
     target.resolvedAt = now;
+    appendOngoingTimeline(target, { type: "resolved", at: now, state: target.resolution, feeling: raw.feeling, next: "" });
   } else if (action === "reopen") {
     target.status = "active";
     target.resolvedAt = "";
     target.resolution = "";
+    appendOngoingTimeline(target, { type: "reopened", at: now, state: target.state, feeling: target.feeling, next: target.next });
   }
   setOngoingThreads(items);
   return true;
@@ -1570,6 +1625,9 @@ function renderOngoingThreads() {
       <p>${escapeHtml(item.state)}</p>
       ${item.feeling ? `<small>余留感受 · ${escapeHtml(item.feeling)}</small>` : ""}
       ${item.next ? `<small>正在尝试 · ${escapeHtml(item.next)}</small>` : ""}
+      <ol class="ongoing-thread-timeline">${(item.timeline || []).slice(-6).map(entry => `
+        <li class="is-${escapeHtml(entry.type)}"><time>${escapeHtml(ongoingTimelineLabel(entry.at))}</time><span>${escapeHtml(entry.state || (entry.type === "reopened" ? "再次被提起" : "有了新的进展"))}</span></li>`).join("")}
+      </ol>
       <button class="ongoing-thread-resolve" data-resolve-thread="${escapeHtml(item.id)}">标记为已经解决</button>
     </article>`).join("") : `<div class="ongoing-thread-empty">此刻没有悬而未决的事。</div>`;
   activeBox.querySelectorAll("[data-resolve-thread]").forEach(button => {
@@ -2959,6 +3017,7 @@ async function restoreCloudConversationIfNeeded() {
       role: m.role,
       content: m.content,
       _id: m.id ? `cloud_${m.id}` : uid(),
+      _cloudId: m.id ? String(m.id) : "",
       _ts: m.createdAt || Date.now(),
       _restoredFromCloud: true
     }));
@@ -3021,6 +3080,7 @@ async function loadOlderCloudMessages() {
       role: message.role,
       content: message.content,
       _id: message.id ? `cloud_${message.id}` : uid(),
+      _cloudId: message.id ? String(message.id) : "",
       _ts: message.createdAt || Date.now(),
       _restoredFromCloud: true
     }));
@@ -3123,36 +3183,20 @@ async function deleteMessage(msgId, rowEl) {
   const msg = messages.find(m => m._id === msgId);
   if (!msg) return;
 
-  // 从本地删除
-  messages = messages.filter(m => m._id !== msgId);
-  saveThreadMessages(threadId, messages);
-
-  // 从 DOM 删除
-  if (rowEl) rowEl.remove();
-
-  // 从云端短期记忆删除（按 content 匹配）
-  if (window.Memory && window.Memory.isReady && window.Memory.isReady() && msg.content) {
-    try {
-      const client = window.getSupabaseClient ? window.getSupabaseClient() : null;
-      if (client) {
-        const { data: rows } = await client
-          .from('memories')
-          .select('id')
-          .eq('type', 'short_term')
-          .eq('thread_id', threadId || 'global')
-          .eq('content', msg.content)
-          .order('created_at', { ascending: true })
-          .limit(1);
-        if (rows && rows.length) {
-          await client.from('memories').delete().eq('id', rows[0].id);
-        }
-      }
-    } catch (e) {
-      console.error('删除云端记忆失败:', e);
+  // 云端是聊天事实来源：先确认真实行已经删除，再改本机和界面。
+  if (isCloudBackedChatMessage(msg)) {
+    const cloudResult = await deleteChatMessagesFromCloud(threadId, [msg]);
+    if (!cloudResult.ok) {
+      showModal("没有删除", `${cloudResult.reason || "云端删除失败"}\n\n本机消息仍然保留，没有制造两份不一致的历史。`);
+      return;
     }
   }
 
-  showToast("已删除");
+  messages = messages.filter(m => m._id !== msgId);
+  await saveThreadMessagesDurable(threadId, messages);
+
+  if (rowEl) rowEl.remove();
+  showToast("已从本机和云端删除");
   renderTokenBanner();
 }
 
@@ -3194,7 +3238,7 @@ function startEditMessage(row, msg) {
     row.querySelector(".msg-actions").style.display = "";
   };
 
-  btnRow.querySelector("#confirmEditBtn").onclick = () => {
+  btnRow.querySelector("#confirmEditBtn").onclick = async () => {
     const newText = textarea.value.trim();
     if (!newText || newText === originalText) {
       bubble.innerText = originalText;
@@ -3205,8 +3249,19 @@ function startEditMessage(row, msg) {
     let messages = getThreadMessages(threadId);
     const idx = messages.findIndex(m => m._id === msg._id);
     if (idx === -1) return;
+    const removedMessages = messages.slice(idx);
+    const confirmButton = btnRow.querySelector("#confirmEditBtn");
+    confirmButton.disabled = true;
+    confirmButton.innerText = "正在同步删除旧版本…";
+    const cloudResult = await deleteChatMessagesFromCloud(threadId, removedMessages);
+    if (!cloudResult.ok) {
+      confirmButton.disabled = false;
+      confirmButton.innerText = "保存并重新发送";
+      showModal("旧消息没有删掉", `${cloudResult.reason || "云端删除失败"}\n\n因此没有发送修改版，原聊天仍完整保留。`);
+      return;
+    }
     messages = messages.slice(0, idx);
-    saveThreadMessages(threadId, messages);
+    await saveThreadMessagesDurable(threadId, messages);
 
     // 清空输入框，避免和直接传入的文本重复
     userInput.value = "";
@@ -3214,7 +3269,7 @@ function startEditMessage(row, msg) {
     // 重新渲染聊天框（显示裁剪后的历史）
     loadActiveThreadIntoChat();
     // 直接把编辑后的文本传给 sendChat，不再依赖输入框中间状态
-    sendChat(newText);
+    await sendChat(newText);
   };
 }
 
@@ -3229,8 +3284,11 @@ async function regenerateMessage(assistantMsgId) {
   const userMsg = messages[idx - 1];
   if (!userMsg || userMsg.role !== "user") return showToast("找不到对应的用户消息");
 
+  const removedMessages = messages.slice(idx);
+  const cloudResult = await deleteChatMessagesFromCloud(threadId, removedMessages);
+  if (!cloudResult.ok) return showModal("没有重新生成", `${cloudResult.reason || "旧回复未能从云端删除"}\n\n原回复仍然保留。`);
   messages = messages.slice(0, idx);
-  saveThreadMessages(threadId, messages);
+  await saveThreadMessagesDurable(threadId, messages);
 
   loadActiveThreadIntoChat();
   await regenerateFromMessage(userMsg);
@@ -5272,20 +5330,67 @@ function buildContentBlocksForApi(text, attachments, apiStyle, includeImages = t
   return blocks;
 }
 
-async function saveChatMessageToCloud(threadId, message) {
-  if (!window.Memory?.isReady?.() || !window.Memory.saveShortTerm) return false;
+function getCloudChatContent(message) {
   let cloudContent = (message.content || "").trim();
   if (!cloudContent && message.attachments?.length) {
     const names = message.attachments.map(attachment => attachment.name).filter(Boolean).join("、");
     cloudContent = `[发送了附件${names ? `：${names}` : ""}]`;
   }
+  return cloudContent;
+}
+
+function isCloudBackedChatMessage(message) {
+  return Boolean(message && (message.role === "user" || message.role === "assistant") && getCloudChatContent(message));
+}
+
+const pendingCloudMessageSaves = new Map();
+
+async function saveChatMessageToCloud(threadId, message) {
+  if (!window.Memory?.isReady?.() || !window.Memory.saveShortTerm) return false;
+  const cloudContent = getCloudChatContent(message);
   if (!cloudContent) return false;
-  try {
-    return Boolean(await window.Memory.saveShortTerm(threadId, message.role, cloudContent));
-  } catch (error) {
-    console.warn("单条聊天云端保存失败", error);
-    return false;
+  if (message._cloudId) return true;
+  if (pendingCloudMessageSaves.has(message._id)) return await pendingCloudMessageSaves.get(message._id);
+  const task = (async () => {
+    try {
+      const saved = await window.Memory.saveShortTerm(threadId, message.role, cloudContent);
+      if (!saved?.id) return false;
+      message._cloudId = String(saved.id);
+      message._cloudCreatedAt = saved.createdAt || "";
+      const current = getThreadMessages(threadId);
+      const stored = current.find(item => item._id === message._id);
+      if (stored) {
+        stored._cloudId = message._cloudId;
+        stored._cloudCreatedAt = message._cloudCreatedAt;
+        await saveThreadMessagesDurable(threadId, current);
+      }
+      return true;
+    } catch (error) {
+      console.warn("单条聊天云端保存失败", error);
+      return false;
+    }
+  })();
+  pendingCloudMessageSaves.set(message._id, task);
+  try { return await task; }
+  finally { pendingCloudMessageSaves.delete(message._id); }
+}
+
+async function deleteChatMessagesFromCloud(threadId, messages) {
+  const cloudMessages = (messages || []).filter(isCloudBackedChatMessage);
+  if (!cloudMessages.length) return { ok: true, deletedIds: [] };
+  // 若用户在刚发出后立刻删除/编辑，先等那次 insert 拿到真实行 id，防止竞态残留。
+  await Promise.all(cloudMessages.map(message => pendingCloudMessageSaves.get(message._id)).filter(Boolean));
+  if (!window.Memory?.isReady?.() || !window.Memory.deleteShortTermMessages) {
+    return { ok: false, reason: "云端记忆尚未连接，无法确认表里的旧记录已删除", deletedIds: [] };
   }
+  const payload = cloudMessages.map(message => ({
+    cloudId: message._cloudId || "",
+    localId: message._id || "",
+    role: message.role,
+    content: getCloudChatContent(message),
+    createdAt: message._cloudCreatedAt ? new Date(message._cloudCreatedAt).getTime() : Number(message._ts || 0)
+  }));
+  return await window.Memory.deleteShortTermMessages(threadId, payload);
 }
 
 const RECOVER_REPLY_COMMAND = "/恢复回复";
