@@ -2448,8 +2448,18 @@
       <span class="app-title">✨ Skills</span>
     </div>
     <div class="app-body">
-      <div class="module-token-note">每个 Skill 都可单独关闭。自动 Skill 只在触发场景进入提示词；关闭或未触发时消耗 0 token。这里的 token 是近似估算，不会产生额外模型调用。</div>
+      <div class="module-token-note">“每轮启用”会进入每一次对话；“按场景触发”只有检测到对应词语才进入本轮；“系统优化”在浏览器本地工作，不发给模型。每项都能单独关闭。关闭或未触发时，该 Skill 消耗 0 token。</div>
       <div class="skill-list" id="leithSkillList"></div>
+      <section class="skill-form" aria-labelledby="boyfriendTuningTitle">
+        <div class="section-title" id="boyfriendTuningTitle">男友参数</div>
+        <p class="helper-text" style="margin:0;">界面使用中文；发送给 Leith 的运行配置保持英文并压缩为约 60 token。0 表示关闭该倾向，4 表示明显。</p>
+        <label class="field-label">狐狸感 <span id="boyfriend-fox-value">3</span></label><input type="range" id="boyfriend-fox" min="0" max="4" step="1"><p class="helper-text">控制坏心眼、从容感和留白，不改变欲望数值。</p>
+        <label class="field-label">主动制造互动 <span id="boyfriend-initiative-value">3</span></label><input type="range" id="boyfriend-initiative" min="0" max="4" step="1"><p class="helper-text">控制 Leith 主动抛出新话题、玩笑或暧昧火花的频率；设为 0 时，欲望状态不会主动唤醒亲密 Skill。</p>
+        <label class="field-label">黄腔与双关直白度 <span id="boyfriend-innuendo-value">2</span></label><input type="range" id="boyfriend-innuendo" min="0" max="4" step="1"><p class="helper-text">只控制措辞有多含蓄或直白，不代表同意，也不会提高性欲。</p>
+        <label class="field-label">亲密升温速度 <span id="boyfriend-pacing-value">2</span></label><input type="range" id="boyfriend-pacing" min="0" max="4" step="1"><p class="helper-text">控制欲望达到多高时可主动唤醒 Velvet；越高越容易进入试探，但仍必须观察回应。设为 0 时只由明确亲密场景词触发。</p>
+        <label class="field-label" for="boyfriend-sensory">感官侧重</label>
+        <select id="boyfriend-sensory"><option value="balanced">均衡</option><option value="touch">触觉与距离</option><option value="gaze">眼神与视觉张力</option><option value="voice">声音、呼吸与停顿</option><option value="psychology">心理期待与关系后果</option></select>
+      </section>
       <section class="skill-form">
         <div class="section-title">添加自定义 Skill</div>
         <input id="skillNameInput" maxlength="40" placeholder="名称，例如：雨天黏人">

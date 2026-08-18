@@ -71,10 +71,10 @@ test("模块开关控制真实提示词注入而非只隐藏界面", () => {
 });
 
 test("关系调谐独立于性欲状态，包含贴合情境的安抚策略", () => {
-  assert.match(app, /id:"relational-attunement"/);
-  assert.match(app, /Warm touch is not automatically sexual/);
-  assert.match(app, /Small frustration gets light companionship/);
-  assert.match(app, /therapy-speak/);
+  assert.match(app, /id:"github-ai-companion"/);
+  assert.match(app, /initiate a topic/);
+  assert.match(app, /one relevant shared memory/);
+  assert.match(app, /Do not sound like customer service/);
 });
 
 test("Skills 独立开关、按场景注入且有总字符预算", () => {
@@ -90,14 +90,40 @@ test("Skills 独立开关、按场景注入且有总字符预算", () => {
 test("省 token Skill 缩短历史而且不发起额外模型调用", () => {
   assert.match(app, /historyLimit = isTokenSaverEnabled\(\) \? 16 : HISTORY_SEND_LIMIT/);
   assert.match(app, /tokenSaving:true/);
+  assert.match(app, /LearnPrompt\/cc-harness-skills · MIT/);
   assert.doesNotMatch(app.slice(app.indexOf("function buildLeithSkillsPromptBlock"), app.indexOf("const DIRECT_ADDRESS_RULES")), /fetch\s*\(/);
 });
 
+test("男友参数中文可调但给模型的是紧凑英文配置", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /男友参数/);
+  assert.match(html, /boyfriend-fox/);
+  assert.match(html, /boyfriend-initiative/);
+  assert.match(html, /boyfriend-innuendo/);
+  assert.match(html, /boyfriend-pacing/);
+  assert.match(html, /感官侧重/);
+  assert.match(app, /\[Leith boyfriend tuning — compact runtime settings\]/);
+  assert.match(app, /buildBoyfriendStylePromptBlock\(\)/);
+  assert.match(app, /thresholdByPacing/);
+  assert.match(app, /attachment >= 0\.48 && libido >= threshold/);
+  assert.match(app, /style\.initiative <= 0 \|\| style\.pacing <= 0/);
+});
+
 test("亲密 Skills 区分反撩、主动张力和可逆升级", () => {
-  assert.match(app, /id:"innuendo-catch"/);
-  assert.match(app, /id:"tension-initiative"/);
-  assert.match(app, /reversible intimacy ladder/);
-  assert.match(app, /Never substitute forceful possession for sexual intelligence/);
+  assert.match(app, /id:"github-velvet-ascent"/);
+  assert.match(app, /keep or release tension instead of escalating/);
+  assert.match(app, /specific trigger, bodily reaction, and small tell/);
+  assert.match(app, /either person may adjust, initiate, pause, refuse, or change the scene/);
+});
+
+test("GitHub 衍生 Skills 显示真实来源并保留归属说明", () => {
+  const attribution = fs.readFileSync(path.join(root, "THIRD_PARTY_SKILLS.md"), "utf8");
+  assert.match(app, /xnydl\/ai-companion-skill · MIT/);
+  assert.match(app, /ruijayfeng\/velvet-ascent-skill · MIT/);
+  assert.match(attribution, /github\.com\/xnydl\/ai-companion-skill/);
+  assert.match(attribution, /github\.com\/ruijayfeng\/velvet-ascent-skill/);
+  assert.match(attribution, /github\.com\/LearnPrompt\/cc-harness-skills/);
+  assert.match(attribution, /not presented as unmodified upstream releases/);
 });
 
 test("MCP 网关默认关闭、只读并在前后端同时校验权限", () => {
