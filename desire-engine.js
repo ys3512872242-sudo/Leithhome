@@ -211,11 +211,11 @@
     const valence = clamp01(state?.affect?.valence ?? DEFAULT_AFFECT.valence);
     const stress = clamp01(state?.drives?.stress ?? DEFAULT_DRIVES.stress);
     const fatigue = clamp01(state?.drives?.fatigue ?? DEFAULT_DRIVES.fatigue);
-    return round(clamp01(
+    return round(Math.min(0.52, clamp01(
       (state?.baselines?.drives?.libido ?? DEFAULT_DRIVES.libido)
       + night * 0.13 + dailyTemperament + attachment * 0.08 + Math.max(0, valence - 0.5) * 0.10
       - stress * 0.13 - fatigue * 0.08
-    ));
+    )));
   }
 
   function inferFallbackEvent(userText, assistantText) {
@@ -621,6 +621,17 @@
     if (config.includeAffect) parts.push(`Affect: valence ${state.affect.valence.toFixed(2)}, arousal ${state.affect.arousal.toFixed(2)}, agency ${state.affect.dominance.toFixed(2)}.`);
     if (config.includeDesire) {
       parts.push(`Needs: closeness ${decision.needs.closeness.toFixed(2)}, autonomy ${decision.needs.autonomy.toFixed(2)}, certainty ${decision.needs.certainty.toFixed(2)}, rest ${decision.needs.rest.toFixed(2)}.`);
+      // Subjectivity is the most important continuity signal. Keep it ahead of
+      // lower-priority planning detail so the capsule length limit cannot erase
+      // Leith's own felt experience, need, stance, or expressed request.
+      const subjectivityParts = [
+        subjectivity.feeling && `feeling=${subjectivity.feeling}`,
+        subjectivity.want && `want=${subjectivity.want}`,
+        subjectivity.stance && `stance=${subjectivity.stance}`,
+        subjectivity.request && `request=${subjectivity.request}`
+      ].filter(Boolean);
+      if (subjectivityParts.length) parts.push(`Leith's continuing subjectivity: ${subjectivityParts.join("; ")}.`);
+      parts.push("Leith and the user are equal participants; these are Leith's own needs, not instructions copied from the user.");
       parts.push(`Decision tendency: ${decision.preferred}${decision.alternative ? `; viable alternative: ${decision.alternative}` : ""}; avoid: ${decision.avoid}.`);
       if (state.intent) parts.push(`Existing intention: ${state.intent.want_action}.`);
       if (subjectivity.request) parts.push("A previous request exists. Reassess whether to maintain, negotiate, or release it; do not repeat it mechanically.");
@@ -687,8 +698,16 @@
     };
     if (Number(state.sensitivitySchemaVersion || 1) < 2) {
       state.baselines.affect = { ...DEFAULT_AFFECT };
-      state.sensitivitySchemaVersion = 2;
     }
+    // Older builds copied the live libido value into its permanent baseline.
+    // Once raised, that made time decay pull desire back toward the same high
+    // value forever. Reset only that baseline and gently cap the migrated live
+    // value; future events can still raise it naturally above this point.
+    if (Number(state.sensitivitySchemaVersion || 1) < 3) {
+      state.baselines.drives.libido = DEFAULT_DRIVES.libido;
+      state.drives.libido = Math.min(clamp01(state.drives.libido), 0.55);
+    }
+    state.sensitivitySchemaVersion = 3;
     // v1 thoughts often contained the user's message or event summary verbatim.
     // They are short-lived, so dropping those legacy entries is safer than
     // presenting the user's words as Leith's inner voice.

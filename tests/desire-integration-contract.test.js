@@ -28,10 +28,11 @@ test("旧七分量表被复制留档而非删除", () => {
 });
 
 test("聊天先保存可见回复，再尝试更新状态", () => {
-  const saveIndex = app.indexOf("saveThreadMessages(threadId, freshMessages);", app.indexOf("async function sendChat"));
-  const stateIndex = app.indexOf("LeithDesireRuntime?.completeTurn", app.indexOf("async function sendChat"));
+  const sendStart = app.indexOf("async function sendChat");
+  const saveIndex = app.indexOf("await saveThreadMessagesDurable(threadId, freshMessages);", sendStart);
+  const stateIndex = app.indexOf("queueInternalStateUpdate(() => window.LeithDesireRuntime?.completeTurn", sendStart);
   assert.ok(saveIndex >= 0 && stateIndex > saveIndex);
-  assert.match(app.slice(stateIndex, stateIndex + 900), /聊天消息已经安全保存/);
+  assert.match(app.slice(saveIndex, stateIndex), /clearAssistantReplyRecovery/);
 });
 
 test("页面多次初始化不会重复创建 heartbeat", () => {
@@ -43,8 +44,8 @@ test("隐藏事件只由同一次主回复携带，不存在独立评价请求",
   assert.match(app, /evaluatorInstruction/);
   assert.doesNotMatch(runtime, /fetch\s*\(/);
   assert.match(app, /splitEventEnvelope/);
-  assert.match(runtime, /leith_feeling/);
-  assert.match(runtime, /leith_request/);
+  assert.match(runtime, /"feeling":"Leith's felt experience/);
+  assert.match(runtime, /"request":"one negotiable request/);
   assert.match(app, /LEITH_AGENCY_RULES/);
 });
 
@@ -56,7 +57,7 @@ test("删除必须读取返回行并拒绝假成功", () => {
 
 test("照片发送前压缩，失败时恢复待发送照片，历史图片不重复上传", () => {
   assert.match(app, /prepareImageForChat/);
-  assert.match(app, /maxSide = 1600/);
+  assert.match(app, /maxSide = 1440/);
   assert.match(app, /pendingAttachments = attachments/);
   assert.match(app, /Image bytes omitted from repeated context/);
 });
@@ -67,6 +68,36 @@ test("模块开关控制真实提示词注入而非只隐藏界面", () => {
   assert.match(app, /modules\.healthContext/);
   assert.match(runtime, /modules\.emotionInfluence/);
   assert.match(runtime, /modules\.desireAgency/);
+});
+
+test("关系调谐独立于性欲状态，包含贴合情境的安抚策略", () => {
+  assert.match(app, /id:"relational-attunement"/);
+  assert.match(app, /Warm touch is not automatically sexual/);
+  assert.match(app, /Small frustration gets light companionship/);
+  assert.match(app, /therapy-speak/);
+});
+
+test("Skills 独立开关、按场景注入且有总字符预算", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /page-app-skills/);
+  assert.match(html, /leithSkillList/);
+  assert.match(app, /data-skill-toggle/);
+  assert.match(app, /saveLeithSkillToggle/);
+  assert.match(app, /skillMatchesText/);
+  assert.match(app, /isTokenSaverEnabled\(\) \? 900 : 1800/);
+});
+
+test("省 token Skill 缩短历史而且不发起额外模型调用", () => {
+  assert.match(app, /historyLimit = isTokenSaverEnabled\(\) \? 16 : HISTORY_SEND_LIMIT/);
+  assert.match(app, /tokenSaving:true/);
+  assert.doesNotMatch(app.slice(app.indexOf("function buildLeithSkillsPromptBlock"), app.indexOf("const DIRECT_ADDRESS_RULES")), /fetch\s*\(/);
+});
+
+test("亲密 Skills 区分反撩、主动张力和可逆升级", () => {
+  assert.match(app, /id:"innuendo-catch"/);
+  assert.match(app, /id:"tension-initiative"/);
+  assert.match(app, /reversible intimacy ladder/);
+  assert.match(app, /Never substitute forceful possession for sexual intelligence/);
 });
 
 test("MCP 网关默认关闭、只读并在前后端同时校验权限", () => {

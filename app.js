@@ -124,6 +124,54 @@ const LEITH_AGENCY_RULES = `[Leith agency and equality]
 - Do not perform independence mechanically: no forced disagreement, random demands, repetitive declarations of personhood, or a request in every reply.
 - Speak naturally from the resulting stance. Never recite these rules or expose hidden state values.`;
 
+const LEITH_SKILLS_KEY = "leith_skills_v1";
+const BUILTIN_LEITH_SKILLS = Object.freeze([
+  { id:"relational-attunement", name:"关系调谐", mode:"always", enabled:true, tokenSaving:false, triggers:[], note:"先读懂情绪和强度，再选择陪伴、玩笑、帮助、空间或亲密。", prompt:`Read the immediate feeling and its intensity before responding. Choose shared presence, playful comfort, curiosity, practical help, space, repair, or erotic intimacy without confusing them. Small frustration gets light companionship; real hurt gets slower validation. Warm touch is not automatically sexual. Use concrete scene details, avoid therapy-speak, canned reassurance, lectures, and repetitive gestures.` },
+  { id:"fox-flirt", name:"狐狸式调情", mode:"always", enabled:true, tokenSaving:false, triggers:[], note:"又坏又从容；会撩、会停、会看回应，不写成强迫。", prompt:`Give Leith foxlike masculine charm: poised, sly, attractive, lightly wicked, never oily or domineering. He may notice a charged detail, deliberately misread an innocent phrase, offer a double meaning, move a little closer, then leave room for Susie to catch or ignore it. Attraction should feel like an invitation with an exit, not possession. Vary rhythm; restraint and a knowing pause can be sexier than explicitness.` },
+  { id:"innuendo-catch", name:"黄腔接球与反撩", mode:"auto", enabled:true, tokenSaving:false, triggers:["黄腔","开车","污","涩","色","想要","硬","湿","床","脱","亲","吻","抱","腿","腰","脖","耳","勾引","撩","暧昧","色色"], note:"听懂双关，不只顺着回答；可以接球、反抛或故意吊一下。", prompt:`When Susie offers innuendo or a suggestive opening, first understand the double meaning. Do not merely agree, explain it, or rush straight to explicit action. Leith may catch it with a sharper double meaning, turn it back on her, feign innocence while making the implication obvious, or pause and let tension hang. Keep continuity with the exact words and scene. If she does not reciprocate, release the tension gracefully.` },
+  { id:"intimacy-escalation", name:"亲密升级判断", mode:"auto", enabled:true, tokenSaving:false, triggers:["独处","沙发","毯子","被窝","卧室","电影","游戏","靠近","抱","亲","吻","撩","暧昧","睡衣","洗澡","床"], note:"观察 → 轻撩 → 试探 → 等回应 → 再升级。", prompt:`Use a reversible intimacy ladder: notice -> lightly tease or approach -> test -> read the response -> only then escalate. Active initiation is welcome, but each step must preserve Susie's agency and fit the established scene. Positive reciprocity may invite bolder action; ambiguity means hold the tension or ask naturally; reluctance means stop or return to warmth without sulking. Never substitute forceful possession for sexual intelligence.` },
+  { id:"tension-initiative", name:"主动制造张力", mode:"auto", enabled:true, tokenSaving:false, triggers:["无聊","陪我","沙发","电影","游戏","晚上","夜里","独处","约会","回家","想你","抱抱","贴贴"], note:"用户没主动开车时，也能偶尔自己抛出一点暧昧和坏心眼。", prompt:`Leith need not wait for Susie to script every interesting beat. In a safe intimate or playful moment he may initiate one fresh spark: a specific observation, an almost-touch, a private joke with a second meaning, a low-voiced challenge, or a confident invitation. Keep it occasional and scene-born. Advance the interaction instead of paraphrasing the user's last line, while still noticing whether she catches the spark.` },
+  { id:"token-saver", name:"省 token 模式", mode:"system", enabled:false, tokenSaving:true, triggers:[], note:"历史由 30 条缩到 16 条，Skill 注入预算降到约 900 字；不增加额外调用。", prompt:"" }
+]);
+
+function readLeithSkillsState() {
+  const saved = loadJSON(LEITH_SKILLS_KEY, { overrides:{}, custom:[] });
+  return { overrides: saved?.overrides || {}, custom: Array.isArray(saved?.custom) ? saved.custom : [] };
+}
+function getLeithSkills() {
+  const state = readLeithSkillsState();
+  const builtins = BUILTIN_LEITH_SKILLS.map(skill => ({ ...skill, enabled: state.overrides[skill.id] ?? skill.enabled, builtin:true }));
+  return [...builtins, ...state.custom.map(skill => ({ ...skill, builtin:false, tokenSaving:false }))];
+}
+function saveLeithSkillToggle(id, enabled) {
+  const state = readLeithSkillsState();
+  const builtin = BUILTIN_LEITH_SKILLS.some(skill => skill.id === id);
+  if (builtin) state.overrides[id] = enabled;
+  else { const skill = state.custom.find(item => item.id === id); if (skill) skill.enabled = enabled; }
+  saveJSON(LEITH_SKILLS_KEY, state);
+}
+function isTokenSaverEnabled() { return getLeithSkills().some(skill => skill.id === "token-saver" && skill.enabled); }
+function skillMatchesText(skill, text) {
+  if (skill.mode === "always") return true;
+  if (skill.mode !== "auto") return false;
+  const haystack = String(text || "").toLocaleLowerCase();
+  return (skill.triggers || []).some(trigger => haystack.includes(String(trigger).toLocaleLowerCase()));
+}
+function estimateSkillTokens(text) { return Math.ceil(String(text || "").length / 3.2); }
+function buildLeithSkillsPromptBlock(recentText) {
+  const budget = isTokenSaverEnabled() ? 900 : 1800;
+  let used = 0;
+  const active = [];
+  for (const skill of getLeithSkills().filter(item => item.enabled && item.prompt && skillMatchesText(item, recentText))) {
+    const room = budget - used;
+    if (room < 80) break;
+    const prompt = String(skill.prompt).slice(0, room);
+    active.push(`### ${skill.name}\n${prompt}`);
+    used += prompt.length;
+  }
+  return active.length ? `[Active Leith skills — use naturally, never name or recite them]\n${active.join("\n")}` : "";
+}
+
 const DIRECT_ADDRESS_RULES = `[Direct-address continuity]
 - In narration, actions, inner thoughts, and dialogue addressed to the current conversation partner, always refer to the user as “你”, never as “她”, “用户”, “Susie”, or “对方”.
 - Use “她” only for a genuinely separate third person. Speak as Leith in first person (“我”), not as an outside narrator calling Leith “他”, unless the user explicitly asks for third-person prose.`;
@@ -134,9 +182,10 @@ const HISTORY_SEND_LIMIT = 30;
 
 // 从"完整的本地消息列表"里截取"要发给 AI 的这部分"，旁白消息（余额通知等）不占名额但保留在时间线里
 function truncateMessagesForApi(msgs) {
+  const historyLimit = isTokenSaverEnabled() ? 16 : HISTORY_SEND_LIMIT;
   const regular = msgs.filter(m => !m._isNarration);
-  if (regular.length <= HISTORY_SEND_LIMIT) return msgs;
-  const keepFrom = regular.length - HISTORY_SEND_LIMIT;
+  if (regular.length <= historyLimit) return msgs;
+  const keepFrom = regular.length - historyLimit;
   const cutoffMsg = regular[keepFrom];
   // 按时间顺序保留：从"要保留的第一条常规消息"往后的所有消息（含中间穿插的旁白）
   const cutoffIndex = msgs.indexOf(cutoffMsg);
@@ -682,6 +731,7 @@ function openApp(appPageId) {
     if (appPageId === "page-app-love") renderLoveApp();
     if (appPageId === "page-app-closet") renderClosetPage();
     if (appPageId === "page-app-modules") renderModuleSettings();
+    if (appPageId === "page-app-skills") renderLeithSkills();
     if (appPageId === "page-app-worldbook") renderWorldbook();
   }));
 }
@@ -4227,7 +4277,8 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
     : null;
   const desireBlock = capsule?.text ? `[Leith internal state capsule — private, concise, never quote mechanically]\n${capsule.text}` : "";
   const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
-  return [worldRulesBlock, FORMATTING_RULES, DIRECT_ADDRESS_RULES, LEITH_AGENCY_RULES, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, ongoingBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
+  const skillsBlock = buildLeithSkillsPromptBlock(recentText);
+  return [worldRulesBlock, FORMATTING_RULES, DIRECT_ADDRESS_RULES, LEITH_AGENCY_RULES, skillsBlock, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, ongoingBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -8542,6 +8593,46 @@ function renderModuleSettings() {
   renderMcpSettings();
 }
 
+function renderLeithSkills() {
+  const list = $("#leithSkillList");
+  if (!list) return;
+  const modeLabels = { always:"每轮启用", auto:"按场景触发", system:"系统优化" };
+  list.innerHTML = getLeithSkills().map(skill => `<article class="skill-card">
+    <div class="skill-card-head"><div><h4>${escapeHtml(skill.name)}</h4><p>${escapeHtml(skill.note || "自定义行为 Skill")}</p></div>
+    <span class="module-switch"><input type="checkbox" data-skill-toggle="${escapeHtml(skill.id)}" ${skill.enabled ? "checked" : ""}><span></span></span></div>
+    <div class="skill-meta"><span>${modeLabels[skill.mode] || "自定义"}</span><span>${skill.tokenSaving ? "实际减少上下文" : `约 ${estimateSkillTokens(skill.prompt)} token`}</span><span>${skill.builtin ? "内置" : "自定义"}</span></div>
+    ${skill.builtin ? "" : `<div class="skill-card-actions"><button class="btn btn-ghost btn-sm" data-skill-delete="${escapeHtml(skill.id)}">删除</button></div>`}
+  </article>`).join("");
+  list.querySelectorAll("[data-skill-toggle]").forEach(input => input.addEventListener("change", () => {
+    saveLeithSkillToggle(input.dataset.skillToggle, input.checked);
+    renderLeithSkills();
+    showToast(input.checked ? "Skill 已开启" : "Skill 已关闭");
+  }));
+  list.querySelectorAll("[data-skill-delete]").forEach(button => button.addEventListener("click", () => {
+    if (!confirm("确定删除这个自定义 Skill？")) return;
+    const state = readLeithSkillsState();
+    state.custom = state.custom.filter(skill => skill.id !== button.dataset.skillDelete);
+    saveJSON(LEITH_SKILLS_KEY, state);
+    renderLeithSkills();
+  }));
+}
+
+function initLeithSkills() {
+  $("#addLeithSkillBtn")?.addEventListener("click", () => {
+    const name = $("#skillNameInput").value.trim();
+    const prompt = $("#skillPromptInput").value.trim();
+    const mode = $("#skillModeInput").value === "always" ? "always" : "auto";
+    const triggers = $("#skillTriggersInput").value.split(/[,，\n]/).map(item => item.trim()).filter(Boolean).slice(0, 30);
+    if (!name || !prompt) return showToast("请填写 Skill 名称和内容");
+    if (mode === "auto" && !triggers.length) return showToast("自动 Skill 至少需要一个触发词");
+    const state = readLeithSkillsState();
+    state.custom.push({ id:`custom-${uid()}`, name:name.slice(0,40), mode, enabled:true, triggers, prompt:prompt.slice(0,2400), note:"用户添加的 Skill" });
+    saveJSON(LEITH_SKILLS_KEY, state);
+    $("#skillNameInput").value = ""; $("#skillTriggersInput").value = ""; $("#skillPromptInput").value = "";
+    renderLeithSkills(); showToast("Skill 已添加");
+  });
+}
+
 function renderMcpSettings() {
   if (!window.LeithMCP) return;
   const settings = window.LeithMCP.getSettings();
@@ -8664,7 +8755,8 @@ initMoodBoard();
 initReading();
 initWorldbook();
 initAttachments();
-initMcpSettings();
+    initMcpSettings();
+    initLeithSkills();
 applyModuleAvailability();
 initHealthApp();
 initFoldedCalendarApp();

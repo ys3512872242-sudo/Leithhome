@@ -123,8 +123,8 @@ test("Leith 自己的感受、需要、立场和要求进入连续状态", () =>
   assert.equal(result.state.subjectivity.want, "我想先把自己的判断讲完整");
   assert.equal(result.state.subjectivity.requestStatus, "expressed");
   const capsule = Engine.buildStateCapsule(result.state, "主体性", 420);
-  assert.match(capsule.text, /我自己的需要/);
-  assert.match(capsule.text, /平等双方/);
+  assert.match(capsule.text, /我想先把自己的判断讲完整/);
+  assert.match(capsule.text, /equal participants/);
   assert.match(capsule.text, /请先听完我的判断/);
 });
 
@@ -151,6 +151,27 @@ test("旧开心生气委屈状态可迁移到 PAD，不产生无效数值", () =
   assert.deepEqual(Object.keys(upgraded.affect), ["valence", "arousal", "dominance"]);
   Object.values(upgraded.affect).forEach(value => assert.ok(value >= 0 && value <= 1));
   assert.ok(upgraded.affect.valence < 1);
+});
+
+test("旧版高性欲不会继续成为永久人格基线", () => {
+  const state = Engine.createInitialState(T0);
+  state.sensitivitySchemaVersion = 2;
+  state.drives.libido = 0.94;
+  state.baselines.drives.libido = 0.94;
+  const upgraded = Engine.upgradeState(state, T1);
+  assert.equal(upgraded.baselines.drives.libido, Engine.DEFAULT_DRIVES.libido);
+  assert.equal(upgraded.drives.libido, 0.55);
+  assert.equal(upgraded.sensitivitySchemaVersion, 3);
+});
+
+test("日常内生性欲目标有上限，不会仅因时间和依恋长期维持高位", () => {
+  const state = Engine.createInitialState(T0);
+  state.drives.attachment = 1;
+  state.affect.valence = 1;
+  state.drives.stress = 0;
+  state.drives.fatigue = 0;
+  const advanced = Engine.advanceTime(state, "2026-08-05T23:00:00.000Z");
+  assert.ok(advanced.state.drives.libido <= 0.52);
 });
 
 test("情绪雷达由共同 PAD 坐标推导，高愉悦不会同时得到满格生气", () => {

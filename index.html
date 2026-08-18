@@ -1759,6 +1759,13 @@
   .module-switch span:after{content:"";position:absolute;width:21px;height:21px;left:3px;top:3px;border-radius:50%;background:var(--paper-dim);transition:.2s;}
   .module-switch input:checked+span{background:var(--accent-dim);}
   .module-switch input:checked+span:after{transform:translateX(19px);background:var(--paper);}
+  .skill-list{display:flex;flex-direction:column;gap:10px;margin-top:14px;}
+  .skill-card{padding:15px 16px;border:1px solid var(--line);border-radius:17px;background:var(--surface-glass);}
+  .skill-card-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;}
+  .skill-card h4{font-size:14px;font-weight:600;}.skill-card p{margin-top:5px;color:var(--paper-dim);font-size:11px;line-height:1.6;}
+  .skill-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.skill-meta span{padding:3px 7px;border-radius:99px;background:var(--bg-elevated-2);font-size:9px;color:var(--paper-dim);}
+  .skill-form{margin-top:18px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--surface-glass);display:grid;gap:10px;}
+  .skill-form textarea{min-height:120px;resize:vertical;}.skill-card-actions{display:flex;justify-content:flex-end;margin-top:9px;}
   .module-token-note{max-width:680px;margin:0 auto 18px;padding:15px 16px;border-radius:17px;background:rgba(201,154,91,.07);color:var(--paper-dim);font-size:11px;line-height:1.7;}
   .mcp-settings-card{max-width:680px;margin:16px auto 0;padding:18px;border:1px solid var(--line);border-radius:20px;background:var(--surface-glass);}
   .mcp-settings-head{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:12px;}
@@ -2034,6 +2041,12 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
           </div>
           <div class="app-icon-label">Leith 设置</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-skills')">
+          <div class="app-icon-img" style="color:var(--accent-2);background:linear-gradient(150deg,rgba(197,167,232,.18),var(--bg-elevated) 75%);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.1 4.3L19 8l-3.5 3.4.8 4.8L12 14l-4.3 2.2.8-4.8L5 8l4.9-.7L12 3z"/><path d="M4 20l4-4M20 20l-4-4"/></svg>
+          </div>
+          <div class="app-icon-label">Skills</div>
         </div>
       </div>
     </div>
@@ -2427,6 +2440,26 @@
       </section>
     </div>
   </div><!-- /app-modules -->
+
+  <!-- ===== App: Leith Skills ===== -->
+  <div class="app-page" id="page-app-skills">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeAppFromUI()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="app-title">✨ Skills</span>
+    </div>
+    <div class="app-body">
+      <div class="module-token-note">每个 Skill 都可单独关闭。自动 Skill 只在触发场景进入提示词；关闭或未触发时消耗 0 token。这里的 token 是近似估算，不会产生额外模型调用。</div>
+      <div class="skill-list" id="leithSkillList"></div>
+      <section class="skill-form">
+        <div class="section-title">添加自定义 Skill</div>
+        <input id="skillNameInput" maxlength="40" placeholder="名称，例如：雨天黏人">
+        <select id="skillModeInput"><option value="auto">按触发词自动启用</option><option value="always">每轮启用</option></select>
+        <input id="skillTriggersInput" placeholder="触发词，用逗号分隔">
+        <textarea id="skillPromptInput" maxlength="2400" placeholder="写清楚 Leith 在什么情境下怎么观察、怎么行动，以及不要做什么。"></textarea>
+        <button class="btn btn-primary btn-block" id="addLeithSkillBtn">添加 Skill</button>
+      </section>
+    </div>
+  </div><!-- /app-skills -->
 
   <!-- ===== App: 世界书 ===== -->
   <div class="app-page" id="page-app-worldbook">
