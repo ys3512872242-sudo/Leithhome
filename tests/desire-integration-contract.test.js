@@ -88,6 +88,7 @@ test("Skills 独立开关、按场景注入且有总字符预算", () => {
 });
 
 test("省 token Skill 缩短历史而且不发起额外模型调用", () => {
+  assert.match(app, /<label class="module-switch"[^>]*><input type="checkbox" data-skill-toggle=/);
   assert.match(app, /historyLimit = isTokenSaverEnabled\(\) \? 16 : HISTORY_SEND_LIMIT/);
   assert.match(app, /tokenSaving:true/);
   assert.match(app, /LearnPrompt\/cc-harness-skills · MIT/);
@@ -107,6 +108,7 @@ test("男友参数中文可调但给模型的是紧凑英文配置", () => {
   assert.match(app, /thresholdByPacing/);
   assert.match(app, /attachment >= 0\.48 && libido >= threshold/);
   assert.match(app, /style\.initiative <= 0 \|\| style\.pacing <= 0/);
+  assert.match(app, /1:0\.62, 2:0\.48, 3:0\.38, 4:0\.30/);
 });
 
 test("亲密 Skills 区分反撩、主动张力和可逆升级", () => {
@@ -114,6 +116,7 @@ test("亲密 Skills 区分反撩、主动张力和可逆升级", () => {
   assert.match(app, /keep or release tension instead of escalating/);
   assert.match(app, /specific trigger, bodily reaction, and small tell/);
   assert.match(app, /either person may adjust, initiate, pause, refuse, or change the scene/);
+  assert.match(app, /he may initiate one fresh, reversible flirt/);
 });
 
 test("GitHub 衍生 Skills 显示真实来源并保留归属说明", () => {
