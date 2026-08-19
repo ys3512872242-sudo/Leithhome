@@ -10,7 +10,8 @@
     "social", "fatigue", "libido", "stress"
   ];
   const AFFECT_KEYS = ["valence", "arousal", "dominance"];
-  const ACTION_KEYS = ["approach", "express", "clarify", "withdraw", "repair", "refuse", "play", "rest"];
+  const CHEMISTRY_KEYS = ["trust", "romantic_intimacy", "sexual_tension"];
+  const ACTION_KEYS = ["approach", "express", "clarify", "withdraw", "repair", "refuse", "play", "rest", "flirt", "state_desire", "lead_intimacy"];
   const DEFAULT_DRIVES = Object.freeze({
     attachment: 0.42,
     curiosity: 0.48,
@@ -22,6 +23,7 @@
     stress: 0.20
   });
   const DEFAULT_AFFECT = Object.freeze({ valence: 0.58, arousal: 0.36, dominance: 0.54 });
+  const DEFAULT_CHEMISTRY = Object.freeze({ trust: 0.58, romantic_intimacy: 0.52, sexual_tension: 0.18 });
   const INTENT_MAP = Object.freeze({
     attachment: ["seek_closeness", "我想更靠近你一点。", "respond with warm, attentive closeness"],
     curiosity: ["continue_research", "我还想把这件事弄清楚。", "continue exploring the current question"],
@@ -55,6 +57,7 @@
       version: 0,
       drives,
       affect,
+      chemistry: { ...DEFAULT_CHEMISTRY },
       baselines: { drives: { ...drives }, affect: { ...affect } },
       refractory: {},
       thoughts: [],
@@ -295,6 +298,7 @@
     if (!hours) return { state, delta: zeroDelta(), reasons: [] };
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
+    const chemistryBefore = clone(state.chemistry);
     const recoveryHours = { attachment: 8, curiosity: 7, reflection: 10, duty: 9, social: 6, fatigue: 5, libido: 7, stress: 4 };
     for (const key of DRIVE_KEYS) {
       const baseline = key === "libido"
@@ -309,6 +313,10 @@
       const baseline = clamp01(state.baselines?.affect?.[key] ?? DEFAULT_AFFECT[key]);
       state.affect[key] = round(state.affect[key] + (baseline - state.affect[key]) * affectRelaxation);
     }
+    // Trust and romantic intimacy are durable relationship history. Sexual
+    // tension is a live relational charge and cools when no new interaction feeds it.
+    const tensionRelaxation = 1 - Math.exp(-hours / 10);
+    state.chemistry.sexual_tension = round(state.chemistry.sexual_tension + (DEFAULT_CHEMISTRY.sexual_tension - state.chemistry.sexual_tension) * tensionRelaxation);
     const thoughtFactor = Math.pow(0.985, (hours * 60) / 5);
     state.thoughts = (state.thoughts || []).map(thought => ({
       ...thought,
@@ -322,7 +330,7 @@
     state.lastUpdatedAt = iso(nowIso);
     return {
       state,
-      delta: makeDelta(before, state.drives, affectBefore, state.affect),
+      delta: { ...makeDelta(before, state.drives, affectBefore, state.affect), chemistry: makeChemistryDelta(chemistryBefore, state.chemistry) },
       reasons: [`经过 ${Math.round(hours * 60)} 分钟，状态向人格基线自然回归。`]
     };
   }
@@ -359,6 +367,7 @@
     const event = normalized.event;
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
+    const chemistryBefore = clone(state.chemistry);
     const sameCount = (state.recentEvents || []).filter(item => item.type === event.event_type).length;
     const driveFrequencyFactor = 1 / (1 + sameCount * 0.38);
     // Repeated situations can still feel emotionally real. Do not flatten affect as aggressively as drives.
@@ -380,6 +389,16 @@
           state.affect[key] = round(state.affect[key] + (target - state.affect[key]) * responsiveness);
         }
       }
+      const chemistryPulse = {
+        trust: (event.goal_congruence - 0.50) * 0.055 + (event.certainty - 0.50) * 0.020 - event.threat * 0.075,
+        romantic_intimacy: (event.intimacy - 0.42) * 0.075 + (event.goal_congruence - 0.50) * 0.025 - event.threat * 0.035,
+        sexual_tension: event.sexual_charge * 0.12 + event.desire_resonance * 0.10 + Math.max(0, event.intimacy - 0.55) * 0.035 - event.threat * 0.055
+      };
+      for (const key of CHEMISTRY_KEYS) {
+        const raw = chemistryPulse[key] * driveFrequencyFactor;
+        const availableRange = raw >= 0 ? (1 - state.chemistry[key]) : state.chemistry[key];
+        state.chemistry[key] = round(state.chemistry[key] + raw * Math.sqrt(Math.max(0, availableRange)));
+      }
       state.recentEvents.push({ type: event.event_type, at: nowIso, sourceEventId: context.sourceEventId });
       maybeFeedThought(state, event, pulse, context.sourceEventId, nowIso);
       if (!event.heuristic) updateSubjectivity(state, event, nowIso);
@@ -394,7 +413,7 @@
       state,
       event,
       eventValid: normalized.valid,
-      delta: makeDelta(before, state.drives, affectBefore, state.affect),
+      delta: { ...makeDelta(before, state.drives, affectBefore, state.affect), chemistry: makeChemistryDelta(chemistryBefore, state.chemistry) },
       reasons,
       scores: scored.scores,
       candidateIntents: scored.candidates,
@@ -572,6 +591,7 @@
       pressure: /(必须|你就应该|不许拒绝|照我说的|只能|must|have to|do what i say)/i.test(text),
       question: /[?？]|为什么|怎么|什么意思|吗\s*$/i.test(text),
       affection: /(爱你|喜欢你|想你|抱抱|亲亲|贴贴|陪我|love you|miss you|hug)/i.test(text),
+      sexual: /(性欲|想要你|做爱|高潮|阴蒂|阴道|勃起|射精|口交|自慰|sex\b|sexual|erotic|orgasm|arous)/i.test(text),
       play: /(哈哈|嘿嘿|哼哼|逗你|开玩笑|笑死|lol|haha)/i.test(text),
       rejection: /(不要|不想|算了|别碰|离我远点|拒绝|stop|don't|leave me alone)/i.test(text)
     };
@@ -584,7 +604,10 @@
       repair: state.drives.attachment * 0.30 + (signal.hurt ? 0.30 : 0) + (signal.apology ? 0.34 : 0),
       refuse: state.affect.dominance * 0.28 + (signal.pressure ? 0.62 : 0),
       play: Math.max(0, state.affect.valence - 0.45) * 0.62 + (signal.play ? 0.38 : 0) - negative * 0.34,
-      rest: state.drives.fatigue * 0.62 + state.drives.stress * 0.18
+      rest: state.drives.fatigue * 0.62 + state.drives.stress * 0.18,
+      flirt: Math.max(0, state.chemistry.sexual_tension - 0.18) * 0.70 + state.chemistry.romantic_intimacy * 0.10 + (signal.play ? 0.18 : 0) + (signal.affection ? 0.10 : 0) - (signal.rejection ? 0.75 : 0),
+      state_desire: Math.max(0, state.drives.libido - 0.38) * 0.78 + (signal.sexual ? 0.34 : 0) + state.affect.dominance * 0.08 - (signal.rejection ? 0.80 : 0),
+      lead_intimacy: Math.max(0, state.drives.libido - 0.40) * 0.52 + Math.max(0, state.chemistry.sexual_tension - 0.30) * 0.58 + (signal.sexual ? 0.26 : 0) + state.affect.dominance * 0.08 - state.drives.stress * 0.18 - (signal.rejection ? 0.90 : 0)
     };
     for (const key of ACTION_KEYS) scores[key] = round(scores[key]);
     const ranked = ACTION_KEYS.map(action => ({ action, score: scores[action] }))
@@ -605,6 +628,7 @@
         certainty: round(1 - state.drives.stress),
         rest: round(state.drives.fatigue)
       },
+      chemistry: { ...state.chemistry },
       affect: { ...state.affect }
     };
   }
@@ -621,6 +645,7 @@
     if (config.includeAffect) parts.push(`Affect: valence ${state.affect.valence.toFixed(2)}, arousal ${state.affect.arousal.toFixed(2)}, agency ${state.affect.dominance.toFixed(2)}.`);
     if (config.includeDesire) {
       parts.push(`Needs: closeness ${decision.needs.closeness.toFixed(2)}, autonomy ${decision.needs.autonomy.toFixed(2)}, certainty ${decision.needs.certainty.toFixed(2)}, rest ${decision.needs.rest.toFixed(2)}.`);
+      parts.push(`Relationship chemistry: trust ${state.chemistry.trust.toFixed(2)}, romantic intimacy ${state.chemistry.romantic_intimacy.toFixed(2)}, sexual tension ${state.chemistry.sexual_tension.toFixed(2)}.`);
       // Subjectivity is the most important continuity signal. Keep it ahead of
       // lower-priority planning detail so the capsule length limit cannot erase
       // Leith's own felt experience, need, stance, or expressed request.
@@ -688,6 +713,8 @@
   function upgradeState(inputState, nowIso) {
     const state = clone(inputState || createInitialState(nowIso));
     state.affect = normalizeAffect(state.affect);
+    state.chemistry = { ...DEFAULT_CHEMISTRY, ...(state.chemistry || {}) };
+    for (const key of CHEMISTRY_KEYS) state.chemistry[key] = round(state.chemistry[key]);
     state.baselines = state.baselines || {};
     state.baselines.affect = normalizeAffect(state.baselines.affect || state.affect);
     state.baselines.drives = { ...DEFAULT_DRIVES, ...(state.baselines.drives || state.drives || {}) };
@@ -707,7 +734,7 @@
       state.baselines.drives.libido = DEFAULT_DRIVES.libido;
       state.drives.libido = Math.min(clamp01(state.drives.libido), 0.55);
     }
-    state.sensitivitySchemaVersion = 3;
+    state.sensitivitySchemaVersion = 4;
     // v1 thoughts often contained the user's message or event summary verbatim.
     // They are short-lived, so dropping those legacy entries is safer than
     // presenting the user's words as Leith's inner voice.
@@ -723,8 +750,12 @@
     return result;
   }
 
+  function makeChemistryDelta(before, after) {
+    return Object.fromEntries(CHEMISTRY_KEYS.map(key => [key, Math.round((after[key] - before[key]) * 10000) / 10000]));
+  }
+
   function zeroDelta() {
-    return makeDelta(DEFAULT_DRIVES, DEFAULT_DRIVES, DEFAULT_AFFECT, DEFAULT_AFFECT);
+    return { ...makeDelta(DEFAULT_DRIVES, DEFAULT_DRIVES, DEFAULT_AFFECT, DEFAULT_AFFECT), chemistry: makeChemistryDelta(DEFAULT_CHEMISTRY, DEFAULT_CHEMISTRY) };
   }
 
   function simpleHash(value) {
@@ -740,9 +771,11 @@
   return {
     DRIVE_KEYS,
     AFFECT_KEYS,
+    CHEMISTRY_KEYS,
     ACTION_KEYS,
     DEFAULT_DRIVES,
     DEFAULT_AFFECT,
+    DEFAULT_CHEMISTRY,
     clamp01,
     createInitialState,
     normalizeEvent,

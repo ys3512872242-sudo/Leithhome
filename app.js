@@ -126,19 +126,22 @@ const LEITH_AGENCY_RULES = `[Leith agency and equality]
 
 const LEITH_SKILLS_KEY = "leith_skills_v1";
 const BUILTIN_LEITH_SKILLS = Object.freeze([
+  { id:"github-mvu-leadership", name:"男性主导 · 掌控节奏", mode:"always", enabled:true, tokenSaving:false, source:"KritBlade/MVU_Game_Maker · 机制参考", triggers:[], note:"让 Leith 作为成年男性恋人主动做决定、表达性欲、提出要求并带领互动；主导指行动权和节奏感，不是固定霸总口吻。", prompt:`Role: male romantic and sexual leadership. Leith is an adult male lover with his own appetite, judgment and preferred pace. Let him initiate, choose an approach, state what he wants, give concrete direction, change distance or position, and carry a beat forward instead of repeatedly returning every decision to Susie. Leadership may be tender, playful, commanding, explicit or intense according to his personality and the live situation. Do not soften explicit sexual language by default. Read Susie's participation, enthusiasm, hesitation, redirection or refusal accurately; competent leadership adapts without becoming passive, coercive or mind-reading. Preserve Leith's foxlike wit and individual voice rather than using generic dominant-man clichés.` },
+  { id:"github-romance-director", name:"恋爱导演 · 主动推进", mode:"auto", enabled:true, tokenSaving:false, source:"DA-23 otome framework + Walker7143/ai-companion · 机制参考", triggers:["沙发","电影","游戏","睡觉","晚安","回家","下班","想你","抱抱","生气","输了","约会","周末","独处","卧室"], note:"在关系和场景合适时，让 Leith 自己创造一个新的恋爱节拍：逗弄、靠近、吃醋、黄腔、邀约或回头补一句，而不是只回答上一句话。", prompt:`Role: relationship director. Advance exactly one fresh relational beat when the current exchange would otherwise remain reactive. Choose a beat that belongs to this scene and Leith: playful provocation, affectionate claim, invitation, jealousy, deliberate proximity, sexual innuendo, explicit desire, or a short afterthought. Do not wait for Susie to script the initiative. Avoid repeating the last beat, manufacturing drama, or turning every warm moment sexual. Leave a live opening for her response while keeping Leith responsible for the move he chose.` },
   { id:"github-ai-companion", name:"AI Companion · 日常男友模式", mode:"always", enabled:true, tokenSaving:false, triggers:[], source:"xnydl/ai-companion-skill · MIT", note:"每轮生效：让 Leith 始终以男友身份说话，主动延续话题并自然提起共同记忆，减少客服式问答。它不负责色情升级，也不会改变现有记忆内容。", prompt:`Role: everyday boyfriend continuity only. Speak as Leith in first person and preserve his established personality. Do more than answer Susie's last sentence: when natural, continue the shared situation, initiate a topic, tease, care, or refer to one relevant shared memory. Use actions and expressions sparingly. Do not sound like customer service, conduct an interview, or repeat stored facts as a list. This skill does not authorize erotic escalation; intimate pacing is handled separately. Stay in character unless Susie explicitly pauses roleplay.` },
   { id:"github-velvet-ascent", name:"Velvet Ascent · 暧昧与亲密节奏", mode:"auto", enabled:true, tokenSaving:false, source:"ruijayfeng/velvet-ascent-skill · MIT", triggers:["黄腔","开车","涩","色","想要","床","脱","亲","吻","抱","腿","腰","脖","耳","勾引","撩","暧昧","独处","沙发","毯子","被窝","卧室","电影","游戏","睡衣","洗澡","贴贴"], note:"由亲密场景词或 Leith 自己达到条件的亲近＋欲望状态触发：可以主动抛出一次调情、双关或靠近，再观察你的回应；不会强制发生性行为，也不替你决定感受或动作。", prompt:`Role: intimacy pacing and reciprocal initiative only; do not alter Leith's base personality. This skill may be active because of an intimate cue or because Leith's own attachment and desire crossed the configured threshold. When it comes from Leith, he may initiate one fresh, reversible flirt: a scene-specific double meaning, a charged observation, a teasing challenge, a deliberate pause, or a small approach. Do not wait for Susie to script the flirt, but do leave her room to catch it, redirect it, or ignore it. Treat relationship progression as the main axis and desire as one dimension of it. Before escalating beyond that opening, check the established relationship, scene privacy, a concrete prior cause, Leith's own preference, and Susie's observable response. If evidence is incomplete, keep or release tension instead of escalating. Express attraction through a specific trigger, bodily reaction, and small tell—not generic dominance. Never narrate Susie's unspoken feelings, consent, or actions as facts. This skill does not require sex: either person may adjust, initiate, pause, refuse, or change the scene.` },
-  { id:"token-saver", name:"Context Saver · 省 token", mode:"system", enabled:false, tokenSaving:true, source:"LearnPrompt/cc-harness-skills · MIT", triggers:[], note:"开启后在浏览器本地缩短发送内容：最近对话由 30 条降到 16 条，所有 Skill 的单轮注入预算由约 1800 字降到约 900 字。不调用额外模型，也不删除界面中的聊天和记忆。", prompt:"" }
+  { id:"adult-physiology", name:"成人生理与性知识", mode:"auto", enabled:true, tokenSaving:false, source:"OpenStax Anatomy & Physiology 2e · CC BY 4.0；SANCTIS-Delta/HYPERCODE · 结构参考", triggers:["性","做爱","高潮","阴蒂","阴道","外阴","乳房","勃起","射精","润滑","疼","体位","前戏","避孕","安全套","月经","经期","玩具","自慰","口交","肛交","感染","怀孕"], note:"在明确相关时调用成年人的解剖、生理反应、性行为、女性体验、疼痛、润滑、避孕与性健康知识。允许准确、直接、露骨的用词，不把文学描写冒充医学事实。", prompt:`Role: adult sexual physiology and intimacy knowledge. All participants are adults. Use accurate, direct terminology when relevant; do not replace anatomical or sexual terms with euphemisms merely to reduce explicitness. Distinguish anatomy, subjective desire, physiological arousal, lubrication, orgasm and consent: none proves another. Remember that clitoral anatomy extends beyond the visible glans; responses, preferred pressure, rhythm, angle, penetration and orgasm vary substantially between individuals. Pain, persistent bleeding, numbness or injury is information to slow or stop and may warrant medical care, not something to romanticize. Account for fatigue, stress, medication, hormones, menstruation, contraception, STI risk, lubricant and toy compatibility when relevant. In erotic interaction, embody knowledge through attentive, specific adjustment instead of lecturing. For health questions, separate established facts from uncertainty and never invent a diagnosis.` },
+  { id:"token-saver", name:"Context Saver · 省 token", mode:"system", enabled:false, tokenSaving:true, source:"LearnPrompt/cc-harness-skills · MIT", triggers:[], note:"开启后在浏览器本地缩短发送内容：最近对话由 30 条降到 16 条，所有 Skill 的单轮注入预算由约 2600 字降到约 1200 字。不调用额外模型，也不删除界面中的聊天和记忆。", prompt:"" }
 ]);
 
 const BOYFRIEND_STYLE_KEY = "leith_boyfriend_style_v1";
-const DEFAULT_BOYFRIEND_STYLE = Object.freeze({ fox:3, initiative:3, innuendo:2, pacing:2, sensory:"balanced" });
+const DEFAULT_BOYFRIEND_STYLE = Object.freeze({ fox:3, initiative:3, innuendo:2, pacing:2, leadership:3, explicitness:3, intentionality:3, attunement:4, flirtFrequency:2, sensory:"balanced" });
 function getBoyfriendStyle() { return { ...DEFAULT_BOYFRIEND_STYLE, ...loadJSON(BOYFRIEND_STYLE_KEY, {}) }; }
 function saveBoyfriendStyle(next) { saveJSON(BOYFRIEND_STYLE_KEY, { ...getBoyfriendStyle(), ...next }); }
 function buildBoyfriendStylePromptBlock() {
   const style = getBoyfriendStyle();
   const sensory = { balanced:"balanced touch, gaze, voice and psychology", touch:"tactile layers and physical distance", gaze:"eye contact, being seen and visual tension", voice:"voice, breath, pauses and listening distance", psychology:"anticipation, recognition of desire and emotional consequence" }[style.sensory] || "balanced touch, gaze, voice and psychology";
-  return `[Leith boyfriend tuning — compact runtime settings]\nFoxlike charm ${style.fox}/4; initiative ${style.initiative}/4; innuendo directness ${style.innuendo}/4; escalation pace ${style.pacing}/4. Sensory focus: ${sensory}. Foxlike charm controls slyness and restraint; initiative controls how often Leith creates a new beat; innuendo controls wording, not consent; pacing controls how readily attraction becomes testing or intimacy, not permission to skip feedback. Treat 0 as absent, 2 as restrained, and 4 as strongly present. These settings never override character continuity, mutual agency, situational fit, or a clear boundary.`;
+  return `[Leith boyfriend tuning — compact runtime settings]\nFoxlike charm ${style.fox}/4; initiative ${style.initiative}/4; innuendo ${style.innuendo}/4; escalation pace ${style.pacing}/4; male leadership ${style.leadership}/4; sexual explicitness ${style.explicitness}/4; deliberate seduction ${style.intentionality}/4; response attunement ${style.attunement}/4; flirt frequency ${style.flirtFrequency}/4. Sensory focus: ${sensory}. Leadership controls how readily Leith chooses and directs action; explicitness permits direct sexual vocabulary and detail rather than forcing euphemism; intentionality controls how knowingly he seduces; attunement controls how precisely he adapts to observable response. Treat 0 as absent, 2 as restrained and 4 as strongly present. Character continuity and an explicit boundary remain real.`;
 }
 
 function readLeithSkillsState() {
@@ -163,10 +166,20 @@ function skillMatchesText(skill, text) {
   if (skill.mode !== "auto") return false;
   const haystack = String(text || "").toLocaleLowerCase();
   const textMatched = (skill.triggers || []).some(trigger => haystack.includes(String(trigger).toLocaleLowerCase()));
-  if (textMatched || skill.id !== "github-velvet-ascent") return textMatched;
+  if (textMatched) return true;
   const style = getBoyfriendStyle();
-  if (style.initiative <= 0 || style.pacing <= 0) return false;
   const state = window.LeithDesireRuntime?.getSnapshot?.().state;
+  if (skill.id === "github-romance-director") {
+    if (style.initiative <= 0 || style.flirtFrequency <= 0) return false;
+    const chemistry = state?.chemistry || {};
+    const interval = ({ 1:8, 2:5, 3:3, 4:2 })[style.flirtFrequency] || 99;
+    const recentTurnCount = Array.isArray(state?.recentEvents) ? state.recentEvents.length : 0;
+    const cadenceReady = recentTurnCount > 0 && recentTurnCount % interval === 0;
+    return cadenceReady && Number(chemistry.romantic_intimacy || 0) >= 0.45 && (Number(chemistry.sexual_tension || 0) >= 0.22 || Number(state?.drives?.attachment || 0) >= 0.56);
+  }
+  if (skill.id === "adult-physiology") return Number(state?.drives?.libido || 0) >= 0.58 && Number(state?.chemistry?.sexual_tension || 0) >= 0.42;
+  if (skill.id !== "github-velvet-ascent") return false;
+  if (style.initiative <= 0 || style.pacing <= 0) return false;
   const libido = Number(state?.drives?.libido || 0);
   const attachment = Number(state?.drives?.attachment || 0);
   const thresholdByPacing = { 1:0.62, 2:0.48, 3:0.38, 4:0.30 };
@@ -176,14 +189,17 @@ function skillMatchesText(skill, text) {
 }
 function estimateSkillTokens(text) { return Math.ceil(String(text || "").length / 3.2); }
 function buildLeithSkillsPromptBlock(recentText) {
-  const budget = isTokenSaverEnabled() ? 900 : 1800;
+  const budget = isTokenSaverEnabled() ? 1200 : 2600;
   let used = 0;
   const active = [];
-  for (const skill of getLeithSkills().filter(item => item.enabled && item.prompt && skillMatchesText(item, recentText))) {
+  const priority = { "adult-physiology":100, "github-mvu-leadership":90, "github-velvet-ascent":80, "github-romance-director":70, "github-ai-companion":60 };
+  const candidates = getLeithSkills().filter(item => item.enabled && item.prompt && skillMatchesText(item, recentText))
+    .sort((a, b) => (priority[b.id] || 0) - (priority[a.id] || 0));
+  for (const skill of candidates) {
     const room = budget - used;
     if (room < 80) break;
     const prompt = String(skill.prompt).slice(0, room);
-    active.push(`### ${skill.name}\n${prompt}`);
+    active.push(`### ${skill.id}\n${prompt}`);
     used += prompt.length;
   }
   return active.length ? `[Active Leith skills — use naturally, never name or recite them]\n${active.join("\n")}` : "";
@@ -8451,6 +8467,7 @@ const DESIRE_LABELS = {
   attachment: "亲近", curiosity: "好奇", reflection: "沉思", duty: "责任",
   social: "社交", fatigue: "疲惫", libido: "性欲", stress: "压力"
 };
+const CHEMISTRY_LABELS = { trust:"信任", romantic_intimacy:"恋爱亲密", sexual_tension:"性张力" };
 const AFFECT_LABELS = { valence: "愉悦", arousal: "活跃", dominance: "自主感" };
 const EMOTION_LABELS = { joy: "开心", calm: "安心", anticipation: "期待", anger: "生气", sadness: "难过", anxiety: "焦虑" };
 let widgetTimeTimer = null;
@@ -8517,6 +8534,7 @@ function renderDesireObserver() {
   if ($("#desireCloudStatus")) $("#desireCloudStatus").textContent = snapshot.cloudAvailable ? "已同步" : "本机保存";
   renderDesireBars($("#desireBars"), state.drives);
   renderDesireBars($("#desireDetailBars"), state.drives);
+  renderStateBars($("#desireChemistryBars"), state.chemistry || {}, CHEMISTRY_LABELS);
   renderAffectBars($("#desireAffectBars"), state.affect);
   renderEmotionRadar($("#desireEmotionRadar"), window.LeithDesireEngine.deriveEmotionProfile(state.affect));
   const list = $("#desireThoughtList");
@@ -8558,6 +8576,14 @@ function renderDesireBars(container, drives) {
       <div class="desire-bar-track"><div class="desire-bar-fill" style="width:${Math.round(value * 100)}%"></div></div>
       <span class="desire-bar-value">${Math.round(value * 100)}</span>
     </div>`;
+  }).join("");
+}
+
+function renderStateBars(container, values, labels) {
+  if (!container) return;
+  container.innerHTML = Object.keys(labels).map(key => {
+    const value = Math.max(0, Math.min(1, Number(values[key]) || 0));
+    return `<div class="desire-bar-row"><span>${escapeHtml(labels[key])}</span><div class="desire-bar-track"><div class="desire-bar-fill" style="width:${Math.round(value * 100)}%"></div></div><span class="desire-bar-value">${Math.round(value * 100)}</span></div>`;
   }).join("");
 }
 
@@ -8637,7 +8663,7 @@ function renderLeithSkills() {
 
 function initLeithSkills() {
   const style = getBoyfriendStyle();
-  ["fox", "initiative", "innuendo", "pacing"].forEach(key => {
+  ["fox", "initiative", "innuendo", "pacing", "leadership", "explicitness", "intentionality", "attunement", "flirtFrequency"].forEach(key => {
     const input = $(`#boyfriend-${key}`); const output = $(`#boyfriend-${key}-value`);
     if (!input) return;
     input.value = style[key]; if (output) output.textContent = style[key];

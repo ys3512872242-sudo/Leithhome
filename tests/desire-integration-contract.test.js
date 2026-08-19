@@ -84,7 +84,7 @@ test("Skills 独立开关、按场景注入且有总字符预算", () => {
   assert.match(app, /data-skill-toggle/);
   assert.match(app, /saveLeithSkillToggle/);
   assert.match(app, /skillMatchesText/);
-  assert.match(app, /isTokenSaverEnabled\(\) \? 900 : 1800/);
+  assert.match(app, /isTokenSaverEnabled\(\) \? 1200 : 2600/);
 });
 
 test("省 token Skill 缩短历史而且不发起额外模型调用", () => {
@@ -102,6 +102,11 @@ test("男友参数中文可调但给模型的是紧凑英文配置", () => {
   assert.match(html, /boyfriend-initiative/);
   assert.match(html, /boyfriend-innuendo/);
   assert.match(html, /boyfriend-pacing/);
+  assert.match(html, /boyfriend-leadership/);
+  assert.match(html, /boyfriend-explicitness/);
+  assert.match(html, /boyfriend-intentionality/);
+  assert.match(html, /boyfriend-attunement/);
+  assert.match(html, /boyfriend-flirtFrequency/);
   assert.match(html, /感官侧重/);
   assert.match(app, /\[Leith boyfriend tuning — compact runtime settings\]/);
   assert.match(app, /buildBoyfriendStylePromptBlock\(\)/);
@@ -109,6 +114,19 @@ test("男友参数中文可调但给模型的是紧凑英文配置", () => {
   assert.match(app, /attachment >= 0\.48 && libido >= threshold/);
   assert.match(app, /style\.initiative <= 0 \|\| style\.pacing <= 0/);
   assert.match(app, /1:0\.62, 2:0\.48, 3:0\.38, 4:0\.30/);
+});
+
+test("男性主导、恋爱导演和成人生理知识是独立且真实注入的 Skills", () => {
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(app, /id:"github-mvu-leadership"/);
+  assert.match(app, /id:"github-romance-director"/);
+  assert.match(app, /id:"adult-physiology"/);
+  assert.match(app, /Do not soften explicit sexual language by default/);
+  assert.match(app, /do not replace anatomical or sexual terms with euphemisms/);
+  assert.match(app, /clitoral anatomy extends beyond the visible glans/);
+  assert.match(app, /recentTurnCount % interval === 0/);
+  assert.match(html, /关系化学/);
+  assert.match(html, /性张力/);
 });
 
 test("亲密 Skills 区分反撩、主动张力和可逆升级", () => {

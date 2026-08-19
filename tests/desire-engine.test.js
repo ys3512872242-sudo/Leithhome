@@ -22,12 +22,12 @@ test("相同输入、旧状态和时间得到完全相同的输出", () => {
   assert.deepEqual(Engine.applyEvent(state, event, context), Engine.applyEvent(state, event, context));
 });
 
-test("所有 drive 与情绪始终 clamp 在 0–1", () => {
+test("所有 drive、情绪与关系化学始终 clamp 在 0–1", () => {
   const state = Engine.createInitialState(T0);
   Object.keys(state.drives).forEach(key => { state.drives[key] = 0.999; });
   Object.keys(state.affect).forEach(key => { state.affect[key] = 0.999; });
   const result = Engine.applyEvent(state, { ...event, threat: 1, intimacy: 1, novelty: 1 }, { nowIso: T1, sourceEventId: "msg_2" });
-  [...Object.values(result.state.drives), ...Object.values(result.state.affect)].forEach(value => {
+  [...Object.values(result.state.drives), ...Object.values(result.state.affect), ...Object.values(result.state.chemistry)].forEach(value => {
     assert.ok(value >= 0 && value <= 1);
   });
 });
@@ -161,7 +161,25 @@ test("旧版高性欲不会继续成为永久人格基线", () => {
   const upgraded = Engine.upgradeState(state, T1);
   assert.equal(upgraded.baselines.drives.libido, Engine.DEFAULT_DRIVES.libido);
   assert.equal(upgraded.drives.libido, 0.55);
-  assert.equal(upgraded.sensitivitySchemaVersion, 3);
+  assert.equal(upgraded.sensitivitySchemaVersion, 4);
+});
+
+test("性张力对明确性事件灵敏上升，并在无互动时比信任更快回落", () => {
+  const state = Engine.createInitialState(T0);
+  const charged = Engine.applyEvent(state, {
+    ...event,
+    event_type: "sexual_intimacy",
+    summary: "An adult sexual interaction created mutual erotic tension.",
+    intimacy: 0.9,
+    sexual_charge: 0.95,
+    desire_resonance: 0.9
+  }, { nowIso: T1, sourceEventId: "sexual_1" });
+  assert.ok(charged.state.chemistry.sexual_tension > state.chemistry.sexual_tension);
+  const trustBefore = charged.state.chemistry.trust;
+  const tensionBefore = charged.state.chemistry.sexual_tension;
+  const cooled = Engine.advanceTime(charged.state, "2026-08-05T09:00:00.000Z");
+  assert.equal(cooled.state.chemistry.trust, trustBefore);
+  assert.ok(cooled.state.chemistry.sexual_tension < tensionBefore);
 });
 
 test("日常内生性欲目标有上限，不会仅因时间和依恋长期维持高位", () => {

@@ -24,6 +24,28 @@ Leithhome includes adapted runtime guidance derived from the following real GitH
 
 These adaptations are not presented as unmodified upstream releases.
 
+## Architecture references used by Leithhome-native skills
+
+The following repositories are not presented as upstream Agent Skills. Leithhome uses independently written runtime instructions and state logic informed by their public architecture descriptions; no source code or character-card text is copied unless a compatible license is explicitly recorded.
+
+### MVU Game Maker
+
+- Source: https://github.com/KritBlade/MVU_Game_Maker
+- Used concepts: stable Dominance traits, per-turn Arousal, partner-initiated flirting and physical escalation, relationship dispositions, and state-gated intimacy actions.
+- License status: no compatible repository license was confirmed during integration, so Leithhome uses concepts only and does not copy its code or prompt text.
+
+### Otome multi-LLM framework and AI Companion
+
+- Sources: https://github.com/DA-23/otome-game-multi-llm-framework and https://github.com/Walker7143/ai-companion
+- Used concepts: a separate director layer, relationship-beat progression, open threads, relationship state, and proactive contact reasoning.
+
+### Adult physiology and mature-scene structure
+
+- Anatomy and physiology source: OpenStax, *Anatomy & Physiology 2e*, CC BY 4.0, https://openstax.org/details/books/anatomy-and-physiology-2e
+- Structure references: https://github.com/Umbraflamma/SANCTIS-Delta and https://github.com/hype-hosting/HYPERCODE
+- Used concepts: accurate separation of anatomy, desire, physiological arousal, lubrication and orgasm; erotic pacing; sensory clarity; character continuity; and on-demand mature-content prompt injection.
+- SANCTIS-Delta permits attributed non-commercial use and requires separate commercial permission. Leithhome therefore does not copy its prompt; it uses an independently written compact instruction.
+
 ## MIT license notices
 
 Copyright (c) 2026 xnyld

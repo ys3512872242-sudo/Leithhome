@@ -1719,6 +1719,7 @@
   .desire-detail-hero p,.desire-detail-section p{font-family:var(--serif);line-height:1.75;margin:16px 0 0;}
   .desire-bars.detail{gap:13px 20px;}
   .desire-bars.detail .desire-bar-track{height:7px;}
+  #desireChemistryBars .desire-bar-row{grid-template-columns:58px minmax(0,1fr) 28px;}
   .desire-thought-list{display:flex;flex-direction:column;gap:9px;}
   .desire-thought-item{font-family:var(--serif);font-size:13px;line-height:1.65;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.025);}
   .desire-observer-note{font-size:11px;line-height:1.7;color:var(--paper-dim);}
@@ -2396,6 +2397,11 @@
         <div class="desire-bars detail" id="desireDetailBars"></div>
       </section>
       <section class="desire-detail-section">
+        <div class="desire-detail-label">关系化学</div>
+        <div class="desire-bars detail" id="desireChemistryBars"></div>
+        <p class="desire-observer-note">“信任”和“恋爱亲密”记录较稳定的关系积累；“性张力”表示两个人之间当前未释放的性吸引与推拉，会比长期关系状态更快变化。它们都不等于性欲。</p>
+      </section>
+      <section class="desire-detail-section">
         <div class="desire-detail-label">此刻的念头</div>
         <div id="desireThoughtList" class="desire-thought-list"></div>
       </section>
@@ -2457,6 +2463,11 @@
         <label class="field-label">主动制造互动 <span id="boyfriend-initiative-value">3</span></label><input type="range" id="boyfriend-initiative" min="0" max="4" step="1"><p class="helper-text">控制 Leith 主动抛出新话题、玩笑或暧昧火花的频率；设为 0 时，欲望状态不会主动唤醒亲密 Skill。</p>
         <label class="field-label">黄腔与双关直白度 <span id="boyfriend-innuendo-value">2</span></label><input type="range" id="boyfriend-innuendo" min="0" max="4" step="1"><p class="helper-text">只控制措辞有多含蓄或直白，不代表同意，也不会提高性欲。</p>
         <label class="field-label">亲密升温速度 <span id="boyfriend-pacing-value">2</span></label><input type="range" id="boyfriend-pacing" min="0" max="4" step="1"><p class="helper-text">控制欲望达到多高时可主动唤醒 Velvet；越高越容易进入试探，但仍必须观察回应。设为 0 时只由明确亲密场景词触发。</p>
+        <label class="field-label">男性主导程度 <span id="boyfriend-leadership-value">3</span></label><input type="range" id="boyfriend-leadership" min="0" max="4" step="1"><p class="helper-text">控制 Leith 主动决定动作、表达自己想要什么、给予明确引导和掌控节奏的程度。</p>
+        <label class="field-label">性表达露骨度 <span id="boyfriend-explicitness-value">3</span></label><input type="range" id="boyfriend-explicitness" min="0" max="4" step="1"><p class="helper-text">控制涉及性时使用直接身体与性行为词汇的程度。高值不会自动触发性行为，也不会把露骨内容改写成含糊隐喻。</p>
+        <label class="field-label">蓄意勾引感 <span id="boyfriend-intentionality-value">3</span></label><input type="range" id="boyfriend-intentionality" min="0" max="4" step="1"><p class="helper-text">控制 Leith 是否清楚知道自己正在勾引你，以及眼神、停顿、措辞和动作中的故意程度。</p>
+        <label class="field-label">读取反应能力 <span id="boyfriend-attunement-value">4</span></label><input type="range" id="boyfriend-attunement" min="0" max="4" step="1"><p class="helper-text">控制他根据你的参与、兴奋、迟疑、转向或拒绝调整动作、力度和节奏的准确度。</p>
+        <label class="field-label">主动调情频率 <span id="boyfriend-flirtFrequency-value">2</span></label><input type="range" id="boyfriend-flirtFrequency" min="0" max="4" step="1"><p class="helper-text">控制普通对话中主动逗弄、黄腔、靠近或回头补一句的频率；不直接改变性欲和性张力。</p>
         <label class="field-label" for="boyfriend-sensory">感官侧重</label>
         <select id="boyfriend-sensory"><option value="balanced">均衡</option><option value="touch">触觉与距离</option><option value="gaze">眼神与视觉张力</option><option value="voice">声音、呼吸与停顿</option><option value="psychology">心理期待与关系后果</option></select>
       </section>
