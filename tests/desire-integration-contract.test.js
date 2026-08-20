@@ -73,8 +73,9 @@ test("模块开关控制真实提示词注入而非只隐藏界面", () => {
 test("关系调谐独立于性欲状态，包含贴合情境的安抚策略", () => {
   assert.match(app, /id:"github-ai-companion"/);
   assert.match(app, /initiate a topic/);
-  assert.match(app, /one relevant shared memory/);
+  assert.match(app, /one relevant memory/);
   assert.match(app, /Do not sound like customer service/);
+  assert.match(app, /without assigning a fixed label/);
 });
 
 test("Skills 独立开关、按场景注入且有总字符预算", () => {
@@ -95,7 +96,7 @@ test("省 token Skill 缩短历史而且不发起额外模型调用", () => {
   assert.doesNotMatch(app.slice(app.indexOf("function buildLeithSkillsPromptBlock"), app.indexOf("const DIRECT_ADDRESS_RULES")), /fetch\s*\(/);
 });
 
-test("男友参数中文可调但给模型的是紧凑英文配置", () => {
+test("关系表达参数中文可调，且不会替 Leith 决定身份和动机", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(html, /男友参数/);
   assert.match(html, /boyfriend-fox/);
@@ -108,7 +109,8 @@ test("男友参数中文可调但给模型的是紧凑英文配置", () => {
   assert.match(html, /boyfriend-attunement/);
   assert.match(html, /boyfriend-flirtFrequency/);
   assert.match(html, /感官侧重/);
-  assert.match(app, /\[Leith boyfriend tuning — compact runtime settings\]/);
+  assert.match(app, /\[Optional relational expression tuning — never identity or motivation\]/);
+  assert.match(app, /must never create attraction, override his feeling or stance/);
   assert.match(app, /buildBoyfriendStylePromptBlock\(\)/);
   assert.match(app, /thresholdByPacing/);
   assert.match(app, /attachment >= 0\.48 && libido >= threshold/);
@@ -116,12 +118,13 @@ test("男友参数中文可调但给模型的是紧凑英文配置", () => {
   assert.match(app, /1:0\.62, 2:0\.48, 3:0\.38, 4:0\.30/);
 });
 
-test("男性主导、恋爱导演和成人生理知识是独立且真实注入的 Skills", () => {
+test("自主主导、恋爱导演和成人生理知识是独立且真实注入的 Skills", () => {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.match(app, /id:"github-mvu-leadership"/);
   assert.match(app, /id:"github-romance-director"/);
   assert.match(app, /id:"adult-physiology"/);
-  assert.match(app, /Do not soften explicit sexual language by default/);
+  assert.match(app, /Do not presume that Leith is currently a boyfriend or lover/);
+  assert.match(app, /leadership is agency, not coercion or compliance/);
   assert.match(app, /do not replace anatomical or sexual terms with euphemisms/);
   assert.match(app, /clitoral anatomy extends beyond the visible glans/);
   assert.match(app, /recentTurnCount % interval === 0/);

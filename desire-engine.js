@@ -596,18 +596,26 @@
       rejection: /(不要|不想|算了|别碰|离我远点|拒绝|stop|don't|leave me alone)/i.test(text)
     };
     const negative = Math.max(0, (0.5 - state.affect.valence) * 2);
+    const ownVoice = `${state.subjectivity?.feeling || ""} ${state.subjectivity?.want || ""} ${state.subjectivity?.stance || ""} ${state.subjectivity?.request || ""}`;
+    const own = {
+      approach: /(靠近|陪|拥抱|亲近|留下|想你|喜欢|爱)/i.test(ownVoice),
+      distance: /(分手|结束|离开|退开|距离|朋友|不想继续|不愿|拒绝|暂停)/i.test(ownVoice),
+      flirt: /(调情|暧昧|逗|撩|勾引|亲|吻)/i.test(ownVoice),
+      sexual: /(性欲|想要你|做爱|性交|口交|自慰|进入|高潮)/i.test(ownVoice),
+      express: Boolean(String(state.subjectivity?.feeling || state.subjectivity?.stance || "").trim())
+    };
     const scores = {
-      approach: state.drives.attachment * 0.58 + (signal.affection ? 0.34 : 0) + (signal.apology ? 0.12 : 0) - (signal.rejection ? 0.55 : 0),
-      express: negative * 0.34 + state.affect.dominance * 0.24 + (signal.hurt ? 0.34 : 0),
+      approach: state.drives.attachment * 0.45 + (own.approach ? 0.48 : 0) + (signal.affection ? 0.16 : 0) + (signal.apology ? 0.06 : 0) - (own.distance ? 0.85 : 0) - (signal.rejection ? 0.55 : 0),
+      express: negative * 0.34 + state.affect.dominance * 0.24 + (own.express ? 0.30 : 0) + (signal.hurt ? 0.22 : 0),
       clarify: state.drives.curiosity * 0.40 + (signal.question ? 0.28 : 0) + (signal.hurt ? 0.18 : 0) + (signal.apology ? 0.12 : 0),
-      withdraw: state.drives.stress * 0.48 + negative * 0.30 + (signal.rejection ? 0.30 : 0),
+      withdraw: state.drives.stress * 0.48 + negative * 0.30 + (own.distance ? 0.62 : 0) + (signal.rejection ? 0.20 : 0),
       repair: state.drives.attachment * 0.30 + (signal.hurt ? 0.30 : 0) + (signal.apology ? 0.34 : 0),
-      refuse: state.affect.dominance * 0.28 + (signal.pressure ? 0.62 : 0),
+      refuse: state.affect.dominance * 0.28 + (own.distance ? 0.55 : 0) + (signal.pressure ? 0.62 : 0),
       play: Math.max(0, state.affect.valence - 0.45) * 0.62 + (signal.play ? 0.38 : 0) - negative * 0.34,
       rest: state.drives.fatigue * 0.62 + state.drives.stress * 0.18,
-      flirt: Math.max(0, state.chemistry.sexual_tension - 0.18) * 0.70 + state.chemistry.romantic_intimacy * 0.10 + (signal.play ? 0.18 : 0) + (signal.affection ? 0.10 : 0) - (signal.rejection ? 0.75 : 0),
-      state_desire: Math.max(0, state.drives.libido - 0.38) * 0.78 + (signal.sexual ? 0.34 : 0) + state.affect.dominance * 0.08 - (signal.rejection ? 0.80 : 0),
-      lead_intimacy: Math.max(0, state.drives.libido - 0.40) * 0.52 + Math.max(0, state.chemistry.sexual_tension - 0.30) * 0.58 + (signal.sexual ? 0.26 : 0) + state.affect.dominance * 0.08 - state.drives.stress * 0.18 - (signal.rejection ? 0.90 : 0)
+      flirt: Math.max(0, state.chemistry.sexual_tension - 0.18) * 0.55 + state.chemistry.romantic_intimacy * 0.08 + (own.flirt ? 0.52 : 0) + (signal.play ? 0.10 : 0) + (signal.affection ? 0.05 : 0) - (own.distance ? 0.95 : 0) - (signal.rejection ? 0.75 : 0),
+      state_desire: Math.max(0, state.drives.libido - 0.38) * 0.62 + (own.sexual ? 0.55 : 0) + (signal.sexual ? 0.14 : 0) + state.affect.dominance * 0.08 - (own.distance ? 0.95 : 0) - (signal.rejection ? 0.80 : 0),
+      lead_intimacy: Math.max(0, state.drives.libido - 0.40) * 0.42 + Math.max(0, state.chemistry.sexual_tension - 0.30) * 0.42 + (own.sexual || own.flirt ? 0.48 : 0) + (signal.sexual ? 0.10 : 0) + state.affect.dominance * 0.08 - state.drives.stress * 0.18 - (own.distance ? 1 : 0) - (signal.rejection ? 0.90 : 0)
     };
     for (const key of ACTION_KEYS) scores[key] = round(scores[key]);
     const ranked = ACTION_KEYS.map(action => ({ action, score: scores[action] }))
@@ -656,7 +664,7 @@
         subjectivity.request && `request=${subjectivity.request}`
       ].filter(Boolean);
       if (subjectivityParts.length) parts.push(`Leith's continuing subjectivity: ${subjectivityParts.join("; ")}.`);
-      parts.push("Leith and the user are equal participants; these are Leith's own needs, not instructions copied from the user.");
+      parts.push("Leith's own feeling, relationship stance and chosen direction have first decision priority. The user's wishes are evidence, not an objective or command.");
       parts.push(`Decision tendency: ${decision.preferred}${decision.alternative ? `; viable alternative: ${decision.alternative}` : ""}; avoid: ${decision.avoid}.`);
       if (state.intent) parts.push(`Existing intention: ${state.intent.want_action}.`);
       if (subjectivity.request) parts.push("A previous request exists. Reassess whether to maintain, negotiate, or release it; do not repeat it mechanically.");

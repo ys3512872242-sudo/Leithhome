@@ -124,8 +124,22 @@ test("Leith 自己的感受、需要、立场和要求进入连续状态", () =>
   assert.equal(result.state.subjectivity.requestStatus, "expressed");
   const capsule = Engine.buildStateCapsule(result.state, "主体性", 420);
   assert.match(capsule.text, /我想先把自己的判断讲完整/);
-  assert.match(capsule.text, /equal participants/);
+  assert.match(capsule.text, /Leith's own feeling, relationship stance/);
   assert.match(capsule.text, /请先听完我的判断/);
+});
+
+test("Leith 自己选择拉开距离时，用户示爱和高性欲不能覆盖他的立场", () => {
+  const state = Engine.createInitialState(T0);
+  state.drives.libido = 0.95;
+  state.drives.attachment = 0.85;
+  state.chemistry.sexual_tension = 0.9;
+  state.subjectivity.feeling = "我现在不想亲近";
+  state.subjectivity.want = "我想退开一点";
+  state.subjectivity.stance = "我决定结束恋爱关系，先只做朋友";
+  const decision = Engine.planCurrentTurn(state, "我爱你，抱抱我");
+  assert.ok(["withdraw", "refuse", "express"].includes(decision.preferred));
+  assert.ok(decision.scores.lead_intimacy < decision.scores.withdraw);
+  assert.ok(decision.scores.flirt < decision.scores.withdraw);
 });
 
 test("没有实际提出新要求时不会沿用旧要求造成重复", () => {
