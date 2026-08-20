@@ -1715,7 +1715,7 @@
   .desire-glance-item span{display:block;color:var(--widget-muted);font-size:9px;margin-bottom:3px;}
   .desire-glance-item strong{display:block;color:var(--widget-text);font-size:11px;font-weight:600;}
   .desire-bars{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 18px;}
-  .desire-bar-row{display:grid;grid-template-columns:34px minmax(0,1fr) 42px;align-items:center;gap:8px;font-size:11px;color:var(--widget-muted);}
+  .desire-bar-row{display:grid;grid-template-columns:34px minmax(0,1fr) 36px;align-items:center;gap:8px;font-size:11px;color:var(--widget-muted);}
   .desire-bar-track{height:5px;border-radius:99px;overflow:hidden;background:rgba(125,125,135,.13);background:color-mix(in srgb,var(--widget-text,var(--paper)) 9%,transparent);}
   .desire-bar-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--widget-accent,var(--rose)),var(--widget-accent-2,#8da0b3));transition:width .45s var(--ease-out);}
   .desire-bar-value{text-align:right;font-variant-numeric:tabular-nums;opacity:.72;}
@@ -1734,7 +1734,7 @@
   .desire-detail-hero p,.desire-detail-section p{font-family:var(--serif);line-height:1.75;margin:16px 0 0;}
   .desire-bars.detail{gap:13px 20px;}
   .desire-bars.detail .desire-bar-track{height:7px;}
-  #desireChemistryBars .desire-bar-row{grid-template-columns:58px minmax(0,1fr) 42px;}
+  #desireChemistryBars .desire-bar-row{grid-template-columns:58px minmax(0,1fr) 36px;}
   .desire-thought-list{display:flex;flex-direction:column;gap:9px;}
   .desire-thought-item{font-family:var(--serif);font-size:13px;line-height:1.65;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.025);}
   .desire-observer-note{font-size:11px;line-height:1.7;color:var(--paper-dim);}
@@ -1817,7 +1817,7 @@
     .desktop-time{font-size:clamp(48px,16vw,66px);line-height:1.05}.time-sky-meta{margin-top:7px}
     .desire-card{flex:none;min-height:220px;height:auto;padding:21px 18px 18px;}
     .desire-bars{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 10px;}
-    .desire-bar-row{grid-template-columns:28px minmax(0,1fr) 38px;gap:5px;font-size:10px;}
+    .desire-bar-row{grid-template-columns:28px minmax(0,1fr) 34px;gap:5px;font-size:10px;}
     .desire-card-emotion{font-size:15px;}
     .desire-detail-hero,.desire-detail-section{padding:18px;}
     .desire-glance{gap:5px}.desire-glance-item{padding:8px 3px 7px}.plain-emotion-list{grid-template-columns:1fr;}
@@ -2377,15 +2377,15 @@
         <p id="desireDetailEmotion">我正在慢慢感受此刻。</p>
       </section>
       <section class="desire-detail-section deliberation-card is-affective">
-        <div class="desire-detail-label">身体在说</div>
-        <p class="deliberation-summary" id="desireAffectiveSummary">身体信号正在形成。</p>
+        <div class="desire-detail-label">感性</div>
+        <div class="deliberation-signals" id="desireAffectiveSignals"></div>
       </section>
       <section class="desire-detail-section deliberation-card is-reflective">
-        <div class="desire-detail-label">心里在想</div>
+        <div class="desire-detail-label">理性</div>
         <p class="deliberation-summary" id="desireReflectiveSummary">正在结合关系、边界与后果作判断。</p>
       </section>
       <section class="desire-detail-section deliberation-card is-choice">
-        <div class="desire-detail-label">最后想怎么做</div>
+        <div class="desire-detail-label">选择</div>
         <p class="deliberation-summary" id="desireIntegratedChoice">自然回应眼前的对话。</p>
         <span class="deliberation-conflict hidden" id="desireConflictBadge">仍有未解决的内在冲突</span>
       </section>

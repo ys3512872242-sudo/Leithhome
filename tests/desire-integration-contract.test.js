@@ -79,10 +79,10 @@ test("系统明确区分感性身体层、理性层和综合行为", () => {
   assert.match(engine, /integrated_choice/);
   assert.match(engine, /Neither affective impulse nor reflective reason automatically rules/);
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  assert.match(html, /身体在说/);
-  assert.match(html, /心里在想/);
-  assert.match(html, /最后想怎么做/);
-  assert.match(app, /desireAffectiveSummary/);
+  assert.match(html, />感性</);
+  assert.match(html, />理性</);
+  assert.match(html, />选择</);
+  assert.match(app, /desireAffectiveSignals/);
   assert.match(app, /desireReflectiveSummary/);
   assert.match(app, /desireIntegratedChoice/);
   assert.match(app, /desirePersistentIntent/);
