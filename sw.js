@@ -2,8 +2,8 @@
 // 换上新文件——用一个固定的时间戳当版本号，比手动记得改数字更不容易漏掉。
 // 这个值本身不需要每次手动改：只要发布流程里有一步"替换成当前时间"就行；
 // 如果发布流程是纯手动复制文件，那还是需要发布前手动改一下这一行。
-const CACHE_NAME = "companion-shell-20260820-state-ui-v22";
-const SHELL_FILES = ["./index.html", "./app.js", "./memory.js", "./desire-engine.js", "./desire-runtime.js", "./mcp-gateway.js", "./provider-key-store.js", "./voice-output.js", "./wardrobe/catalog.js", "./manifest.webmanifest", "./icon-leith-v2-192.png", "./icon-leith-v2-512.png", "./assets/time-backgrounds/dawn.jpg", "./assets/time-backgrounds/noon.jpg", "./assets/time-backgrounds/sunset.jpg", "./assets/time-backgrounds/evening.jpg", "./assets/time-backgrounds/deepnight.jpg"];
+const CACHE_NAME = "companion-shell-20260820-kokoro-v24";
+const SHELL_FILES = ["./index.html", "./app.js", "./memory.js", "./desire-engine.js", "./desire-runtime.js", "./mcp-gateway.js", "./provider-key-store.js", "./kokoro-engine.js", "./kokoro-worker.js", "./voice-output.js", "./wardrobe/catalog.js", "./manifest.webmanifest", "./icon-leith-v2-192.png", "./icon-leith-v2-512.png", "./assets/time-backgrounds/dawn.jpg", "./assets/time-backgrounds/noon.jpg", "./assets/time-backgrounds/sunset.jpg", "./assets/time-backgrounds/evening.jpg", "./assets/time-backgrounds/deepnight.jpg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -15,7 +15,9 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      Promise.all(keys
+        .filter((key) => key.startsWith("companion-shell-") && key !== CACHE_NAME)
+        .map((key) => caches.delete(key)))
     )
   );
   self.clients.claim();
@@ -25,7 +27,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   const isShellFile = SHELL_FILES.some((f) => url.pathname.endsWith(f.replace("./", "")));
   const isWardrobeAsset = url.pathname.includes("/wardrobe/assets/");
-  if (!isShellFile && !isWardrobeAsset) return;
+  // The 2 MB browser bundle and ONNX Runtime WASM files are loaded only when
+  // the user opens Kokoro. Cache them on first use instead of making the whole
+  // app shell wait for roughly 39 MB during service-worker installation.
+  const isKokoroRuntime = url.origin === self.location.origin && url.pathname.includes("/vendor/kokoro/");
+  if (!isShellFile && !isWardrobeAsset && !isKokoroRuntime) return;
 
   event.respondWith(
     fetch(event.request)

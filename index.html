@@ -524,6 +524,31 @@
   .voice-grid .voice-span-all{grid-column:1/-1;}
   .voice-status{font-size:11px;line-height:1.55;color:var(--paper-dim);margin-top:9px;min-height:17px;}
   .msg-action-btn.voice-playing{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-glow);}
+  .voice-quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+  .voice-quick-actions .btn{min-height:44px;flex:1;}
+  .voice-workshop{max-width:680px;margin:0 auto;padding-bottom:28px;display:flex;flex-direction:column;gap:14px;}
+  .voice-workshop input[type="text"]{width:100%;background:var(--bg-input);color:var(--paper);}
+  .voice-workshop-card{border:1px solid var(--line);border-radius:20px;padding:17px;background:var(--surface-glass);}
+  .voice-workshop-card h3{font-size:15px;font-weight:600;margin:0;}
+  .voice-workshop-card>p{font-size:11px;line-height:1.65;color:var(--paper-dim);margin:6px 0 0;}
+  .kokoro-model-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;}
+  .kokoro-model-state{font-size:13px;font-weight:600;color:var(--paper);}
+  .kokoro-model-detail{font-size:10px;color:var(--paper-dim);line-height:1.5;margin-top:4px;}
+  .kokoro-progress{height:5px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:13px;}
+  .kokoro-progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--rose));transition:width .2s ease;}
+  .voice-mix-list{display:grid;gap:10px;margin-top:14px;}
+  .voice-mix-card{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:10px 14px;align-items:end;padding:13px;border:1px solid var(--line-soft);border-radius:15px;background:rgba(255,255,255,.018);}
+  .voice-mix-card .field-group{margin:0;}
+  .voice-mix-card input[type="range"]{width:100%;}
+  .voice-slot-preview{grid-column:1/-1;justify-self:start;min-height:38px;}
+  .voice-mix-total{font-size:10px;color:var(--paper-dim);margin-top:9px;}
+  .voice-control-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;}
+  .voice-control-grid .field-group{margin:0;}
+  .voice-control-grid input[type="range"]{width:100%;}
+  .voice-preview-box{width:100%;min-height:92px;margin-top:12px;resize:vertical;}
+  .voice-workshop-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px;}
+  .voice-workshop-actions .btn{min-height:44px;}
+  .voice-save-note{font-size:10px;color:var(--paper-dim);line-height:1.6;margin-top:10px;}
 
   .memory-card{
     background:var(--bg-input);border:1px solid var(--line);
@@ -1313,6 +1338,10 @@
     font-size:15px;color:var(--paper);line-height:1.8;
     font-family:var(--serif);font-style:italic;
   }
+  .desire-primary-thought{
+    margin:0;color:var(--paper);font-family:var(--serif);font-size:15px;line-height:1.75;
+  }
+  #desireDetailGlance{margin-top:18px;}
 
   /* 健康 App */
   .health-status-card{
@@ -1821,6 +1850,13 @@
     .desire-card-emotion{font-size:15px;}
     .desire-detail-hero,.desire-detail-section{padding:18px;}
     .desire-glance{gap:5px}.desire-glance-item{padding:8px 3px 7px}.plain-emotion-list{grid-template-columns:1fr;}
+    .voice-grid,.voice-control-grid{grid-template-columns:1fr;}
+    .voice-grid .voice-span-all{grid-column:auto;}
+    .voice-mix-card{grid-template-columns:1fr;align-items:stretch;}
+    .voice-slot-preview{grid-column:auto;width:100%;}
+    .kokoro-model-head{flex-direction:column;}
+    .kokoro-model-head .btn{width:100%;min-height:44px;}
+    .voice-workshop-actions .btn{flex:1 1 140px;}
   }
 
   .hidden{display:none!important;}
@@ -2057,6 +2093,12 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
           </div>
           <div class="app-icon-label">Leith 设置</div>
+        </div>
+        <div class="app-icon" onclick="openApp('page-app-voice')">
+          <div class="app-icon-img" style="color:var(--rose);background:linear-gradient(150deg,rgba(201,126,147,.17),var(--bg-elevated) 75%);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10v4M8 7v10M11 4v16M14 7v10M17 9v6M20 11v2"/></svg>
+          </div>
+          <div class="app-icon-label">声音工坊</div>
         </div>
         <div class="app-icon" onclick="openApp('page-app-skills')">
           <div class="app-icon-img" style="color:var(--accent-2);background:linear-gradient(150deg,rgba(197,167,232,.18),var(--bg-elevated) 75%);">
@@ -2375,6 +2417,11 @@
         <div class="desire-detail-time" id="widgetBigTime">--:--</div>
         <div class="desire-detail-date" id="widgetBigDate">--</div>
         <p id="desireDetailEmotion">我正在慢慢感受此刻。</p>
+        <div class="desire-glance" id="desireDetailGlance" aria-label="Leith 此刻的数值概况"></div>
+      </section>
+      <section class="desire-detail-section">
+        <div class="desire-detail-label">正在想着</div>
+        <p class="desire-primary-thought" id="desireDetailPrimaryThought">眼前正在发生的事。</p>
       </section>
       <section class="desire-detail-section deliberation-card is-affective">
         <div class="desire-detail-label">感性</div>
@@ -2434,13 +2481,87 @@
             <div class="desire-bars detail" id="desireChemistryBars"></div>
           </section>
           <section class="desire-detail-section" id="desireThoughtSection">
-            <div class="desire-detail-label">别的念头</div>
+            <div class="desire-detail-label">还有这些念头</div>
             <div id="desireThoughtList" class="desire-thought-list"></div>
           </section>
         </div>
       </details>
     </div>
   </div><!-- /app-widget -->
+
+  <!-- ===== App: Kokoro 声音工坊 ===== -->
+  <div class="app-page" id="page-app-voice">
+    <div class="app-page-head">
+      <button class="app-back-btn" onclick="closeAppFromUI()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="app-title">声音工坊</span>
+    </div>
+    <div class="app-body">
+      <div class="voice-workshop">
+        <section class="voice-workshop-card">
+          <div class="kokoro-model-head">
+            <div>
+              <div class="kokoro-model-state" id="kokoroModelState">声音模型尚未加载</div>
+              <div class="kokoro-model-detail" id="kokoroModelDetail">第一次需要联网下载；之后在手机本地生成声音。</div>
+            </div>
+            <button class="btn btn-primary" id="kokoroDownloadBtn" type="button">下载声音模型</button>
+          </div>
+          <div class="kokoro-progress" aria-hidden="true"><span id="kokoroModelProgress"></span></div>
+        </section>
+
+        <section class="voice-workshop-card">
+          <h3>捏出 Leith 的声线</h3>
+          <p>从中文男声库中最多选三种混合。编号只用来区分基础声音，没有预设性格；先单独听，再混合。</p>
+          <div class="field-group" style="margin-top:14px;">
+            <label class="field-label" for="voiceProfileNameInput">声线名字</label>
+            <input class="field" type="text" id="voiceProfileNameInput" maxlength="30" value="Leith" placeholder="例如：Leith">
+          </div>
+          <div class="voice-mix-list">
+            <div class="voice-mix-card" data-voice-slot="0">
+              <div class="field-group"><label class="field-label" for="voiceBlendVoice0">第一层男声</label><select id="voiceBlendVoice0"></select></div>
+              <div class="field-group"><label class="field-label" for="voiceBlendWeight0">比例：<span id="voiceBlendWeightValue0">100</span></label><input id="voiceBlendWeight0" type="range" min="0" max="100" step="1" value="100"></div>
+              <button class="btn btn-ghost btn-sm voice-slot-preview" type="button" data-voice-slot-preview="0">只听这个男声</button>
+            </div>
+            <div class="voice-mix-card" data-voice-slot="1">
+              <div class="field-group"><label class="field-label" for="voiceBlendVoice1">第二层男声</label><select id="voiceBlendVoice1"></select></div>
+              <div class="field-group"><label class="field-label" for="voiceBlendWeight1">比例：<span id="voiceBlendWeightValue1">0</span></label><input id="voiceBlendWeight1" type="range" min="0" max="100" step="1" value="0"></div>
+              <button class="btn btn-ghost btn-sm voice-slot-preview" type="button" data-voice-slot-preview="1">只听这个男声</button>
+            </div>
+            <div class="voice-mix-card" data-voice-slot="2">
+              <div class="field-group"><label class="field-label" for="voiceBlendVoice2">第三层男声</label><select id="voiceBlendVoice2"></select></div>
+              <div class="field-group"><label class="field-label" for="voiceBlendWeight2">比例：<span id="voiceBlendWeightValue2">0</span></label><input id="voiceBlendWeight2" type="range" min="0" max="100" step="1" value="0"></div>
+              <button class="btn btn-ghost btn-sm voice-slot-preview" type="button" data-voice-slot-preview="2">只听这个男声</button>
+            </div>
+          </div>
+          <div class="voice-mix-total" id="voiceBlendTotal">实际混合：男声 009 · 100%</div>
+          <div class="voice-control-grid">
+            <div class="field-group">
+              <label class="field-label" for="voiceRateInput">语速：<span id="voiceRateValue">0.94</span></label>
+              <input type="range" id="voiceRateInput" min="0.70" max="1.25" step="0.01" value="0.94">
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="voiceVolumeInput">音量：<span id="voiceVolumeValue">100%</span></label>
+              <input type="range" id="voiceVolumeInput" min="0" max="1" step="0.01" value="1">
+            </div>
+          </div>
+        </section>
+
+        <section class="voice-workshop-card">
+          <h3>试听</h3>
+          <p>改成任何一句话都可以。试听满意后，再保存成 Leith 的正式声音。</p>
+          <textarea class="field voice-preview-box" id="voicePreviewText">嗯，听见了吗？以后我就用这个声音和你说话。</textarea>
+          <div class="voice-workshop-actions">
+            <button class="btn btn-primary" id="voicePreviewBtn" type="button">试听混合声线</button>
+            <button class="btn btn-ghost" id="voiceStopBtn" type="button">停止</button>
+            <button class="btn btn-ghost" id="voiceSaveBtn" type="button">设为 Leith 的声音</button>
+          </div>
+          <div class="voice-status" id="voiceStatusText">尚未试听。</div>
+          <div class="voice-save-note">Kokoro 原生控制的是男声混合比例与语速。这里没有放“性感度、气声、厚度”等无效滑杆。</div>
+        </section>
+      </div>
+    </div>
+  </div><!-- /app-voice -->
 
   <!-- ===== App: Leith 模块管理 ===== -->
   <div class="app-page" id="page-app-modules">
@@ -2820,46 +2941,16 @@
       <div class="voice-settings-card">
         <div class="voice-settings-head">
           <div>
-            <div class="voice-settings-title">只让 Leith 说话</div>
-            <div class="voice-settings-subtitle">你仍然打字；这里只把 Leith 的回复变成声音，不读取麦克风，也没有语音输入。</div>
+            <div class="voice-settings-title">Kokoro 本地声线</div>
+            <div class="voice-settings-subtitle">只朗读 Leith 真正说出口的台词，不读动作；不读取麦克风，也没有语音输入。</div>
           </div>
           <label class="module-switch" title="自动朗读 Leith 的新回复"><input type="checkbox" id="voiceAutoSpeakToggle"><span></span></label>
         </div>
-        <div class="voice-grid">
-          <div class="field-group voice-span-all">
-            <label class="field-label">声音来源</label>
-            <select id="voiceEngineSelect">
-              <option value="system">系统语音（立即可用）</option>
-              <option value="gpt-sovits">GPT-SoVITS 本地克隆声音</option>
-            </select>
-          </div>
-          <div class="field-group voice-span-all" id="voiceSystemFields">
-            <label class="field-label">系统声音</label>
-            <select id="voiceSystemVoiceSelect"><option value="">自动选择中文声音</option></select>
-          </div>
-          <div class="field-group voice-span-all hidden" id="voiceGptSovitsFields">
-            <label class="field-label">本地接口地址</label>
-            <input type="text" id="voiceEndpointInput" placeholder="http://127.0.0.1:9880/tts">
-            <label class="field-label" style="margin-top:9px;">参考音频路径</label>
-            <input type="text" id="voiceRefAudioInput" placeholder="由 GPT-SoVITS 服务读取的 wav 路径">
-            <label class="field-label" style="margin-top:9px;">参考音频原文</label>
-            <textarea class="field" id="voicePromptTextInput" rows="2" placeholder="逐字填写参考音频里说的话"></textarea>
-            <p class="helper-text">接口按 RVC-Boss/GPT-SoVITS 官方 <code>/tts</code> JSON 格式调用。参考音频留在本地语音服务中，不会上传到聊天模型。</p>
-          </div>
-          <div class="field-group">
-            <label class="field-label">语速：<span id="voiceRateValue">0.94</span></label>
-            <input type="range" id="voiceRateInput" min="0.65" max="1.35" step="0.01" value="0.94" style="width:100%;">
-          </div>
-          <div class="field-group" id="voicePitchField">
-            <label class="field-label">音调：<span id="voicePitchValue">0.92</span></label>
-            <input type="range" id="voicePitchInput" min="0.65" max="1.35" step="0.01" value="0.92" style="width:100%;">
-          </div>
+        <div class="voice-status" id="voiceQuickStatus">自动朗读关闭 · 当前声线：Leith</div>
+        <div class="voice-quick-actions">
+          <button class="btn btn-primary btn-sm" id="openVoiceWorkshopBtn" type="button">打开声音工坊</button>
+          <button class="btn btn-ghost btn-sm" id="voiceQuickStopBtn" type="button">停止说话</button>
         </div>
-        <div class="row-flex" style="margin-top:12px;">
-          <button class="btn btn-primary btn-sm" id="voicePreviewBtn">试听</button>
-          <button class="btn btn-ghost btn-sm" id="voiceStopBtn">停止</button>
-        </div>
-        <div class="voice-status" id="voiceStatusText">自动朗读关闭；仍可点每条 Leith 回复下方的声音按钮手动播放。</div>
       </div>
 
       <div class="section-title">拓展位</div>
@@ -2911,6 +3002,7 @@
 <script src="desire-runtime.js"></script>
 <script src="mcp-gateway.js"></script>
 <script src="provider-key-store.js"></script>
+<script src="kokoro-engine.js"></script>
 <script src="voice-output.js"></script>
 <script src="app.js"></script>
 </body>

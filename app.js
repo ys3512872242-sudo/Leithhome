@@ -751,12 +751,12 @@ function switchPage(pageId) {
 }
 
 // 打开某个 app 页面（覆盖在桌面之上）
-function openApp(appPageId) {
+function openApp(appPageId, options = {}) {
   const target = document.getElementById(appPageId);
   if (!target) return;
   document.querySelectorAll(".app-page").forEach(p => p.classList.remove("active"));
   target.classList.add("active");
-  pushNavLayer(closeApp);
+  if (!options.reuseNavLayer) pushNavLayer(closeApp);
 
   // 先让页面切换完成，再渲染较重内容，避免点击后主线程同一帧卡住。
   requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -771,6 +771,7 @@ function openApp(appPageId) {
     if (appPageId === "page-app-love") renderLoveApp();
     if (appPageId === "page-app-closet") renderClosetPage();
     if (appPageId === "page-app-modules") renderModuleSettings();
+    if (appPageId === "page-app-voice") renderVoiceWorkshop();
     if (appPageId === "page-app-skills") renderLeithSkills();
     if (appPageId === "page-app-worldbook") renderWorldbook();
   }));
@@ -2157,6 +2158,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
     freshMessages.push(assistantMsg);
     await saveThreadMessagesDurable(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
+    attachVoiceButtonToRow(row, assistantMsg);
     forceChatToBottom();
     // 同步到云端短期记忆
     saveChatMessageToCloud(threadId, assistantMsg);
@@ -2165,6 +2167,7 @@ async function autoRespondToNarration(threadId, bubble, row) {
     if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
     currentController = null;
     restoreSendUI(sendBtn);
+    window.LeithVoice?.maybeAutoSpeak?.(assistantMsg).catch(error => showToast(error.message || "自动朗读失败"));
     queueInternalStateUpdate(() => window.LeithDesireRuntime?.completeTurn?.({
       sourceMessageId: sourceMsg._id,
       assistantMessageId: finalMsgId,
@@ -2820,89 +2823,252 @@ function initConfig() {
   loadActiveThreadIntoChat();
 }
 
+let voiceWorkshopInitialized = false;
+let voiceAudioUnlockArmed = false;
+
+function voiceNumberLabel(voiceId) {
+  return `中文男声 ${String(voiceId || "").replace("zm_", "")}`;
+}
+
+function collectVoiceWorkshopProfile() {
+  const blend = [0, 1, 2].map(index => ({
+    voice: $(`#voiceBlendVoice${index}`).value,
+    weight: Number($(`#voiceBlendWeight${index}`).value)
+  }));
+  return window.LeithKokoro.normalizeProfile({
+    name: $("#voiceProfileNameInput").value,
+    blend,
+    speed: Number($("#voiceRateInput").value),
+    volume: Number($("#voiceVolumeInput").value)
+  });
+}
+
+function updateVoiceBlendSummary() {
+  if (!window.LeithKokoro || !$("#voiceBlendTotal")) return;
+  const profile = collectVoiceWorkshopProfile();
+  const total = profile.blend.reduce((sum, item) => sum + item.weight, 0) || 1;
+  const visible = profile.blend
+    .filter(item => item.weight > 0)
+    .map(item => `${voiceNumberLabel(item.voice)} · ${Math.round(item.weight / total * 100)}%`);
+  $("#voiceBlendTotal").textContent = `实际混合：${visible.join(" ＋ ")}`;
+}
+
+function renderKokoroModelState(state) {
+  const title = $("#kokoroModelState");
+  const detail = $("#kokoroModelDetail");
+  const bar = $("#kokoroModelProgress");
+  const button = $("#kokoroDownloadBtn");
+  if (!title || !detail || !bar || !button) return;
+  const current = state || window.LeithKokoro?.getState?.() || { status:"idle", progress:0 };
+  bar.style.width = `${Math.max(0, Math.min(100, Number(current.progress) || 0))}%`;
+  button.disabled = false;
+  if (current.status === "ready") {
+    title.textContent = "Kokoro 已经可以使用";
+    detail.textContent = `本地生成模式：${current.device || "已加载"}。模型不会把台词上传给语音服务。`;
+    button.textContent = "已经加载";
+    button.disabled = true;
+  } else if (current.status === "loading") {
+    title.textContent = `正在准备声音模型 ${Math.round(Number(current.progress) || 0)}%`;
+    detail.textContent = "第一次下载会比较久，请暂时不要锁屏或切走。";
+    button.textContent = "正在下载…";
+    button.disabled = true;
+  } else if (current.status === "cached") {
+    title.textContent = "手机里保存过 Kokoro 模型";
+    detail.textContent = "点一下检查并加载；如果系统清理过网页数据，会自动重新下载。";
+    button.textContent = "检查并加载";
+  } else if (current.status === "error") {
+    title.textContent = "Kokoro 暂时没有加载成功";
+    detail.textContent = current.error || "请检查网络后重新下载。";
+    button.textContent = "重新下载";
+  } else {
+    title.textContent = "声音模型尚未下载";
+    detail.textContent = "第一次需要联网下载约 127–166 MB；之后在手机本地生成声音。";
+    button.textContent = "下载声音模型";
+  }
+}
+
+function updateVoiceQuickStatus(settings, state) {
+  const quick = $("#voiceQuickStatus");
+  if (!quick) return;
+  const model = state || window.LeithKokoro?.getState?.() || {};
+  const modelText = model.status === "ready" ? "模型已就绪" : model.status === "loading" ? "模型下载中" : "模型尚未加载";
+  quick.textContent = `${settings.autoSpeak ? "自动朗读开启" : "自动朗读关闭"} · 当前声线：${settings.profileName} · ${modelText}`;
+}
+
+async function previewVoiceProfile(profile) {
+  const status = $("#voiceStatusText");
+  const text = String($("#voicePreviewText").value || "").trim();
+  if (!text) return showToast("先写一句想试听的话");
+  status.textContent = "正在生成试听声音…";
+  try {
+    // 工坊试听必须先通过统一出口停止聊天朗读，避免消息按钮残留“正在播放”。
+    window.LeithVoice?.stop?.();
+    await window.LeithKokoro.unlockAudio();
+    await window.LeithKokoro.synthesize(text, profile, {
+      onPlaying: () => { status.textContent = "正在播放试听…"; }
+    });
+    status.textContent = "试听完成；满意后点“设为 Leith 的声音”。";
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    status.textContent = error.message || "试听失败。";
+    showToast(status.textContent);
+  }
+}
+
+function initVoiceWorkshopControls() {
+  if (voiceWorkshopInitialized || !window.LeithKokoro) return;
+  voiceWorkshopInitialized = true;
+  const voices = window.LeithKokoro.VOICE_IDS;
+  [0, 1, 2].forEach(index => {
+    const select = $(`#voiceBlendVoice${index}`);
+    voices.forEach(voiceId => {
+      const option = document.createElement("option");
+      option.value = voiceId;
+      option.textContent = voiceNumberLabel(voiceId);
+      select.appendChild(option);
+    });
+    const weight = $(`#voiceBlendWeight${index}`);
+    weight.addEventListener("input", () => {
+      $(`#voiceBlendWeightValue${index}`).textContent = weight.value;
+      updateVoiceBlendSummary();
+    });
+    select.addEventListener("change", updateVoiceBlendSummary);
+  });
+  $("#voiceRateInput").addEventListener("input", event => {
+    $("#voiceRateValue").textContent = Number(event.target.value).toFixed(2);
+  });
+  $("#voiceVolumeInput").addEventListener("input", event => {
+    $("#voiceVolumeValue").textContent = `${Math.round(Number(event.target.value) * 100)}%`;
+  });
+  document.querySelectorAll("[data-voice-slot-preview]").forEach(button => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.voiceSlotPreview);
+      const current = collectVoiceWorkshopProfile();
+      previewVoiceProfile({
+        ...current,
+        blend: [{ voice:$(`#voiceBlendVoice${index}`).value, weight:100 }]
+      });
+    });
+  });
+  $("#kokoroDownloadBtn").addEventListener("click", async () => {
+    try {
+      await window.LeithKokoro.unlockAudio();
+      await window.LeithKokoro.prepare();
+      $("#voiceStatusText").textContent = "模型已经准备好，可以开始试听。";
+    } catch (error) {
+      $("#voiceStatusText").textContent = error.message || "模型下载失败。";
+      showToast($("#voiceStatusText").textContent);
+    }
+  });
+  $("#voicePreviewBtn").addEventListener("click", () => previewVoiceProfile(collectVoiceWorkshopProfile()));
+  $("#voiceStopBtn").addEventListener("click", () => {
+    window.LeithVoice?.stop?.();
+    $("#voiceStatusText").textContent = "已经停止。";
+  });
+  $("#voiceSaveBtn").addEventListener("click", () => {
+    const profile = collectVoiceWorkshopProfile();
+    const settings = window.LeithVoice.saveSettings({
+      profileName: profile.name,
+      blend: profile.blend,
+      rate: profile.speed,
+      volume: profile.volume
+    });
+    updateVoiceQuickStatus(settings);
+    $("#voiceStatusText").textContent = `已保存为“${settings.profileName}”，之后 Leith 会使用这套声线。`;
+    showToast("Leith 的声线已保存");
+  });
+}
+
+function renderVoiceWorkshop() {
+  const voice = window.LeithVoice;
+  const engine = window.LeithKokoro;
+  if (!voice || !engine) return;
+  initVoiceWorkshopControls();
+  const settings = voice.getSettings();
+  $("#voiceProfileNameInput").value = settings.profileName;
+  settings.blend.forEach((item, index) => {
+    $(`#voiceBlendVoice${index}`).value = item.voice;
+    $(`#voiceBlendWeight${index}`).value = item.weight;
+    $(`#voiceBlendWeightValue${index}`).textContent = Math.round(item.weight);
+  });
+  $("#voiceRateInput").value = settings.rate;
+  $("#voiceRateValue").textContent = Number(settings.rate).toFixed(2);
+  $("#voiceVolumeInput").value = settings.volume;
+  $("#voiceVolumeValue").textContent = `${Math.round(Number(settings.volume) * 100)}%`;
+  updateVoiceBlendSummary();
+  renderKokoroModelState(engine.getState());
+}
+
 function initVoiceOutput() {
   const voice = window.LeithVoice;
+  const engine = window.LeithKokoro;
   const autoToggle = $("#voiceAutoSpeakToggle");
-  if (!voice || !autoToggle) return;
-  const engineSelect = $("#voiceEngineSelect");
-  const systemVoiceSelect = $("#voiceSystemVoiceSelect");
-  const rateInput = $("#voiceRateInput");
-  const pitchInput = $("#voicePitchInput");
-  const endpointInput = $("#voiceEndpointInput");
-  const refAudioInput = $("#voiceRefAudioInput");
-  const promptTextInput = $("#voicePromptTextInput");
-  const status = $("#voiceStatusText");
-
-  function populateSystemVoices() {
-    const selected = voice.getSettings().systemVoiceURI;
-    systemVoiceSelect.replaceChildren();
-    const automatic = document.createElement("option");
-    automatic.value = "";
-    automatic.textContent = "自动选择中文声音";
-    systemVoiceSelect.appendChild(automatic);
-    voice.getSystemVoices().forEach(item => {
-      const option = document.createElement("option");
-      option.value = item.voiceURI;
-      option.textContent = `${item.name} · ${item.lang}${item.localService ? " · 本机" : ""}`;
-      systemVoiceSelect.appendChild(option);
-    });
-    systemVoiceSelect.value = [...systemVoiceSelect.options].some(item => item.value === selected) ? selected : "";
+  if (!voice || !engine || !autoToggle) return;
+  initVoiceWorkshopControls();
+  let settings = voice.getSettings();
+  // Web Audio 的授权不会跨 iPhone/PWA 重启保留。若模型尚未重新载入，
+  // 不能让一条普通聊天回复在后台触发大模型下载。
+  if (settings.autoSpeak && engine.getState().status !== "ready") {
+    settings = voice.saveSettings({ autoSpeak:false });
   }
+  autoToggle.checked = settings.autoSpeak;
+  updateVoiceQuickStatus(settings, engine.getState());
+  renderKokoroModelState(engine.getState());
 
-  function updateVoiceSettingsUI(settings) {
-    autoToggle.checked = settings.autoSpeak;
-    engineSelect.value = settings.engine;
-    rateInput.value = settings.rate;
-    pitchInput.value = settings.pitch;
-    $("#voiceRateValue").textContent = Number(settings.rate).toFixed(2);
-    $("#voicePitchValue").textContent = Number(settings.pitch).toFixed(2);
-    endpointInput.value = settings.endpoint;
-    refAudioInput.value = settings.refAudioPath;
-    promptTextInput.value = settings.promptText;
-    $("#voiceSystemFields").classList.toggle("hidden", settings.engine !== "system");
-    $("#voiceGptSovitsFields").classList.toggle("hidden", settings.engine !== "gpt-sovits");
-    $("#voicePitchField").classList.toggle("hidden", settings.engine !== "system");
-    status.textContent = settings.autoSpeak
-      ? `自动朗读已开启 · ${settings.engine === "gpt-sovits" ? "GPT-SoVITS 本地声音" : "系统声音"}`
-      : "自动朗读关闭；仍可点每条 Leith 回复下方的声音按钮手动播放。";
-  }
-
-  function saveVoiceForm() {
-    const settings = voice.saveSettings({
-      autoSpeak:autoToggle.checked,
-      engine:engineSelect.value,
-      systemVoiceURI:systemVoiceSelect.value,
-      rate:Number(rateInput.value),
-      pitch:Number(pitchInput.value),
-      endpoint:endpointInput.value.trim() || voice.DEFAULTS.endpoint,
-      refAudioPath:refAudioInput.value.trim(),
-      promptText:promptTextInput.value.trim()
-    });
-    updateVoiceSettingsUI(settings);
-    return settings;
-  }
-
-  updateVoiceSettingsUI(voice.getSettings());
-  populateSystemVoices();
-  if (window.speechSynthesis?.addEventListener) window.speechSynthesis.addEventListener("voiceschanged", populateSystemVoices);
-  [autoToggle, engineSelect, systemVoiceSelect, rateInput, pitchInput].forEach(input => input.addEventListener("change", saveVoiceForm));
-  [endpointInput, refAudioInput, promptTextInput].forEach(input => input.addEventListener("blur", saveVoiceForm));
-  rateInput.addEventListener("input", () => { $("#voiceRateValue").textContent = Number(rateInput.value).toFixed(2); });
-  pitchInput.addEventListener("input", () => { $("#voicePitchValue").textContent = Number(pitchInput.value).toFixed(2); });
-  $("#voicePreviewBtn").addEventListener("click", async () => {
-    saveVoiceForm();
-    try { await voice.speak("嗯，听见了吗？以后我就用这个声音和你说话。", { messageId:"voice-preview" }); }
-    catch (error) { showToast(error.message || "试听失败"); }
+  const armVoiceAudioUnlock = () => {
+    if (voiceAudioUnlockArmed || !voice.getSettings().autoSpeak) return;
+    voiceAudioUnlockArmed = true;
+    const unlock = () => {
+      document.removeEventListener("pointerdown", unlock, true);
+      document.removeEventListener("keydown", unlock, true);
+      voiceAudioUnlockArmed = false;
+      engine.unlockAudio().catch(() => {});
+    };
+    document.addEventListener("pointerdown", unlock, { capture:true, once:true });
+    document.addEventListener("keydown", unlock, { capture:true, once:true });
+  };
+  if (settings.autoSpeak) armVoiceAudioUnlock();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) armVoiceAudioUnlock();
   });
-  $("#voiceStopBtn").addEventListener("click", () => voice.stop());
+
+  autoToggle.addEventListener("change", () => {
+    if (autoToggle.checked && engine.getState().status !== "ready") {
+      autoToggle.checked = false;
+      const saved = voice.saveSettings({ autoSpeak:false });
+      updateVoiceQuickStatus(saved, engine.getState());
+      showToast("先在声音工坊下载并试听模型，再打开自动朗读。");
+      return;
+    }
+    const saved = voice.saveSettings({ autoSpeak:autoToggle.checked });
+    if (saved.autoSpeak) {
+      engine.unlockAudio().catch(() => {});
+      armVoiceAudioUnlock();
+    }
+    updateVoiceQuickStatus(saved, engine.getState());
+  });
+  $("#openVoiceWorkshopBtn").addEventListener("click", () => {
+    const canReuseDrawerLayer = navStack.length && navStack[navStack.length - 1] === closeDrawer;
+    closeDrawer();
+    if (canReuseDrawerLayer) navStack[navStack.length - 1] = closeApp;
+    openApp("page-app-voice", { reuseNavLayer: canReuseDrawerLayer });
+  });
+  $("#voiceQuickStopBtn").addEventListener("click", () => voice.stop());
+
+  engine.setStateListener(state => {
+    renderKokoroModelState(state);
+    updateVoiceQuickStatus(voice.getSettings(), state);
+  });
   window.addEventListener("leith:voice-state", event => {
     updateVoiceMessageButtons(event.detail);
+    const status = $("#voiceStatusText");
     if (event.detail?.state === "loading") status.textContent = "正在生成 Leith 的声音…";
     else if (event.detail?.state === "playing") status.textContent = "Leith 正在说话…";
     else if (event.detail?.state === "error") {
-      status.textContent = event.detail.error || "语音播放失败。";
+      status.textContent = event.detail.error || "Kokoro 语音播放失败。";
       showToast(status.textContent);
-    } else if (event.detail?.state === "idle") updateVoiceSettingsUI(voice.getSettings());
+    }
+    updateVoiceQuickStatus(voice.getSettings(), engine.getState());
   });
 }
 
@@ -3648,6 +3814,7 @@ async function regenerateFromMessage(userMsg) {
     saveChatMessageToCloud(threadId, assistantMsg);
     clearAssistantReplyRecovery(assistantMsg._id);
     attachPinButtonToBubble(bubble, finalMsgId, false);
+    attachVoiceButtonToRow(row, assistantMsg);
     renderThreadList();
     // 不在旁白回复后触发 token banner（避免每次买东西都弹提醒）
 
@@ -3656,6 +3823,7 @@ async function regenerateFromMessage(userMsg) {
     if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
     currentController = null;
     restoreSendUI(sendBtn);
+    window.LeithVoice?.maybeAutoSpeak?.(assistantMsg).catch(error => showToast(error.message || "自动朗读失败"));
     queueInternalStateUpdate(() => window.LeithDesireRuntime?.completeTurn?.({
         sourceMessageId: userMsg._id,
         assistantMessageId: finalMsgId,
@@ -8703,6 +8871,7 @@ function renderDesireObserver() {
   if ($("#desireEmotionText")) $("#desireEmotionText").textContent = affectText;
   if ($("#desireIntentText")) $("#desireIntentText").textContent = `当前倾向：${intentLabel}`;
   if ($("#desireThoughtText")) $("#desireThoughtText").textContent = primaryThought;
+  if ($("#desireDetailPrimaryThought")) $("#desireDetailPrimaryThought").textContent = primaryThought;
   if ($("#desireDetailEmotion")) $("#desireDetailEmotion").textContent = affectText;
   if ($("#desireDetailIntent")) $("#desireDetailIntent").textContent = intentReason;
   if ($("#desireAffectiveSignals")) {
@@ -8748,6 +8917,7 @@ function renderDesireObserver() {
   $("#desireRequestSection")?.classList.toggle("hidden", !subjectivity.request);
   if ($("#desireCloudStatus")) $("#desireCloudStatus").textContent = snapshot.cloudAvailable ? "已同步" : "本机保存";
   renderDesireGlance($("#desireGlance"), state);
+  renderDesireGlance($("#desireDetailGlance"), state);
   renderDesireBars($("#desireDetailBars"), state.drives);
   renderStateBars($("#desireChemistryBars"), state.chemistry || {}, CHEMISTRY_LABELS);
   renderTopEmotions($("#desireEmotionList"), window.LeithDesireEngine.deriveEmotionProfile(state.affect));
