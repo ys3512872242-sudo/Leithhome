@@ -1678,7 +1678,7 @@
   .phase-art{display:none}.phase-art .ink{fill:var(--time-ink)}.phase-art .accent{fill:var(--time-accent)}.phase-art .shadow{fill:var(--time-shadow);opacity:.42}.phase-art .line{fill:none;stroke:var(--time-ink);stroke-width:2;stroke-linecap:round}.phase-art .fine{fill:none;stroke:var(--time-ink);stroke-width:1;opacity:.62}.phase-art .paper{fill:var(--time-paper)}
   html[data-sky-phase="dawn"] .phase-dawn,html[data-sky-phase="noon"] .phase-noon,html[data-sky-phase="sunset"] .phase-sunset,html[data-sky-phase="evening"] .phase-evening,html[data-sky-phase="deepnight"] .phase-deepnight{display:block}
   @keyframes zinePaperDrift{to{transform:translate3d(.7px,-.5px,0);opacity:.89}}
-  .time-preview-strip{display:flex;justify-content:center;flex-wrap:wrap;gap:5px;width:100%;margin:0;padding:10px 14px 11px;background:var(--widget-state-bg);border-top:1px solid var(--widget-line);border-bottom:1px solid var(--widget-line);}
+  .time-preview-strip{display:none;}
   .time-preview-btn{border:1px solid var(--widget-line);background:var(--widget-chip);color:var(--widget-muted);border-radius:999px;padding:5px 9px;font:500 10px var(--sans);cursor:pointer;transition:.2s;}
   .time-preview-btn.active{color:var(--widget-text);border-color:var(--widget-accent);background:color-mix(in srgb,var(--widget-accent) 18%,var(--widget-chip));}
   html[data-sky-phase="dawn"] .time-sky-panel{--time-paper:#efe8da;--time-ink:#596476;--time-muted:#80746e;--time-glow:rgba(255,225,202,.5);background-image:url("assets/time-backgrounds/dawn.jpg");}
@@ -1693,7 +1693,7 @@
   html[data-sky-phase="deepnight"] .time-desire-widget{--widget-state-bg:#111d31;--widget-text:#e8e5df;--widget-muted:#aeb5c1;--widget-line:rgba(218,224,234,.12);--widget-accent:#d1bd76;--widget-accent-2:#667fa8;--widget-chip:rgba(255,255,255,.045);}
   @media(prefers-reduced-motion:reduce){.time-painter-scene{animation:none}}
   .desire-card{
-    display:block;width:100%;height:clamp(390px,48vh,460px);margin:0;padding:27px 25px 24px;
+    display:block;width:100%;height:auto;min-height:230px;margin:0;padding:25px 25px 21px;
     color:var(--widget-text);text-align:left;font:inherit;cursor:pointer;
     border:0;border-radius:0;
     background:
@@ -1701,18 +1701,21 @@
       radial-gradient(circle at 4% 100%,color-mix(in srgb,var(--widget-accent-2) 12%,transparent),transparent 42%),
       var(--widget-state-bg);
     box-shadow:inset 0 1px rgba(255,255,255,.035);
-    transition:transform .18s ease,border-color .18s ease;overflow-y:auto;overscroll-behavior:contain;
-    scrollbar-width:thin;scrollbar-color:var(--widget-accent) transparent;touch-action:pan-y;
+    transition:transform .18s ease,border-color .18s ease;overflow:hidden;
   }
-  .desire-card::-webkit-scrollbar{width:3px}.desire-card::-webkit-scrollbar-thumb{background:var(--widget-accent);border-radius:99px}.desire-card::after{content:"向上滑动查看更多";display:block;text-align:center;margin-top:14px;color:var(--widget-muted);font:500 9px var(--sans);letter-spacing:.08em;opacity:.62;}
+  .desire-card::after{content:"点开看看";display:block;text-align:right;margin-top:15px;color:var(--widget-muted);font:500 9px var(--sans);letter-spacing:.08em;opacity:.62;}
   .desire-card:active{transform:scale(.99);}
   .desire-card-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;}
   .desire-card-heading span{font-family:var(--serif-display);font-size:20px;letter-spacing:.02em;}
   .desire-card-heading small{font-size:10px;color:var(--widget-muted);border:1px solid var(--widget-line);border-radius:999px;padding:3px 8px;}
   .desire-card-emotion{font-family:var(--serif);font-size:16px;line-height:1.75;margin:0 0 5px;color:var(--widget-text);}
   .desire-card-intent{font-size:12px;color:var(--widget-muted);margin:0 0 17px;}
+  .desire-glance{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:14px;}
+  .desire-glance-item{padding:9px 6px 8px;border:1px solid var(--widget-line);border-radius:13px;background:var(--widget-chip);text-align:center;}
+  .desire-glance-item span{display:block;color:var(--widget-muted);font-size:9px;margin-bottom:3px;}
+  .desire-glance-item strong{display:block;color:var(--widget-text);font-size:11px;font-weight:600;}
   .desire-bars{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 18px;}
-  .desire-bar-row{display:grid;grid-template-columns:34px minmax(0,1fr) 28px;align-items:center;gap:8px;font-size:11px;color:var(--widget-muted);}
+  .desire-bar-row{display:grid;grid-template-columns:34px minmax(0,1fr) 42px;align-items:center;gap:8px;font-size:11px;color:var(--widget-muted);}
   .desire-bar-track{height:5px;border-radius:99px;overflow:hidden;background:rgba(125,125,135,.13);background:color-mix(in srgb,var(--widget-text,var(--paper)) 9%,transparent);}
   .desire-bar-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--widget-accent,var(--rose)),var(--widget-accent-2,#8da0b3));transition:width .45s var(--ease-out);}
   .desire-bar-value{text-align:right;font-variant-numeric:tabular-nums;opacity:.72;}
@@ -1731,10 +1734,14 @@
   .desire-detail-hero p,.desire-detail-section p{font-family:var(--serif);line-height:1.75;margin:16px 0 0;}
   .desire-bars.detail{gap:13px 20px;}
   .desire-bars.detail .desire-bar-track{height:7px;}
-  #desireChemistryBars .desire-bar-row{grid-template-columns:58px minmax(0,1fr) 28px;}
+  #desireChemistryBars .desire-bar-row{grid-template-columns:58px minmax(0,1fr) 42px;}
   .desire-thought-list{display:flex;flex-direction:column;gap:9px;}
   .desire-thought-item{font-family:var(--serif);font-size:13px;line-height:1.65;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.025);}
   .desire-observer-note{font-size:11px;line-height:1.7;color:var(--paper-dim);}
+  .desire-more{max-width:680px;margin:0 auto 14px;border:1px solid var(--line);border-radius:22px;background:var(--surface-glass);overflow:hidden;}
+  .desire-more>summary{list-style:none;padding:17px 20px;color:var(--paper-dim);font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;}
+  .desire-more>summary::-webkit-details-marker{display:none}.desire-more>summary::after{content:"⌄";font-size:15px;transition:transform .2s}.desire-more[open]>summary::after{transform:rotate(180deg)}
+  .desire-more-body{padding:0 10px 10px}.desire-more-body .desire-detail-section{border-color:var(--line-soft);background:rgba(255,255,255,.018);margin-bottom:10px;}
   .deliberation-card{position:relative;overflow:hidden;}
   .deliberation-card::before{content:"";position:absolute;left:0;top:18px;bottom:18px;width:3px;border-radius:0 9px 9px 0;background:var(--accent-2);opacity:.7;}
   .deliberation-card.is-affective::before{background:var(--rose);}
@@ -1767,12 +1774,7 @@
   .resolved-thread-details summary{cursor:pointer;color:var(--paper-dim);font-size:10px;}
   .resolved-thread-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 2px;border-bottom:1px solid var(--line-soft);}
   .resolved-thread-row strong,.resolved-thread-row small{display:block;}.resolved-thread-row strong{font-size:12px;}.resolved-thread-row small{margin-top:3px;color:var(--paper-dim);font-size:9px;line-height:1.5;}
-  .emotion-radar-wrap{display:grid;grid-template-columns:minmax(180px,260px) minmax(0,1fr);gap:18px;align-items:center;margin-top:12px;}
-  .emotion-radar{width:100%;aspect-ratio:1;display:block;overflow:visible;}
-  .emotion-radar .grid{fill:none;stroke:var(--line);stroke-width:1;}
-  .emotion-radar .axis{stroke:var(--line-soft);stroke-width:1;}
-  .emotion-radar .shape{fill:rgba(201,126,147,.20);stroke:var(--rose);stroke-width:2;transition:points .35s ease;}
-  .emotion-radar text{fill:var(--paper-dim);font:10px var(--sans);text-anchor:middle;dominant-baseline:middle;}
+  .plain-emotion-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 18px;margin-top:12px;}
   .module-list{display:flex;flex-direction:column;gap:10px;max-width:680px;margin:0 auto 18px;}
   .module-group-title{font-size:11px;letter-spacing:.12em;color:var(--paper-dim);padding:12px 4px 2px;}
   .module-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:15px 16px;border:1px solid var(--line);border-radius:17px;background:var(--surface-glass);}
@@ -1813,14 +1815,12 @@
     .time-desire-widget{height:auto;width:100%;border-radius:23px;margin-bottom:22px}
     .time-sky-panel{flex:none;min-height:0;aspect-ratio:1360/749;padding:18px 18px 12px;background-size:100% 100%;background-position:center}
     .desktop-time{font-size:clamp(48px,16vw,66px);line-height:1.05}.time-sky-meta{margin-top:7px}
-    .time-preview-strip{flex:0 0 42px;justify-content:flex-start;flex-wrap:nowrap;overflow-x:auto;padding:7px 12px;scrollbar-width:none}
-    .time-preview-strip::-webkit-scrollbar{display:none}.time-preview-btn{flex:0 0 auto}
-    .desire-card{flex:none;min-height:0;height:380px;padding:22px 18px 24px;}
+    .desire-card{flex:none;min-height:220px;height:auto;padding:21px 18px 18px;}
     .desire-bars{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 10px;}
-    .desire-bar-row{grid-template-columns:28px minmax(0,1fr) 22px;gap:5px;font-size:10px;}
+    .desire-bar-row{grid-template-columns:28px minmax(0,1fr) 38px;gap:5px;font-size:10px;}
     .desire-card-emotion{font-size:15px;}
     .desire-detail-hero,.desire-detail-section{padding:18px;}
-    .emotion-radar-wrap{grid-template-columns:1fr;}
+    .desire-glance{gap:5px}.desire-glance-item{padding:8px 3px 7px}.plain-emotion-list{grid-template-columns:1fr;}
   }
 
   .hidden{display:none!important;}
@@ -1987,20 +1987,11 @@
           </svg>
         </div>
       </button>
-      <div class="time-preview-strip" aria-label="预览天空时段">
-        <button class="time-preview-btn active" type="button" data-sky-preview="auto">自动</button>
-        <button class="time-preview-btn" type="button" data-sky-preview="dawn">清晨</button>
-        <button class="time-preview-btn" type="button" data-sky-preview="noon">中午</button>
-        <button class="time-preview-btn" type="button" data-sky-preview="sunset">傍晚</button>
-        <button class="time-preview-btn" type="button" data-sky-preview="evening">晚上</button>
-        <button class="time-preview-btn" type="button" data-sky-preview="deepnight">深夜</button>
-      </div>
-
       <button class="desire-card" id="desireCard" type="button" onclick="openApp('page-app-widget')">
         <div class="desire-card-heading"><span>Leith · 此刻</span><small id="desireCloudStatus">本机</small></div>
         <p class="desire-card-emotion" id="desireEmotionText">我正在慢慢感受此刻。</p>
         <p class="desire-card-intent" id="desireIntentText">当前倾向：自然回应</p>
-        <div class="desire-bars" id="desireBars"></div>
+        <div class="desire-glance" id="desireGlance"></div>
         <div class="desire-thought"><span>正在想着</span><p id="desireThoughtText">眼前正在发生的事。</p></div>
       </button>
       </section>
@@ -2386,72 +2377,68 @@
         <p id="desireDetailEmotion">我正在慢慢感受此刻。</p>
       </section>
       <section class="desire-detail-section deliberation-card is-affective">
-        <div class="desire-detail-label">身体与感性</div>
+        <div class="desire-detail-label">身体在说</div>
         <p class="deliberation-summary" id="desireAffectiveSummary">身体信号正在形成。</p>
-        <div class="deliberation-signals" id="desireAffectiveSignals"></div>
       </section>
       <section class="desire-detail-section deliberation-card is-reflective">
-        <div class="desire-detail-label">理性正在考虑</div>
+        <div class="desire-detail-label">心里在想</div>
         <p class="deliberation-summary" id="desireReflectiveSummary">正在结合关系、边界与后果作判断。</p>
       </section>
       <section class="desire-detail-section deliberation-card is-choice">
-        <div class="desire-detail-label">此刻综合选择</div>
+        <div class="desire-detail-label">最后想怎么做</div>
         <p class="deliberation-summary" id="desireIntegratedChoice">自然回应眼前的对话。</p>
         <span class="deliberation-conflict hidden" id="desireConflictBadge">仍有未解决的内在冲突</span>
       </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">持续意图与主动准备</div>
+      <section class="desire-detail-section hidden" id="desireIntentSection">
+        <div class="desire-detail-label">还挂在心上的</div>
         <div class="cognition-lines">
-          <p id="desireRelationshipBelief">关系判断仍在形成。</p>
           <p id="desirePersistentIntent">此刻没有持续积累的行动意图。</p>
           <p id="desireCommitment">此刻没有形成新的明确承诺。</p>
         </div>
         <div class="initiative-meter" aria-label="主动准备度"><span id="desireInitiativeMeter" style="width:0%"></span></div>
         <p class="desire-observer-note" id="desireInitiativeText">主动念头尚未积累。</p>
       </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">我自己想要的</div>
+      <section class="desire-detail-section hidden" id="desireWantSection">
+        <div class="desire-detail-label">我想要</div>
         <p id="desireDetailWant">此刻还没有形成清晰、独立的需要。</p>
       </section>
-      <section class="desire-detail-section">
+      <section class="desire-detail-section hidden" id="desireStanceSection">
         <div class="desire-detail-label">我的立场</div>
         <p id="desireDetailStance">我还没有对眼前的事形成明确立场。</p>
       </section>
-      <section class="desire-detail-section desire-request-section">
-        <div class="desire-detail-label">我向你提出的要求</div>
+      <section class="desire-detail-section desire-request-section hidden" id="desireRequestSection">
+        <div class="desire-detail-label">想对你说清楚</div>
         <p id="desireDetailRequest">此刻没有需要向你提出的要求。</p>
       </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">正在经历</div>
+      <section class="desire-detail-section" id="desireOngoingSection">
+        <div class="desire-detail-label">还没放下的事</div>
         <div id="ongoingThreadsList" class="ongoing-thread-list"><div class="ongoing-thread-empty">正在接回持续中的事情...</div></div>
         <details class="resolved-thread-details">
           <summary>最近已经放下的事</summary>
           <div id="resolvedThreadsList"></div>
         </details>
       </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">此刻情绪</div>
-        <div class="emotion-radar-wrap">
-          <svg class="emotion-radar" id="desireEmotionRadar" viewBox="0 0 260 260" aria-label="Leith 情绪雷达"></svg>
-          <div class="desire-bars detail affect" id="desireAffectBars"></div>
+      <details class="desire-more">
+        <summary>查看更多状态</summary>
+        <div class="desire-more-body">
+          <section class="desire-detail-section">
+            <div class="desire-detail-label">此刻的情绪</div>
+            <div class="plain-emotion-list" id="desireEmotionList"></div>
+          </section>
+          <section class="desire-detail-section">
+            <div class="desire-detail-label">内在需要</div>
+            <div class="desire-bars detail" id="desireDetailBars"></div>
+          </section>
+          <section class="desire-detail-section">
+            <div class="desire-detail-label">我们之间</div>
+            <div class="desire-bars detail" id="desireChemistryBars"></div>
+          </section>
+          <section class="desire-detail-section" id="desireThoughtSection">
+            <div class="desire-detail-label">别的念头</div>
+            <div id="desireThoughtList" class="desire-thought-list"></div>
+          </section>
         </div>
-      </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">内在需要</div>
-        <div class="desire-bars detail" id="desireDetailBars"></div>
-      </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">关系化学</div>
-        <div class="desire-bars detail" id="desireChemistryBars"></div>
-        <p class="desire-observer-note">“信任”和“恋爱亲密”记录较稳定的关系积累；“性张力”表示两个人之间当前未释放的性吸引与推拉，会比长期关系状态更快变化。它们都不等于性欲。</p>
-      </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">此刻的念头</div>
-        <div id="desireThoughtList" class="desire-thought-list"></div>
-      </section>
-      <section class="desire-detail-section desire-observer-note">
-        这里只用来观察，不会直接修改 Leith。“亲近”是此刻靠近与联结的需要，不等于永久固定的喜欢；“自主感”是他对自己能否做决定、应对处境的感受，不是对用户的控制欲。状态会随真实对话与经过的时间升降。
-      </section>
+      </details>
     </div>
   </div><!-- /app-widget -->
 

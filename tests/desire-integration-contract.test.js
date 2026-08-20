@@ -79,13 +79,12 @@ test("系统明确区分感性身体层、理性层和综合行为", () => {
   assert.match(engine, /integrated_choice/);
   assert.match(engine, /Neither affective impulse nor reflective reason automatically rules/);
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-  assert.match(html, /身体与感性/);
-  assert.match(html, /理性正在考虑/);
-  assert.match(html, /此刻综合选择/);
+  assert.match(html, /身体在说/);
+  assert.match(html, /心里在想/);
+  assert.match(html, /最后想怎么做/);
   assert.match(app, /desireAffectiveSummary/);
   assert.match(app, /desireReflectiveSummary/);
   assert.match(app, /desireIntegratedChoice/);
-  assert.match(app, /desireRelationshipBelief/);
   assert.match(app, /desirePersistentIntent/);
   assert.match(app, /desireInitiativeMeter/);
   assert.match(app, /Cognitive feedback fields/);
@@ -152,7 +151,7 @@ test("自主主导、恋爱导演和成人生理知识是独立且真实注入�
   assert.match(app, /do not replace anatomical or sexual terms with euphemisms/);
   assert.match(app, /clitoral anatomy extends beyond the visible glans/);
   assert.match(app, /recentTurnCount % interval === 0/);
-  assert.match(html, /关系化学/);
+  assert.match(html, /我们之间/);
   assert.match(html, /性张力/);
 });
 

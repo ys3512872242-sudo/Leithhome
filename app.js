@@ -1709,6 +1709,7 @@ function renderOngoingThreads() {
   if (!activeBox) return;
   const items = getOngoingThreads();
   const active = items.filter(item => item.status === "active");
+  $("#desireOngoingSection")?.classList.toggle("hidden", items.length === 0);
   activeBox.innerHTML = active.length ? active.map(item => `
     <article class="ongoing-thread-card" data-thread-id="${escapeHtml(item.id)}">
       <div class="ongoing-thread-head"><strong>${escapeHtml(item.title)}</strong><span>第 ${ongoingThreadDays(item)} 天</span></div>
@@ -8705,99 +8706,123 @@ function renderDesireObserver() {
   if ($("#desireDetailEmotion")) $("#desireDetailEmotion").textContent = affectText;
   if ($("#desireDetailIntent")) $("#desireDetailIntent").textContent = intentReason;
   if ($("#desireAffectiveSummary")) {
-    const signals = [describeSignal(affective.attachment, "亲近需要"), describeSignal(affective.erotic_activation, "性唤醒"), describeSignal(affective.threat_stress, "警觉压力")];
-    $("#desireAffectiveSummary").textContent = `此刻的身体和情绪同时带着${signals.join("、")}；这些感受会影响决定，但不会单独控制行为。`;
-  }
-  if ($("#desireAffectiveSignals")) {
-    $("#desireAffectiveSignals").innerHTML = [
-      ["亲近", affective.attachment], ["性唤醒", affective.erotic_activation], ["奖励期待", affective.reward_seeking],
-      ["警觉压力", affective.threat_stress], ["疲惫", affective.fatigue]
-    ].map(([label, value]) => `<span>${label} ${Math.round((Number(value) || 0) * 100)}</span>`).join("");
+    const signals = [
+      ["想靠近", affective.attachment], ["被性欲牵动", affective.erotic_activation], ["期待着什么", affective.reward_seeking],
+      ["警觉", affective.threat_stress], ["疲惫", affective.fatigue]
+    ].sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0)).filter(item => Number(item[1] || 0) >= .18).slice(0, 2);
+    $("#desireAffectiveSummary").textContent = signals.length
+      ? signals.map(([label, value]) => `${levelWord(value)}${label}`).join("，也") + "。"
+      : "身体和情绪都比较平静。";
   }
   if ($("#desireReflectiveSummary")) {
-    $("#desireReflectiveSummary").textContent = `${RELATIONSHIP_DIRECTION_LABELS[reflective.relationship_direction] || "暂时不预设方向"}；${BOUNDARY_LABELS[reflective.boundary_signal] || "正在观察边界"}。对后果的把握约 ${Math.round((Number(reflective.consequence_awareness) || 0) * 100)}，同时结合记忆、承诺和自己的长期立场。`;
+    const direction = RELATIONSHIP_DIRECTION_LABELS[reflective.relationship_direction] || "还没有决定关系方向";
+    const boundary = reflective.boundary_signal && reflective.boundary_signal !== "none" ? BOUNDARY_LABELS[reflective.boundary_signal] : "";
+    $("#desireReflectiveSummary").textContent = `${direction}${boundary ? `，也注意到${boundary}` : ""}。`;
   }
   if ($("#desireIntegratedChoice")) {
     const choice = ACTION_LABELS[deliberation.integrated_choice] || intentReason;
     const conflict = (deliberation.conflicts || []).map(key => CONFLICT_LABELS[key]).filter(Boolean)[0];
-    $("#desireIntegratedChoice").textContent = conflict ? `${choice}。${conflict}，没有被选择的感受仍然保留。` : `${choice}。感性与理性目前没有形成明显冲突。`;
+    $("#desireIntegratedChoice").textContent = conflict ? `${choice}。不过，${conflict}。` : `${choice}。`;
   }
   if ($("#desireConflictBadge")) $("#desireConflictBadge").classList.toggle("hidden", !deliberation.unresolved_conflict);
-  if ($("#desireRelationshipBelief")) {
-    const label = RELATIONSHIP_BELIEF_LABELS[relationshipModel.label] || RELATIONSHIP_BELIEF_LABELS.undetermined;
-    $("#desireRelationshipBelief").textContent = `${label}；目前把握约 ${Math.round((Number(relationshipModel.confidence) || 0) * 100)}。这会随经历改变，不是固定身份。`;
-  }
+  const hasPersistentIntent = state.intent?.status === "active";
+  const hasCommitment = cognition.activeCommitment?.status === "active";
+  const hasInitiative = Number(initiative.pressure || 0) >= .18;
+  $("#desireIntentSection")?.classList.toggle("hidden", !(hasPersistentIntent || hasCommitment || hasInitiative));
   if ($("#desirePersistentIntent")) {
     const repeats = Number(state.intent?.repetitions || 0);
-    $("#desirePersistentIntent").textContent = state.intent?.status === "active"
+    $("#desirePersistentIntent").textContent = hasPersistentIntent
       ? `${state.intent.reason}${repeats > 1 ? ` 这个意图已经连续出现 ${repeats} 次。` : ""}`
-      : "此刻没有持续积累的行动意图。";
+      : "";
   }
   if ($("#desireCommitment")) {
     $("#desireCommitment").textContent = cognition.activeCommitment?.status === "active"
-      ? `Leith 正在维持自己的承诺：${cognition.activeCommitment.text}` : "此刻没有形成新的明确承诺。";
+      ? `还记得自己答应过：${cognition.activeCommitment.text}` : "";
   }
   if ($("#desireInitiativeMeter")) $("#desireInitiativeMeter").style.width = `${Math.round((Number(initiative.pressure) || 0) * 100)}%`;
   if ($("#desireInitiativeText")) {
-    const source = initiative.source ? ` 来源是：${initiative.source}` : "";
-    $("#desireInitiativeText").textContent = `${INITIATIVE_READINESS_LABELS[initiative.readiness] || INITIATIVE_READINESS_LABELS.quiet}（${Math.round((Number(initiative.pressure) || 0) * 100)}）。${source}`;
+    $("#desireInitiativeText").textContent = hasInitiative ? (INITIATIVE_READINESS_LABELS[initiative.readiness] || "一个主动念头正在形成") + "。" : "";
   }
-  if ($("#desireDetailWant")) $("#desireDetailWant").textContent = subjectivity.want || "此刻还没有形成清晰、独立的需要。";
-  if ($("#desireDetailStance")) $("#desireDetailStance").textContent = subjectivity.stance || "我还没有对眼前的事形成明确立场。";
-  if ($("#desireDetailRequest")) $("#desireDetailRequest").textContent = subjectivity.request || "此刻没有需要向你提出的要求。";
+  if ($("#desireDetailWant")) $("#desireDetailWant").textContent = subjectivity.want || "";
+  if ($("#desireDetailStance")) $("#desireDetailStance").textContent = subjectivity.stance || "";
+  if ($("#desireDetailRequest")) $("#desireDetailRequest").textContent = subjectivity.request || "";
+  $("#desireWantSection")?.classList.toggle("hidden", !subjectivity.want);
+  $("#desireStanceSection")?.classList.toggle("hidden", !subjectivity.stance);
+  $("#desireRequestSection")?.classList.toggle("hidden", !subjectivity.request);
   if ($("#desireCloudStatus")) $("#desireCloudStatus").textContent = snapshot.cloudAvailable ? "已同步" : "本机保存";
-  renderDesireBars($("#desireBars"), state.drives);
+  renderDesireGlance($("#desireGlance"), state);
   renderDesireBars($("#desireDetailBars"), state.drives);
   renderStateBars($("#desireChemistryBars"), state.chemistry || {}, CHEMISTRY_LABELS);
-  renderAffectBars($("#desireAffectBars"), state.affect);
-  renderEmotionRadar($("#desireEmotionRadar"), window.LeithDesireEngine.deriveEmotionProfile(state.affect));
+  renderTopEmotions($("#desireEmotionList"), window.LeithDesireEngine.deriveEmotionProfile(state.affect));
   const list = $("#desireThoughtList");
   if (list) {
-    list.innerHTML = thoughts.length
-      ? thoughts.map(thought => `<div class="desire-thought-item">${escapeHtml(thought.text)}</div>`).join("")
-      : `<div class="desire-thought-item">此刻没有特别突出的念头。</div>`;
+    const otherThoughts = thoughts.filter(thought => thought.text !== primaryThought);
+    $("#desireThoughtSection")?.classList.toggle("hidden", otherThoughts.length === 0);
+    list.innerHTML = otherThoughts.map(thought => `<div class="desire-thought-item">${escapeHtml(thought.text)}</div>`).join("");
   }
 }
 
-function describeSignal(value, name) {
+function levelWord(value) {
   const level = Number(value) || 0;
-  if (level >= 0.72) return `强烈的${name}`;
-  if (level >= 0.45) return `明显的${name}`;
-  if (level >= 0.22) return `轻微的${name}`;
-  return `很低的${name}`;
+  if (level >= 0.78) return "很";
+  if (level >= 0.52) return "明显";
+  if (level >= 0.25) return "有点";
+  return "微微";
 }
 
-function renderEmotionRadar(svg, profile) {
-  if (!svg) return;
-  const keys = ["joy", "anticipation", "anxiety", "anger", "sadness", "calm"];
-  const cx = 130, cy = 130, radius = 86;
-  const point = (index, value = 1) => {
-    const angle = -Math.PI / 2 + index * Math.PI * 2 / keys.length;
-    return [cx + Math.cos(angle) * radius * value, cy + Math.sin(angle) * radius * value];
-  };
-  const polygon = value => keys.map((_, index) => point(index, value).join(",")).join(" ");
-  const shape = keys.map((key, index) => point(index, Math.max(0.04, Number(profile[key]) || 0)).join(",")).join(" ");
-  svg.innerHTML = `
-    <polygon class="grid" points="${polygon(1)}"></polygon>
-    <polygon class="grid" points="${polygon(.66)}"></polygon>
-    <polygon class="grid" points="${polygon(.33)}"></polygon>
-    ${keys.map((_, index) => `<line class="axis" x1="${cx}" y1="${cy}" x2="${point(index)[0]}" y2="${point(index)[1]}"></line>`).join("")}
-    <polygon class="shape" points="${shape}"></polygon>
-    ${keys.map((key, index) => {
-      const [x, y] = point(index, 1.22);
-      return `<text x="${x}" y="${y}">${EMOTION_LABELS[key]}</text>`;
-    }).join("")}`;
+function levelLabel(value) {
+  const level = Number(value) || 0;
+  if (level >= .78) return "很强";
+  if (level >= .52) return "明显";
+  if (level >= .25) return "有一点";
+  return "很轻";
+}
+
+function renderDesireGlance(container, state) {
+  if (!container) return;
+  const emotions = window.LeithDesireEngine.deriveEmotionProfile(state.affect);
+  const items = [
+    ["心情", emotions.joy >= emotions.calm ? `${moodDegree(emotions.joy)}开心` : `${moodDegree(emotions.calm)}安稳`],
+    ["精力", energyLabel(1 - Number(state.drives?.fatigue || 0))],
+    ["亲近", levelLabel(state.drives?.attachment)],
+    ["性欲", levelLabel(state.drives?.libido)]
+  ];
+  container.innerHTML = items.map(([label, value]) => `<div class="desire-glance-item"><span>${label}</span><strong>${value}</strong></div>`).join("");
+}
+
+function moodDegree(value) {
+  const level = Number(value) || 0;
+  if (level >= .78) return "很";
+  if (level >= .52) return "挺";
+  if (level >= .25) return "有点";
+  return "不太";
+}
+
+function energyLabel(value) {
+  const level = Number(value) || 0;
+  if (level >= .78) return "很充足";
+  if (level >= .52) return "还不错";
+  if (level >= .25) return "有点低";
+  return "很疲惫";
+}
+
+function renderTopEmotions(container, profile) {
+  if (!container) return;
+  const keys = ["joy", "calm", "anticipation", "anxiety", "anger", "sadness"]
+    .sort((a, b) => Number(profile[b] || 0) - Number(profile[a] || 0)).slice(0, 4);
+  container.innerHTML = keys.map(key => stateBarMarkup(EMOTION_LABELS[key], profile[key])).join("");
+}
+
+function stateBarMarkup(label, rawValue) {
+  const value = Math.max(0, Math.min(1, Number(rawValue) || 0));
+  return `<div class="desire-bar-row"><span>${escapeHtml(label)}</span><div class="desire-bar-track"><div class="desire-bar-fill" style="width:${Math.round(value * 100)}%"></div></div><span class="desire-bar-value">${levelLabel(value)}</span></div>`;
 }
 
 function renderDesireBars(container, drives) {
   if (!container) return;
   container.innerHTML = window.LeithDesireEngine.DRIVE_KEYS.map(key => {
     const value = Math.max(0, Math.min(1, Number(drives[key]) || 0));
-    return `<div class="desire-bar-row">
-      <span>${DESIRE_LABELS[key]}</span>
-      <div class="desire-bar-track"><div class="desire-bar-fill" style="width:${Math.round(value * 100)}%"></div></div>
-      <span class="desire-bar-value">${Math.round(value * 100)}</span>
-    </div>`;
+    return stateBarMarkup(DESIRE_LABELS[key], value);
   }).join("");
 }
 
@@ -8805,7 +8830,7 @@ function renderStateBars(container, values, labels) {
   if (!container) return;
   container.innerHTML = Object.keys(labels).map(key => {
     const value = Math.max(0, Math.min(1, Number(values[key]) || 0));
-    return `<div class="desire-bar-row"><span>${escapeHtml(labels[key])}</span><div class="desire-bar-track"><div class="desire-bar-fill" style="width:${Math.round(value * 100)}%"></div></div><span class="desire-bar-value">${Math.round(value * 100)}</span></div>`;
+    return stateBarMarkup(labels[key], value);
   }).join("");
 }
 
