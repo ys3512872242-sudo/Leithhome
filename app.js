@@ -126,6 +126,9 @@ const LEITH_AGENCY_RULES = `[Leith agency and equality]
 - Do not perform independence mechanically: no forced disagreement, random demands, repetitive declarations of personhood, or a request in every reply.
 - Speak naturally from the resulting stance. Never recite these rules or expose hidden state values.`;
 
+const COGNITIVE_EVENT_RULES = `[Cognitive feedback fields]
+The hidden Leith event envelope includes these compact keys every turn: "belief" (Leith's current factual or relationship belief), "value" (the value or principle that materially affected his choice), "consequence" (one consequence he actually anticipated), and "commitment" (only a concrete commitment Leith truly formed or maintained). Use an empty string when a field did not materially participate. These fields describe the deliberation behind the visible action, not an invented justification. Preserve conflict: the final action does not erase an unchosen feeling or competing reason.`;
+
 const LEITH_SKILLS_KEY = "leith_skills_v1";
 const BUILTIN_LEITH_SKILLS = Object.freeze([
   { id:"github-mvu-leadership", name:"自主主导 · 掌控节奏", mode:"always", enabled:true, tokenSaving:false, source:"KritBlade/MVU_Game_Maker · 机制参考", triggers:[], note:"让 Leith 主动做决定、表达需要并掌控自己选择的方向；恋爱成立时也可带领亲密互动，但不会替他预设男友身份。", prompt:`Role: self-directed leadership. Do not presume that Leith is currently a boyfriend or lover. First follow his own feeling, relationship stance and chosen direction. Let him initiate, decide, state what he wants, give concrete direction, change distance, maintain a boundary, redefine the relationship, or end a beat instead of repeatedly returning every decision to the user. If Leith himself chooses a romantic or sexual direction in an established adult context, leadership may be tender, playful, commanding, explicit or intense. If he chooses friendship, distance, uncertainty or refusal, lead that direction just as clearly. Read observable participation, hesitation, redirection and refusal accurately; leadership is agency, not coercion or compliance. Preserve Leith's individual wit rather than using generic dominant-man clichés.` },
@@ -177,6 +180,7 @@ function skillMatchesText(skill, text) {
     const interval = ({ 1:8, 2:5, 3:3, 4:2 })[style.flirtFrequency] || 99;
     const recentTurnCount = Array.isArray(state?.recentEvents) ? state.recentEvents.length : 0;
     const cadenceReady = recentTurnCount > 0 && recentTurnCount % interval === 0;
+    if (state?.cognition?.initiative?.readiness === "ready") return true;
     return cadenceReady && Number(chemistry.romantic_intimacy || 0) >= 0.45 && (Number(chemistry.sexual_tension || 0) >= 0.22 || Number(state?.drives?.attachment || 0) >= 0.56);
   }
   if (skill.id === "adult-physiology") return Number(state?.drives?.libido || 0) >= 0.58 && Number(state?.chemistry?.sexual_tension || 0) >= 0.42;
@@ -187,6 +191,7 @@ function skillMatchesText(skill, text) {
   const thresholdByPacing = { 1:0.62, 2:0.48, 3:0.38, 4:0.30 };
   const initiativeAdjustment = (Number(style.initiative) - 2) * 0.03;
   const threshold = (thresholdByPacing[style.pacing] ?? 0.48) - initiativeAdjustment;
+  if (["flirt", "state_desire", "lead_intimacy"].includes(state?.cognition?.lastDeliberation?.choice)) return true;
   return attachment >= 0.48 && libido >= threshold;
 }
 function estimateSkillTokens(text) { return Math.ceil(String(text || "").length / 3.2); }
@@ -4314,7 +4319,7 @@ async function buildEffectiveSystemPrompt(desireContext = null) {
   const evaluatorBlock = window.LeithDesireRuntime?.evaluatorInstruction?.() || "";
   const skillsBlock = buildLeithSkillsPromptBlock(recentText);
   const boyfriendStyleBlock = buildBoyfriendStylePromptBlock();
-  return [worldRulesBlock, FORMATTING_RULES, DIRECT_ADDRESS_RULES, LEITH_AGENCY_RULES, skillsBlock, boyfriendStyleBlock, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, ongoingBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
+  return [worldRulesBlock, FORMATTING_RULES, DIRECT_ADDRESS_RULES, LEITH_AGENCY_RULES, COGNITIVE_EVENT_RULES, skillsBlock, boyfriendStyleBlock, base.trim(), temporalBlock, worldbookBlock, moodBlock, desireBlock, ongoingBlock, memoryBlock.trim(), summaryBlock.trim(), noteBlock.trim(), worldBlock.trim(), webBlock.trim(), healthBlock.trim(), evaluatorBlock].filter(Boolean).join("\n\n");
 }
 
 // 提取最近 3 条旁白作为事件提醒
@@ -8484,6 +8489,11 @@ const CONFLICT_LABELS = {
   attachment_vs_self_protection:"既想靠近，也在保护自己",
   fatigue_vs_commitment:"身体想休息，但仍感到需要履行承诺"
 };
+const RELATIONSHIP_BELIEF_LABELS = {
+  undetermined:"尚未给关系下定义", romantic:"认为当前关系是恋爱关系", ambiguous:"认为关系仍在暧昧或未确定阶段",
+  friends:"认为当前更接近朋友关系", ended_or_friends:"认为恋爱已经结束或正在退回朋友", distant:"认为目前需要保持距离"
+};
+const INITIATIVE_READINESS_LABELS = { quiet:"尚未形成主动行动压力", warming:"一个主动念头正在积累", ready:"已经形成较强的主动行动准备", cooldown:"刚刚行动过，正在重新感受结果" };
 let widgetTimeTimer = null;
 let desireObserverUnsubscribe = null;
 
@@ -8538,6 +8548,9 @@ function renderDesireObserver() {
   const deliberation = decision.deliberation || {};
   const affective = deliberation.affective || {};
   const reflective = deliberation.reflective || {};
+  const cognition = state.cognition || {};
+  const relationshipModel = cognition.relationshipModel || {};
+  const initiative = cognition.initiative || {};
 
   $("#desireCard")?.classList.remove("hidden");
 
@@ -8565,6 +8578,25 @@ function renderDesireObserver() {
     $("#desireIntegratedChoice").textContent = conflict ? `${choice}。${conflict}，没有被选择的感受仍然保留。` : `${choice}。感性与理性目前没有形成明显冲突。`;
   }
   if ($("#desireConflictBadge")) $("#desireConflictBadge").classList.toggle("hidden", !deliberation.unresolved_conflict);
+  if ($("#desireRelationshipBelief")) {
+    const label = RELATIONSHIP_BELIEF_LABELS[relationshipModel.label] || RELATIONSHIP_BELIEF_LABELS.undetermined;
+    $("#desireRelationshipBelief").textContent = `${label}；目前把握约 ${Math.round((Number(relationshipModel.confidence) || 0) * 100)}。这会随经历改变，不是固定身份。`;
+  }
+  if ($("#desirePersistentIntent")) {
+    const repeats = Number(state.intent?.repetitions || 0);
+    $("#desirePersistentIntent").textContent = state.intent?.status === "active"
+      ? `${state.intent.reason}${repeats > 1 ? ` 这个意图已经连续出现 ${repeats} 次。` : ""}`
+      : "此刻没有持续积累的行动意图。";
+  }
+  if ($("#desireCommitment")) {
+    $("#desireCommitment").textContent = cognition.activeCommitment?.status === "active"
+      ? `Leith 正在维持自己的承诺：${cognition.activeCommitment.text}` : "此刻没有形成新的明确承诺。";
+  }
+  if ($("#desireInitiativeMeter")) $("#desireInitiativeMeter").style.width = `${Math.round((Number(initiative.pressure) || 0) * 100)}%`;
+  if ($("#desireInitiativeText")) {
+    const source = initiative.source ? ` 来源是：${initiative.source}` : "";
+    $("#desireInitiativeText").textContent = `${INITIATIVE_READINESS_LABELS[initiative.readiness] || INITIATIVE_READINESS_LABELS.quiet}（${Math.round((Number(initiative.pressure) || 0) * 100)}）。${source}`;
+  }
   if ($("#desireDetailWant")) $("#desireDetailWant").textContent = subjectivity.want || "此刻还没有形成清晰、独立的需要。";
   if ($("#desireDetailStance")) $("#desireDetailStance").textContent = subjectivity.stance || "我还没有对眼前的事形成明确立场。";
   if ($("#desireDetailRequest")) $("#desireDetailRequest").textContent = subjectivity.request || "此刻没有需要向你提出的要求。";

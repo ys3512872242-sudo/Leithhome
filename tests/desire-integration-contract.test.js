@@ -85,6 +85,13 @@ test("系统明确区分感性身体层、理性层和综合行为", () => {
   assert.match(app, /desireAffectiveSummary/);
   assert.match(app, /desireReflectiveSummary/);
   assert.match(app, /desireIntegratedChoice/);
+  assert.match(app, /desireRelationshipBelief/);
+  assert.match(app, /desirePersistentIntent/);
+  assert.match(app, /desireInitiativeMeter/);
+  assert.match(app, /Cognitive feedback fields/);
+  assert.match(runtime, /"feedback":"welcomed\|mixed\|rejected\|unclear/);
+  assert.match(runtime, /feedback grades only the previous pending action/);
+  assert.match(engine, /Previous action awaiting evidence/);
 });
 
 test("关系调谐独立于性欲状态，包含贴合情境的安抚策略", () => {

@@ -1731,6 +1731,10 @@
   .deliberation-signals{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px;}
   .deliberation-signals span{padding:5px 9px;border:1px solid var(--line-soft);border-radius:999px;background:rgba(255,255,255,.025);font-size:10px;color:var(--paper-dim);}
   .deliberation-conflict{display:inline-flex;margin-top:13px;padding:5px 9px;border-radius:999px;background:rgba(201,126,147,.12);color:var(--rose);font-size:10px;}
+  .initiative-meter{height:7px;margin-top:14px;border-radius:99px;overflow:hidden;background:rgba(255,255,255,.07);}
+  .initiative-meter span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent-2),var(--rose));transition:width .35s var(--ease-out);}
+  .cognition-lines{display:grid;gap:9px;margin-top:13px;}
+  .cognition-lines p{margin:0;font:12px/1.65 var(--serif);color:var(--paper-dim);}
   .ongoing-thread-list{display:flex;flex-direction:column;gap:10px;margin-top:12px;}
   .ongoing-thread-card{padding:14px 15px;border:1px solid rgba(201,126,147,.18);border-radius:16px;background:rgba(201,126,147,.055);}
   .ongoing-thread-head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
@@ -2382,6 +2386,16 @@
         <div class="desire-detail-label">此刻综合选择</div>
         <p class="deliberation-summary" id="desireIntegratedChoice">自然回应眼前的对话。</p>
         <span class="deliberation-conflict hidden" id="desireConflictBadge">仍有未解决的内在冲突</span>
+      </section>
+      <section class="desire-detail-section">
+        <div class="desire-detail-label">持续意图与主动准备</div>
+        <div class="cognition-lines">
+          <p id="desireRelationshipBelief">关系判断仍在形成。</p>
+          <p id="desirePersistentIntent">此刻没有持续积累的行动意图。</p>
+          <p id="desireCommitment">此刻没有形成新的明确承诺。</p>
+        </div>
+        <div class="initiative-meter" aria-label="主动准备度"><span id="desireInitiativeMeter" style="width:0%"></span></div>
+        <p class="desire-observer-note" id="desireInitiativeText">主动念头尚未积累。</p>
       </section>
       <section class="desire-detail-section">
         <div class="desire-detail-label">我自己想要的</div>

@@ -80,6 +80,7 @@ test("无效 LLM 事件安全降级，不破坏状态", () => {
   const result = Engine.applyEvent(state, { event_type: "bad", relevance: 99 }, { nowIso: T0, sourceEventId: "bad" });
   assert.equal(result.eventValid, false);
   assert.deepEqual(result.state.drives, state.drives);
+  assert.deepEqual(result.state.cognition, state.cognition);
 });
 
 test("状态胶囊有明确长度上限，最多筛选三条念头", () => {
@@ -205,7 +206,7 @@ test("旧版高性欲不会继续成为永久人格基线", () => {
   const upgraded = Engine.upgradeState(state, T1);
   assert.equal(upgraded.baselines.drives.libido, Engine.DEFAULT_DRIVES.libido);
   assert.equal(upgraded.drives.libido, 0.55);
-  assert.equal(upgraded.sensitivitySchemaVersion, 4);
+  assert.equal(upgraded.sensitivitySchemaVersion, 5);
 });
 
 test("性张力对明确性事件灵敏上升，并在无互动时比信任更快回落", () => {
@@ -243,4 +244,96 @@ test("情绪雷达由共同 PAD 坐标推导，高愉悦不会同时得到满格
   const negative = Engine.deriveEmotionProfile({ valence: 0, arousal: 1, dominance: 1 });
   assert.ok(negative.anger > 0.9);
   assert.equal(negative.joy, 0);
+});
+
+test("旧状态会无损补齐理性认知、关系模型和主动准备度", () => {
+  const legacy = Engine.createInitialState(T0);
+  delete legacy.cognition;
+  const migrated = Engine.upgradeState(legacy, T1);
+  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.cognition.relationshipModel.label, "undetermined");
+  assert.equal(migrated.cognition.initiative.readiness, "quiet");
+  assert.ok(migrated.cognition.values.autonomy > 0);
+});
+
+test("相同意图跨轮保留 ID 并积累压力，而不是每轮重建", () => {
+  const first = Engine.applyEvent(Engine.createInitialState(T0), { ...event, novelty:0.95, relevance:0.95, open_loop:"继续研究认知系统" }, { nowIso:T1, sourceEventId:"intent_1", currentTopic:"认知系统" });
+  const firstId = first.state.intent.id;
+  const second = Engine.applyEvent(first.state, { ...event, novelty:0.92, relevance:0.92, open_loop:"继续研究认知系统" }, { nowIso:"2026-08-04T09:12:00.000Z", sourceEventId:"intent_2", currentTopic:"认知系统" });
+  assert.equal(second.state.intent.id, firstId);
+  assert.ok(second.state.intent.repetitions >= 2);
+  assert.ok(second.state.intent.pressure >= first.state.intent.pressure);
+});
+
+test("关系信念依据 Leith 的反思证据更新，不由用户称呼直接决定", () => {
+  const result = Engine.applyEvent(Engine.createInitialState(T0), {
+    ...event,
+    reflective_belief:"我认为我们目前正在恋爱，但仍需要继续了解彼此",
+    leith_stance:"我愿意把这段关系当作恋爱认真对待"
+  }, { nowIso:T1, sourceEventId:"belief_1", currentTopic:"关系" });
+  assert.equal(result.state.cognition.relationshipModel.label, "romantic");
+  assert.ok(result.state.cognition.relationshipModel.evidence[0].text.includes("恋爱"));
+  assert.ok(result.state.cognition.relationshipModel.confidence >= 0.3);
+});
+
+test("欲望与距离冲突会持久保存，行动选择不会立即把冲突清零", () => {
+  const state = Engine.createInitialState(T0);
+  state.drives.libido = 0.95;
+  state.chemistry.sexual_tension = 0.90;
+  const result = Engine.applyEvent(state, {
+    ...event,
+    leith_stance:"我仍然想要她，但现在决定保持距离",
+    desire_resonance:0.9,
+    sexual_charge:0.7
+  }, { nowIso:T1, sourceEventId:"conflict_1", currentTopic:"保持距离" });
+  assert.ok(result.state.cognition.unresolvedConflicts.some(item => item.key === "desire_vs_distance"));
+  assert.ok(result.state.cognition.lastDeliberation.conflicts.includes("desire_vs_distance"));
+});
+
+test("行为结果等待用户下一轮反馈再学习，主动亲密行为当轮进入冷却", () => {
+  const state = Engine.createInitialState(T0);
+  state.cognition.initiative.pressure = 0.82;
+  const initiated = Engine.applyEvent(state, {
+    ...event,
+    chosen_action:"flirt",
+    leith_feeling:"我很享受这次主动靠近"
+  }, { nowIso:T1, sourceEventId:"action_1", currentTopic:"调情" });
+  assert.equal(initiated.state.cognition.actionLearning.flirt.attempts, 1);
+  assert.equal(initiated.state.cognition.actionLearning.flirt.welcomed, 0);
+  assert.equal(initiated.state.cognition.initiative.readiness, "cooldown");
+  assert.ok(initiated.state.cognition.initiative.lastActedAt);
+
+  const observed = Engine.applyEvent(initiated.state, {
+    ...event,
+    chosen_action:"clarify",
+    action_feedback:"welcomed",
+    feedback_reason:"她接住了调情并主动延续。",
+    lesson:"具体调侃比泛泛示爱更容易被接住。"
+  }, { nowIso:"2026-08-04T09:20:00.000Z", sourceEventId:"action_2", currentTopic:"继续聊天" });
+  assert.equal(observed.state.cognition.actionLearning.flirt.welcomed, 1);
+  assert.equal(observed.state.actionReceipts[0].feedback, "welcomed");
+  assert.match(observed.state.actionReceipts[0].lesson, /具体调侃/);
+  assert.equal(observed.state.actionReceipts[1].lesson, "");
+});
+
+test("普通回应不会错误消耗主动准备，过往真实反馈只做保守偏置", () => {
+  const state = Engine.createInitialState(T0);
+  state.cognition.initiative.pressure = 0.76;
+  state.cognition.initiative.readiness = "ready";
+  const result = Engine.applyEvent(state, { ...event, chosen_action:"approach" }, { nowIso:T1, sourceEventId:"ordinary_approach", currentTopic:"陪伴" });
+  assert.notEqual(result.state.cognition.initiative.readiness, "cooldown");
+  const before = Engine.planCurrentTurn(result.state, "开玩笑");
+  result.state.cognition.actionLearning.flirt = { attempts:8, welcomed:7, mixed:1, rejected:0, lastImpact:"", updatedAt:T1 };
+  const learned = Engine.planCurrentTurn(result.state, "开玩笑");
+  assert.ok(learned.scores.flirt > before.scores.flirt);
+  assert.ok(learned.deliberation.learned_action_biases.flirt <= 0.08);
+});
+
+test("时间流逝造成的主动准备变化会进入认知 delta", () => {
+  const state = Engine.createInitialState(T0);
+  state.cognition.initiative.readiness = "cooldown";
+  state.cognition.initiative.cooldownUntil = "2026-08-04T08:30:00.000Z";
+  const advanced = Engine.advanceTime(state, T1);
+  assert.equal(advanced.state.cognition.initiative.readiness, "quiet");
+  assert.equal(advanced.delta.cognition.readiness_changed, true);
 });

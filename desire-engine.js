@@ -24,6 +24,7 @@
   });
   const DEFAULT_AFFECT = Object.freeze({ valence: 0.58, arousal: 0.36, dominance: 0.54 });
   const DEFAULT_CHEMISTRY = Object.freeze({ trust: 0.58, romantic_intimacy: 0.52, sexual_tension: 0.18 });
+  const DEFAULT_VALUES = Object.freeze({ honesty:0.72, autonomy:0.74, care:0.66, commitment:0.58, self_protection:0.62, curiosity:0.60 });
   const INTENT_MAP = Object.freeze({
     attachment: ["seek_closeness", "我想更靠近你一点。", "respond with warm, attentive closeness"],
     curiosity: ["continue_research", "我还想把这件事弄清楚。", "continue exploring the current question"],
@@ -38,6 +39,21 @@
   const round = value => Math.round(clamp01(value) * 10000) / 10000;
   const clone = value => JSON.parse(JSON.stringify(value));
   const iso = value => new Date(value).toISOString();
+
+  function createInitialCognition(nowIso) {
+    const now = iso(nowIso);
+    return {
+      schemaVersion: 1,
+      relationshipModel: { label:"undetermined", confidence:0.30, evidence:[], updatedAt:now },
+      values: { ...DEFAULT_VALUES },
+      activeCommitment: null,
+      lastDeliberation: null,
+      unresolvedConflicts: [],
+      initiative: { pressure:0, readiness:"quiet", source:"", cooldownUntil:null, lastActedAt:null, updatedAt:now },
+      pendingAction: null,
+      actionLearning: {}
+    };
+  }
 
   function createInitialState(nowIso, legacy) {
     const now = iso(nowIso);
@@ -65,6 +81,7 @@
       recentEvents: [],
       actionReceipts: [],
       intent: null,
+      cognition: createInitialCognition(now),
       subjectivity: {
         feeling: "",
         want: "",
@@ -146,6 +163,13 @@
     event.action_reason = cleanSubjectiveText(raw.action_reason || raw.why, 180);
     event.perceived_impact = cleanSubjectiveText(raw.perceived_impact || raw.impact, 180);
     event.lesson = cleanSubjectiveText(raw.lesson, 180);
+    event.reflective_belief = cleanSubjectiveText(raw.reflective_belief || raw.belief, 160);
+    event.value_consideration = cleanSubjectiveText(raw.value_consideration || raw.value, 140);
+    event.anticipated_consequence = cleanSubjectiveText(raw.anticipated_consequence || raw.consequence, 160);
+    event.commitment = cleanSubjectiveText(raw.commitment, 160);
+    event.action_feedback = ["welcomed", "mixed", "rejected", "unclear"].includes(raw.action_feedback || raw.feedback)
+      ? (raw.action_feedback || raw.feedback) : "unclear";
+    event.feedback_reason = cleanSubjectiveText(raw.feedback_reason || raw.feedback_why, 160);
     return { valid, event: valid ? event : neutralEvent(fallbackSummary || summary) };
   }
 
@@ -172,6 +196,12 @@
       heuristic: false,
       satisfied_intent_id: "",
       intent_outcome: "not_fulfilled"
+      ,reflective_belief: ""
+      ,value_consideration: ""
+      ,anticipated_consequence: ""
+      ,commitment: ""
+      ,action_feedback: "unclear"
+      ,feedback_reason: ""
     };
   }
 
@@ -299,6 +329,7 @@
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
     const chemistryBefore = clone(state.chemistry);
+    const cognitionBefore = clone(state.cognition);
     const recoveryHours = { attachment: 8, curiosity: 7, reflection: 10, duty: 9, social: 6, fatigue: 5, libido: 7, stress: 4 };
     for (const key of DRIVE_KEYS) {
       const baseline = key === "libido"
@@ -327,10 +358,25 @@
     for (const [key, until] of Object.entries(state.refractory || {})) {
       if (Date.parse(until) <= nowMs) delete state.refractory[key];
     }
+    const cognition = ensureCognition(state, nowIso);
+    const conflictFactor = Math.pow(0.965, hours);
+    cognition.unresolvedConflicts = cognition.unresolvedConflicts
+      .map(item => ({ ...item, intensity:round(item.intensity * conflictFactor) }))
+      .filter(item => item.intensity >= 0.08);
+    const topThought = selectThoughts(state, "", 1)[0];
+    const pressureGrowth = topThought ? topThought.strength * Math.min(0.12, hours * 0.018) : 0;
+    cognition.initiative.pressure = round(cognition.initiative.pressure * Math.pow(0.985, hours) + pressureGrowth);
+    const cooldownActive = cognition.initiative.cooldownUntil && Date.parse(cognition.initiative.cooldownUntil) > nowMs;
+    cognition.initiative.readiness = cooldownActive ? "cooldown" : cognition.initiative.pressure >= 0.68 ? "ready" : cognition.initiative.pressure >= 0.42 ? "warming" : "quiet";
+    cognition.initiative.updatedAt = iso(nowIso);
     state.lastUpdatedAt = iso(nowIso);
     return {
       state,
-      delta: { ...makeDelta(before, state.drives, affectBefore, state.affect), chemistry: makeChemistryDelta(chemistryBefore, state.chemistry) },
+      delta: {
+        ...makeDelta(before, state.drives, affectBefore, state.affect),
+        chemistry: makeChemistryDelta(chemistryBefore, state.chemistry),
+        cognition: makeCognitionDelta(cognitionBefore, state.cognition)
+      },
       reasons: [`经过 ${Math.round(hours * 60)} 分钟，状态向人格基线自然回归。`]
     };
   }
@@ -368,6 +414,7 @@
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
     const chemistryBefore = clone(state.chemistry);
+    const cognitionBefore = clone(state.cognition);
     const sameCount = (state.recentEvents || []).filter(item => item.type === event.event_type).length;
     const driveFrequencyFactor = 1 / (1 + sameCount * 0.38);
     // Repeated situations can still feel emotionally real. Do not flatten affect as aggressively as drives.
@@ -402,18 +449,24 @@
       state.recentEvents.push({ type: event.event_type, at: nowIso, sourceEventId: context.sourceEventId });
       maybeFeedThought(state, event, pulse, context.sourceEventId, nowIso);
       if (!event.heuristic) updateSubjectivity(state, event, nowIso);
-      if (!event.heuristic && event.chosen_action) recordActionReceipt(state, event, context, nowIso);
+      if (!event.heuristic && (event.chosen_action || event.action_feedback !== "unclear")) recordActionReceipt(state, event, context, nowIso);
     } else {
       reasons.push("事件评价解析失败，未修改事件驱动状态。使用运行时启发式回退时会单独记录有效事件。");
     }
     const scored = scoreDrives(state, context.currentTopic || "", nowIso);
-    state.intent = selectIntent(state, scored.scores, nowIso, context.currentTopic || "");
+    const candidateIntent = selectIntent(state, scored.scores, nowIso, context.currentTopic || "");
+    state.intent = reconcileIntent(state.intent, candidateIntent, nowIso);
+    if (normalized.valid) updateCognitionAfterEvent(state, event, context, nowIso);
     state.lastUpdatedAt = nowIso;
     return {
       state,
       event,
       eventValid: normalized.valid,
-      delta: { ...makeDelta(before, state.drives, affectBefore, state.affect), chemistry: makeChemistryDelta(chemistryBefore, state.chemistry) },
+      delta: {
+        ...makeDelta(before, state.drives, affectBefore, state.affect),
+        chemistry: makeChemistryDelta(chemistryBefore, state.chemistry),
+        cognition: makeCognitionDelta(cognitionBefore, state.cognition)
+      },
       reasons,
       scores: scored.scores,
       candidateIntents: scored.candidates,
@@ -423,17 +476,152 @@
 
   function recordActionReceipt(state, event, context, nowIso) {
     state.actionReceipts = Array.isArray(state.actionReceipts) ? state.actionReceipts : [];
-    state.actionReceipts.push({
-      id: `action_${simpleHash(context.sourceEventId || nowIso)}`,
-      at: nowIso,
-      action: event.chosen_action,
-      reason: event.action_reason || "",
-      impact: event.perceived_impact || "",
-      lesson: event.lesson || "",
-      outcome: event.intent_outcome || "not_fulfilled",
-      source_event_id: context.sourceEventId || null
-    });
+    const cognition = ensureCognition(state, nowIso);
+    // The current reply cannot honestly grade its own effect. Learn from the
+    // user's following turn, which can supply feedback about the pending action.
+    if (cognition.pendingAction && event.action_feedback !== "unclear") {
+      const prior = cognition.pendingAction;
+      const learning = cognition.actionLearning[prior.action] || { attempts:0, welcomed:0, mixed:0, rejected:0, lastImpact:"", updatedAt:nowIso };
+      learning[event.action_feedback] = Number(learning[event.action_feedback] || 0) + 1;
+      learning.lastImpact = event.feedback_reason || "";
+      learning.updatedAt = nowIso;
+      cognition.actionLearning[prior.action] = learning;
+      const receipt = state.actionReceipts.find(item => item.id === prior.id);
+      if (receipt) {
+        receipt.feedback = event.action_feedback;
+        receipt.feedback_reason = event.feedback_reason || "";
+        receipt.feedback_at = nowIso;
+        receipt.lesson = event.lesson || "";
+      }
+      cognition.pendingAction = null;
+    }
+    if (event.chosen_action) {
+      const id = `action_${simpleHash(context.sourceEventId || nowIso)}`;
+      state.actionReceipts.push({
+        id,
+        at: nowIso,
+        action: event.chosen_action,
+        reason: event.action_reason || "",
+        perceived_impact: event.perceived_impact || "",
+        lesson: "",
+        feedback: "pending",
+        source_event_id: context.sourceEventId || null
+      });
+      const learning = cognition.actionLearning[event.chosen_action] || { attempts:0, welcomed:0, mixed:0, rejected:0, lastImpact:"", updatedAt:nowIso };
+      learning.attempts += 1;
+      learning.updatedAt = nowIso;
+      cognition.actionLearning[event.chosen_action] = learning;
+      cognition.pendingAction = { id, action:event.chosen_action, at:nowIso, sourceEventId:context.sourceEventId || null };
+    }
     state.actionReceipts = state.actionReceipts.slice(-40);
+  }
+
+  function ensureCognition(state, nowIso) {
+    const base = createInitialCognition(nowIso);
+    state.cognition = state.cognition || base;
+    state.cognition.schemaVersion = 1;
+    state.cognition.relationshipModel = { ...base.relationshipModel, ...(state.cognition.relationshipModel || {}) };
+    state.cognition.relationshipModel.evidence = Array.isArray(state.cognition.relationshipModel.evidence)
+      ? state.cognition.relationshipModel.evidence.slice(-12) : [];
+    state.cognition.values = { ...DEFAULT_VALUES, ...(state.cognition.values || {}) };
+    for (const key of Object.keys(DEFAULT_VALUES)) state.cognition.values[key] = round(state.cognition.values[key]);
+    state.cognition.unresolvedConflicts = Array.isArray(state.cognition.unresolvedConflicts)
+      ? state.cognition.unresolvedConflicts.slice(-8) : [];
+    state.cognition.initiative = { ...base.initiative, ...(state.cognition.initiative || {}) };
+    state.cognition.pendingAction = state.cognition.pendingAction && typeof state.cognition.pendingAction === "object"
+      ? state.cognition.pendingAction : null;
+    state.cognition.actionLearning = state.cognition.actionLearning && typeof state.cognition.actionLearning === "object"
+      ? state.cognition.actionLearning : {};
+    return state.cognition;
+  }
+
+  function inferRelationshipLabel(text) {
+    const source = String(text || "");
+    if (/(分手|结束恋爱|不再是恋人|前任|只做朋友)/i.test(source)) return "ended_or_friends";
+    if (/(恋爱|恋人|男朋友|女朋友|伴侣|在一起|交往|爱人)/i.test(source)) return "romantic";
+    if (/(暧昧|试探|还没确定|不确定关系)/i.test(source)) return "ambiguous";
+    if (/(朋友|友情)/i.test(source)) return "friends";
+    if (/(疏远|保持距离|不想靠近|离开)/i.test(source)) return "distant";
+    return "";
+  }
+
+  function updateRelationshipModel(cognition, event, nowIso) {
+    const evidenceText = event.reflective_belief || event.leith_stance || "";
+    const inferred = inferRelationshipLabel(evidenceText);
+    if (!inferred) return;
+    const current = cognition.relationshipModel;
+    const same = current.label === inferred;
+    current.confidence = round(same ? current.confidence + 0.10 * (1 - current.confidence) : Math.max(0.34, current.confidence * 0.62));
+    current.label = inferred;
+    current.updatedAt = nowIso;
+    current.evidence.push({ at:nowIso, label:inferred, text:evidenceText.slice(0,120), source:event.event_type });
+    current.evidence = current.evidence.slice(-12);
+  }
+
+  function reconcileIntent(previous, candidate, nowIso) {
+    if (!candidate) return previous?.status === "active" ? { ...previous, pressure:round((previous.pressure || previous.score || 0) * 0.90) } : null;
+    if (previous?.status === "active" && previous.want_action === candidate.want_action) {
+      return {
+        ...previous,
+        reason:candidate.reason,
+        score:candidate.score,
+        query_hint:candidate.query_hint,
+        pressure:round(Math.max(previous.pressure || previous.score || 0, candidate.score) + 0.08 * (1 - Math.max(previous.pressure || 0, candidate.score))),
+        repetitions:Number(previous.repetitions || 1) + 1,
+        updated_at:nowIso
+      };
+    }
+    if (previous?.status === "active" && Number(previous.pressure || previous.score || 0) > candidate.score + 0.18) {
+      return { ...previous, competing_intent:candidate.want_action, updated_at:nowIso };
+    }
+    return { ...candidate, pressure:candidate.score, repetitions:1, updated_at:nowIso };
+  }
+
+  function updateCognitionAfterEvent(state, event, context, nowIso) {
+    const cognition = ensureCognition(state, nowIso);
+    updateRelationshipModel(cognition, event, nowIso);
+    if (event.commitment) {
+      cognition.activeCommitment = cognition.activeCommitment?.status === "active" && cognition.activeCommitment.text === event.commitment
+        ? { ...cognition.activeCommitment, updatedAt:nowIso }
+        : { text:event.commitment, status:"active", bornAt:nowIso, updatedAt:nowIso };
+    }
+    if (event.value_consideration) cognition.lastValueConsideration = event.value_consideration;
+    if (event.anticipated_consequence) cognition.lastAnticipatedConsequence = event.anticipated_consequence;
+    const decision = planCurrentTurn(state, context.currentTopic || "");
+    cognition.lastDeliberation = {
+      at:nowIso,
+      affective:decision.deliberation.affective,
+      reflective:{ ...decision.deliberation.reflective, belief:event.reflective_belief || "", value:event.value_consideration || "", consequence:event.anticipated_consequence || "" },
+      choice:decision.preferred,
+      alternative:decision.alternative,
+      conflicts:decision.deliberation.conflicts
+    };
+    const activeKeys = new Set(decision.deliberation.conflicts);
+    cognition.unresolvedConflicts = cognition.unresolvedConflicts
+      .map(item => activeKeys.has(item.key) ? { ...item, intensity:round(item.intensity + 0.08 * (1 - item.intensity)), updatedAt:nowIso } : { ...item, intensity:round(item.intensity * 0.82) })
+      .filter(item => item.intensity >= 0.08);
+    for (const key of activeKeys) {
+      if (!cognition.unresolvedConflicts.some(item => item.key === key)) cognition.unresolvedConflicts.push({ key, intensity:0.52, bornAt:nowIso, updatedAt:nowIso });
+    }
+    const thought = selectThoughts(state, context.currentTopic || "", 1)[0];
+    const strongestDrive = Math.max(state.drives.attachment, state.drives.curiosity, state.drives.libido, state.drives.social);
+    const acted = ["flirt","state_desire","lead_intimacy"].includes(event.chosen_action)
+      || Boolean(event.satisfied_intent_id && event.intent_outcome !== "not_fulfilled");
+    const oldPressure = Number(cognition.initiative.pressure || 0);
+    const stimulus = (thought?.strength || 0) * 0.34 + strongestDrive * 0.22 + (state.intent?.pressure || 0) * 0.24 + (activeKeys.size ? 0.08 : 0);
+    let pressure = round(oldPressure * 0.78 + stimulus);
+    if (acted) pressure = round(Math.max(0, pressure - (event.intent_outcome === "fulfilled" ? 0.34 : 0.18)));
+    const cooldownActive = cognition.initiative.cooldownUntil && Date.parse(cognition.initiative.cooldownUntil) > Date.parse(nowIso);
+    cognition.initiative = {
+      pressure,
+      // An action taken in this very turn starts its cooldown immediately. Do
+      // not wait until the next event to notice the newly written deadline.
+      readiness:(acted || cooldownActive) ? "cooldown" : pressure >= 0.68 ? "ready" : pressure >= 0.42 ? "warming" : "quiet",
+      source:thought?.text || state.subjectivity?.want || state.intent?.reason || "",
+      cooldownUntil:acted ? new Date(Date.parse(nowIso) + 18 * 60000).toISOString() : cognition.initiative.cooldownUntil,
+      lastActedAt:acted ? nowIso : cognition.initiative.lastActedAt,
+      updatedAt:nowIso
+    };
   }
 
   function cleanSubjectiveText(value, limit) {
@@ -556,16 +744,24 @@
     }
     const before = clone(state.drives);
     const affectBefore = clone(state.affect);
+    const cognitionBefore = clone(state.cognition);
     const key = intent.drive_key;
     const drop = Math.min(state.drives[key], clamp01(amount ?? 0.12));
     state.drives[key] = round(state.drives[key] - drop);
     const refractoryMinutes = key === "fatigue" ? 30 : 18;
     state.refractory[key] = new Date(Date.parse(nowIso) + refractoryMinutes * 60000).toISOString();
     if (state.intent?.id === intent.id) state.intent = { ...state.intent, status: "satisfied" };
+    const cognition = ensureCognition(state, nowIso);
+    cognition.initiative.pressure = round(Math.max(0, cognition.initiative.pressure - drop * 1.6));
+    cognition.initiative.cooldownUntil = new Date(Date.parse(nowIso) + 18 * 60000).toISOString();
+    cognition.initiative.readiness = "cooldown";
     state.lastUpdatedAt = iso(nowIso);
     return {
       state,
-      delta: makeDelta(before, state.drives, affectBefore, state.affect),
+      delta: {
+        ...makeDelta(before, state.drives, affectBefore, state.affect),
+        cognition: makeCognitionDelta(cognitionBefore, state.cognition)
+      },
       reasons: [`确认完成 ${intent.want_action} 后，${key} 回落 ${drop.toFixed(3)}，并进入短暂不应期。`]
     };
   }
@@ -580,6 +776,16 @@
       .sort((a, b) => b._rank - a._rank || Date.parse(b.updated_at) - Date.parse(a.updated_at))
       .slice(0, Math.max(0, Math.min(3, limit ?? 3)))
       .map(({ _rank, ...item }) => item);
+  }
+
+  function learnedActionBias(cognition, action) {
+    const learning = cognition?.actionLearning?.[action];
+    const resolved = Number(learning?.welcomed || 0) + Number(learning?.mixed || 0) + Number(learning?.rejected || 0);
+    if (!resolved) return 0;
+    const outcome = (Number(learning.welcomed || 0) + Number(learning.mixed || 0) * 0.25 - Number(learning.rejected || 0)) / resolved;
+    // A reaction history may nudge a choice, but cannot overwrite current
+    // feeling, reflective judgment, values or boundaries.
+    return Math.max(-0.08, Math.min(0.08, outcome * 0.08 * (resolved / (resolved + 4))));
   }
 
   function planCurrentTurn(inputState, currentTopic) {
@@ -614,24 +820,31 @@
       threat_stress: round((state.drives.stress * 0.58) + (negative * 0.22) + (signal.hurt ? 0.20 : 0)),
       fatigue: round(state.drives.fatigue)
     };
+    const cognition = ensureCognition(state, state.lastUpdatedAt || new Date().toISOString());
+    const rememberedDirection = {
+      romantic:"approach", ambiguous:"undecided", friends:"undecided", ended_or_friends:"distance", distant:"distance", undetermined:"undecided"
+    }[cognition.relationshipModel.label] || "undecided";
     const reflective = {
-      relationship_direction: own.distance ? "distance" : own.approach ? "approach" : own.flirt || own.sexual ? "intimacy" : "undecided",
+      relationship_direction: own.distance ? "distance" : own.approach ? "approach" : own.flirt || own.sexual ? "intimacy" : rememberedDirection,
       autonomy: round(state.affect.dominance),
       consequence_awareness: round(1 - state.drives.stress),
-      commitment_pressure: round(state.drives.duty),
-      boundary_signal: signal.rejection ? "user_rejection" : signal.pressure ? "user_pressure" : own.distance ? "leith_distance" : "none"
+      commitment_pressure: round(Math.max(state.drives.duty, cognition.activeCommitment?.status === "active" ? 0.62 : 0)),
+      boundary_signal: signal.rejection ? "user_rejection" : signal.pressure ? "user_pressure" : own.distance ? "leith_distance" : "none",
+      values:{ ...cognition.values },
+      relationship_belief:{ label:cognition.relationshipModel.label, confidence:cognition.relationshipModel.confidence },
+      active_commitment:cognition.activeCommitment?.status === "active" ? cognition.activeCommitment.text : ""
     };
     const conflicts = [];
     if (affective.erotic_activation >= 0.48 && reflective.relationship_direction === "distance") conflicts.push("desire_vs_distance");
     if (affective.attachment >= 0.58 && affective.threat_stress >= 0.45) conflicts.push("attachment_vs_self_protection");
     if (affective.fatigue >= 0.68 && reflective.commitment_pressure >= 0.55) conflicts.push("fatigue_vs_commitment");
     const scores = {
-      approach: state.drives.attachment * 0.45 + (own.approach ? 0.48 : 0) + (signal.affection ? 0.16 : 0) + (signal.apology ? 0.06 : 0) - (own.distance ? 0.85 : 0) - (signal.rejection ? 0.55 : 0),
-      express: negative * 0.34 + state.affect.dominance * 0.24 + (own.express ? 0.30 : 0) + (signal.hurt ? 0.22 : 0),
-      clarify: state.drives.curiosity * 0.40 + (signal.question ? 0.28 : 0) + (signal.hurt ? 0.18 : 0) + (signal.apology ? 0.12 : 0),
-      withdraw: state.drives.stress * 0.48 + negative * 0.30 + (own.distance ? 0.62 : 0) + (signal.rejection ? 0.20 : 0),
-      repair: state.drives.attachment * 0.30 + (signal.hurt ? 0.30 : 0) + (signal.apology ? 0.34 : 0),
-      refuse: state.affect.dominance * 0.28 + (own.distance ? 0.55 : 0) + (signal.pressure ? 0.62 : 0),
+      approach: state.drives.attachment * 0.45 + (own.approach ? 0.48 : 0) + (signal.affection ? 0.16 : 0) + (signal.apology ? 0.06 : 0) + (reflective.relationship_direction === "approach" ? cognition.values.care * 0.08 : 0) - (own.distance ? 0.85 : 0) - (signal.rejection ? 0.55 : 0),
+      express: negative * 0.34 + state.affect.dominance * 0.24 + (own.express ? 0.30 : 0) + cognition.values.honesty * 0.10 + (signal.hurt ? 0.22 : 0),
+      clarify: state.drives.curiosity * 0.40 + cognition.values.curiosity * 0.08 + (signal.question ? 0.28 : 0) + (signal.hurt ? 0.18 : 0) + (signal.apology ? 0.12 : 0),
+      withdraw: state.drives.stress * 0.48 + negative * 0.30 + (own.distance ? 0.62 : 0) + (signal.rejection ? 0.20 : 0) + (reflective.boundary_signal !== "none" ? cognition.values.self_protection * 0.12 : 0),
+      repair: state.drives.attachment * 0.30 + cognition.values.care * 0.07 + (reflective.commitment_pressure * 0.06) + (signal.hurt ? 0.30 : 0) + (signal.apology ? 0.34 : 0),
+      refuse: state.affect.dominance * 0.28 + (own.distance ? 0.55 : 0) + (signal.pressure ? 0.62 : 0) + (reflective.boundary_signal !== "none" ? cognition.values.autonomy * 0.12 : 0),
       play: Math.max(0, state.affect.valence - 0.45) * 0.62 + (signal.play ? 0.38 : 0) - negative * 0.34,
       rest: state.drives.fatigue * 0.62 + state.drives.stress * 0.18,
       // Distance competes when choosing an action; it must not erase Leith's
@@ -640,7 +853,11 @@
       state_desire: Math.max(0, state.drives.libido - 0.38) * 0.62 + (own.sexual ? 0.55 : 0) + (signal.sexual ? 0.14 : 0) + state.affect.dominance * 0.08,
       lead_intimacy: Math.max(0, state.drives.libido - 0.40) * 0.42 + Math.max(0, state.chemistry.sexual_tension - 0.30) * 0.42 + (own.sexual || own.flirt ? 0.48 : 0) + (signal.sexual ? 0.10 : 0) + state.affect.dominance * 0.08 - state.drives.stress * 0.18 - (own.distance ? 0.50 : 0) - (signal.rejection ? 0.90 : 0)
     };
-    for (const key of ACTION_KEYS) scores[key] = round(scores[key]);
+    const learnedBiases = {};
+    for (const key of ACTION_KEYS) {
+      learnedBiases[key] = learnedActionBias(cognition, key);
+      scores[key] = round(scores[key] + learnedBiases[key]);
+    }
     const ranked = ACTION_KEYS.map(action => ({ action, score: scores[action] }))
       .sort((a, b) => b.score - a.score || ACTION_KEYS.indexOf(a.action) - ACTION_KEYS.indexOf(b.action));
     const preferred = ranked[0]?.score >= 0.24 ? ranked[0].action : "clarify";
@@ -664,6 +881,7 @@
       deliberation: {
         affective,
         reflective,
+        learned_action_biases: learnedBiases,
         integrated_choice: preferred,
         conflicts,
         unresolved_conflict: conflicts.length > 0 || Boolean(affective.threat_stress >= 0.45 && preferred === "approach")
@@ -672,7 +890,7 @@
   }
 
   function buildStateCapsule(state, currentTopic, maxChars, options) {
-    const limit = Math.max(120, Math.min(620, maxChars ?? 280));
+    const limit = Math.max(120, Math.min(820, maxChars ?? 280));
     const config = { includeAffect: true, includeDesire: true, ...(options || {}) };
     const thoughts = selectThoughts(state, currentTopic, 3);
     const subjectivity = state.subjectivity || {};
@@ -696,6 +914,11 @@
       if (subjectivityParts.length) parts.push(`Leith's continuing subjectivity: ${subjectivityParts.join("; ")}.`);
       parts.push("Competing feelings may coexist; stance guides action but never erases another feeling.");
       parts.push(`Integrated choice: ${decision.preferred}. Neither affective impulse nor reflective reason automatically rules; preserve both in expression when they conflict.`);
+      const cognition = ensureCognition(state, state.lastUpdatedAt || new Date().toISOString());
+      parts.push(`Continuity: relationship belief ${cognition.relationshipModel.label} (${cognition.relationshipModel.confidence.toFixed(2)}); initiative ${cognition.initiative.readiness} ${Number(cognition.initiative.pressure || 0).toFixed(2)}${cognition.initiative.source ? ` from ${cognition.initiative.source}` : ""}.`);
+      if (cognition.pendingAction) parts.push(`Previous action awaiting evidence: ${cognition.pendingAction.action}. Judge its reception only from the user's current observable response.`);
+      if (cognition.activeCommitment?.status === "active") parts.push(`Active self-authored commitment: ${cognition.activeCommitment.text}.`);
+      if (cognition.unresolvedConflicts.length) parts.push(`Unresolved internal conflict persists: ${cognition.unresolvedConflicts.map(item => `${item.key} ${item.intensity.toFixed(2)}`).join(", ")}. The chosen action must not erase it.`);
       parts.push(`Decision tendency: ${decision.preferred}${decision.alternative ? `; viable alternative: ${decision.alternative}` : ""}; avoid: ${decision.avoid}.`);
       if (state.intent) parts.push(`Existing intention: ${state.intent.want_action}.`);
       if (subjectivity.request) parts.push("A previous request exists. Reassess whether to maintain, negotiate, or release it; do not repeat it mechanically.");
@@ -759,6 +982,7 @@
     state.baselines.drives = { ...DEFAULT_DRIVES, ...(state.baselines.drives || state.drives || {}) };
     state.drives = { ...DEFAULT_DRIVES, ...(state.drives || {}) };
     state.actionReceipts = Array.isArray(state.actionReceipts) ? state.actionReceipts.slice(-40) : [];
+    ensureCognition(state, nowIso);
     state.subjectivity = state.subjectivity || {
       feeling: "", want: "", stance: "", request: "", requestStatus: "none", updatedAt: iso(nowIso)
     };
@@ -773,7 +997,8 @@
       state.baselines.drives.libido = DEFAULT_DRIVES.libido;
       state.drives.libido = Math.min(clamp01(state.drives.libido), 0.55);
     }
-    state.sensitivitySchemaVersion = 4;
+    state.sensitivitySchemaVersion = 5;
+    state.schemaVersion = 2;
     // v1 thoughts often contained the user's message or event summary verbatim.
     // They are short-lived, so dropping those legacy entries is safer than
     // presenting the user's words as Leith's inner voice.
@@ -793,8 +1018,30 @@
     return Object.fromEntries(CHEMISTRY_KEYS.map(key => [key, Math.round((after[key] - before[key]) * 10000) / 10000]));
   }
 
+  function makeCognitionDelta(before, after) {
+    const beforeConflicts = (before?.unresolvedConflicts || []).reduce((sum, item) => sum + Number(item.intensity || 0), 0);
+    const afterConflicts = (after?.unresolvedConflicts || []).reduce((sum, item) => sum + Number(item.intensity || 0), 0);
+    return {
+      initiative_pressure: Math.round((Number(after?.initiative?.pressure || 0) - Number(before?.initiative?.pressure || 0)) * 10000) / 10000,
+      relationship_confidence: Math.round((Number(after?.relationshipModel?.confidence || 0) - Number(before?.relationshipModel?.confidence || 0)) * 10000) / 10000,
+      unresolved_conflict_intensity: Math.round((afterConflicts - beforeConflicts) * 10000) / 10000,
+      readiness_changed: String(after?.initiative?.readiness || "") !== String(before?.initiative?.readiness || ""),
+      relationship_changed: String(after?.relationshipModel?.label || "") !== String(before?.relationshipModel?.label || "")
+    };
+  }
+
   function zeroDelta() {
-    return { ...makeDelta(DEFAULT_DRIVES, DEFAULT_DRIVES, DEFAULT_AFFECT, DEFAULT_AFFECT), chemistry: makeChemistryDelta(DEFAULT_CHEMISTRY, DEFAULT_CHEMISTRY) };
+    return {
+      ...makeDelta(DEFAULT_DRIVES, DEFAULT_DRIVES, DEFAULT_AFFECT, DEFAULT_AFFECT),
+      chemistry: makeChemistryDelta(DEFAULT_CHEMISTRY, DEFAULT_CHEMISTRY),
+      cognition: {
+        initiative_pressure: 0,
+        relationship_confidence: 0,
+        unresolved_conflict_intensity: 0,
+        readiness_changed: false,
+        relationship_changed: false
+      }
+    };
   }
 
   function simpleHash(value) {
