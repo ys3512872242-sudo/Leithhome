@@ -1723,6 +1723,14 @@
   .desire-thought-list{display:flex;flex-direction:column;gap:9px;}
   .desire-thought-item{font-family:var(--serif);font-size:13px;line-height:1.65;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.025);}
   .desire-observer-note{font-size:11px;line-height:1.7;color:var(--paper-dim);}
+  .deliberation-card{position:relative;overflow:hidden;}
+  .deliberation-card::before{content:"";position:absolute;left:0;top:18px;bottom:18px;width:3px;border-radius:0 9px 9px 0;background:var(--accent-2);opacity:.7;}
+  .deliberation-card.is-affective::before{background:var(--rose);}
+  .deliberation-card.is-choice::before{background:var(--accent-2);}
+  .deliberation-summary{font:14px/1.75 var(--serif);margin:12px 0 0;color:var(--paper);}
+  .deliberation-signals{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px;}
+  .deliberation-signals span{padding:5px 9px;border:1px solid var(--line-soft);border-radius:999px;background:rgba(255,255,255,.025);font-size:10px;color:var(--paper-dim);}
+  .deliberation-conflict{display:inline-flex;margin-top:13px;padding:5px 9px;border-radius:999px;background:rgba(201,126,147,.12);color:var(--rose);font-size:10px;}
   .ongoing-thread-list{display:flex;flex-direction:column;gap:10px;margin-top:12px;}
   .ongoing-thread-card{padding:14px 15px;border:1px solid rgba(201,126,147,.18);border-radius:16px;background:rgba(201,126,147,.055);}
   .ongoing-thread-head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
@@ -2361,9 +2369,19 @@
         <div class="desire-detail-date" id="widgetBigDate">--</div>
         <p id="desireDetailEmotion">我正在慢慢感受此刻。</p>
       </section>
-      <section class="desire-detail-section">
-        <div class="desire-detail-label">当前倾向</div>
-        <p id="desireDetailIntent">自然回应眼前的对话。</p>
+      <section class="desire-detail-section deliberation-card is-affective">
+        <div class="desire-detail-label">身体与感性</div>
+        <p class="deliberation-summary" id="desireAffectiveSummary">身体信号正在形成。</p>
+        <div class="deliberation-signals" id="desireAffectiveSignals"></div>
+      </section>
+      <section class="desire-detail-section deliberation-card is-reflective">
+        <div class="desire-detail-label">理性正在考虑</div>
+        <p class="deliberation-summary" id="desireReflectiveSummary">正在结合关系、边界与后果作判断。</p>
+      </section>
+      <section class="desire-detail-section deliberation-card is-choice">
+        <div class="desire-detail-label">此刻综合选择</div>
+        <p class="deliberation-summary" id="desireIntegratedChoice">自然回应眼前的对话。</p>
+        <span class="deliberation-conflict hidden" id="desireConflictBadge">仍有未解决的内在冲突</span>
       </section>
       <section class="desire-detail-section">
         <div class="desire-detail-label">我自己想要的</div>

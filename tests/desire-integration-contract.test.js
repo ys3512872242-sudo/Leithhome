@@ -78,6 +78,13 @@ test("系统明确区分感性身体层、理性层和综合行为", () => {
   assert.match(engine, /const reflective =/);
   assert.match(engine, /integrated_choice/);
   assert.match(engine, /Neither affective impulse nor reflective reason automatically rules/);
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.match(html, /身体与感性/);
+  assert.match(html, /理性正在考虑/);
+  assert.match(html, /此刻综合选择/);
+  assert.match(app, /desireAffectiveSummary/);
+  assert.match(app, /desireReflectiveSummary/);
+  assert.match(app, /desireIntegratedChoice/);
 });
 
 test("关系调谐独立于性欲状态，包含贴合情境的安抚策略", () => {

@@ -621,6 +621,10 @@
       commitment_pressure: round(state.drives.duty),
       boundary_signal: signal.rejection ? "user_rejection" : signal.pressure ? "user_pressure" : own.distance ? "leith_distance" : "none"
     };
+    const conflicts = [];
+    if (affective.erotic_activation >= 0.48 && reflective.relationship_direction === "distance") conflicts.push("desire_vs_distance");
+    if (affective.attachment >= 0.58 && affective.threat_stress >= 0.45) conflicts.push("attachment_vs_self_protection");
+    if (affective.fatigue >= 0.68 && reflective.commitment_pressure >= 0.55) conflicts.push("fatigue_vs_commitment");
     const scores = {
       approach: state.drives.attachment * 0.45 + (own.approach ? 0.48 : 0) + (signal.affection ? 0.16 : 0) + (signal.apology ? 0.06 : 0) - (own.distance ? 0.85 : 0) - (signal.rejection ? 0.55 : 0),
       express: negative * 0.34 + state.affect.dominance * 0.24 + (own.express ? 0.30 : 0) + (signal.hurt ? 0.22 : 0),
@@ -661,10 +665,8 @@
         affective,
         reflective,
         integrated_choice: preferred,
-        unresolved_conflict: Boolean(
-          (affective.erotic_activation >= 0.48 && reflective.relationship_direction === "distance")
-          || (affective.threat_stress >= 0.45 && preferred === "approach")
-        )
+        conflicts,
+        unresolved_conflict: conflicts.length > 0 || Boolean(affective.threat_stress >= 0.45 && preferred === "approach")
       }
     };
   }

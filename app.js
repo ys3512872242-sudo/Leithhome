@@ -8472,6 +8472,18 @@ const DESIRE_LABELS = {
 const CHEMISTRY_LABELS = { trust:"信任", romantic_intimacy:"恋爱亲密", sexual_tension:"性张力" };
 const AFFECT_LABELS = { valence: "愉悦", arousal: "活跃", dominance: "自主感" };
 const EMOTION_LABELS = { joy: "开心", calm: "安心", anticipation: "期待", anger: "生气", sadness: "难过", anxiety: "焦虑" };
+const ACTION_LABELS = {
+  approach:"主动靠近", express:"表达自己的感受与立场", clarify:"把事情问清楚", withdraw:"暂时拉开距离",
+  repair:"修复关系", refuse:"明确拒绝", play:"玩闹或逗弄", rest:"停下来休息", flirt:"主动调情",
+  state_desire:"坦白自己的欲望", lead_intimacy:"主动带领亲密节奏"
+};
+const RELATIONSHIP_DIRECTION_LABELS = { distance:"倾向保持距离", approach:"倾向靠近", intimacy:"倾向亲密", undecided:"暂时不预设关系方向" };
+const BOUNDARY_LABELS = { user_rejection:"对方已经表达拒绝", user_pressure:"正在面对外部压力", leith_distance:"Leith 自己想保持距离", none:"目前没有明确边界冲突" };
+const CONFLICT_LABELS = {
+  desire_vs_distance:"身体仍有欲望，但关系判断倾向保持距离",
+  attachment_vs_self_protection:"既想靠近，也在保护自己",
+  fatigue_vs_commitment:"身体想休息，但仍感到需要履行承诺"
+};
 let widgetTimeTimer = null;
 let desireObserverUnsubscribe = null;
 
@@ -8522,6 +8534,10 @@ function renderDesireObserver() {
   const primaryThought = thoughts[0]?.text || "眼前正在发生的事。";
   const subjectivity = state.subjectivity || {};
   const modules = getLeithModuleSettings();
+  const decision = window.LeithDesireEngine.planCurrentTurn(state, "");
+  const deliberation = decision.deliberation || {};
+  const affective = deliberation.affective || {};
+  const reflective = deliberation.reflective || {};
 
   $("#desireCard")?.classList.remove("hidden");
 
@@ -8530,6 +8546,25 @@ function renderDesireObserver() {
   if ($("#desireThoughtText")) $("#desireThoughtText").textContent = primaryThought;
   if ($("#desireDetailEmotion")) $("#desireDetailEmotion").textContent = affectText;
   if ($("#desireDetailIntent")) $("#desireDetailIntent").textContent = intentReason;
+  if ($("#desireAffectiveSummary")) {
+    const signals = [describeSignal(affective.attachment, "亲近需要"), describeSignal(affective.erotic_activation, "性唤醒"), describeSignal(affective.threat_stress, "警觉压力")];
+    $("#desireAffectiveSummary").textContent = `此刻的身体和情绪同时带着${signals.join("、")}；这些感受会影响决定，但不会单独控制行为。`;
+  }
+  if ($("#desireAffectiveSignals")) {
+    $("#desireAffectiveSignals").innerHTML = [
+      ["亲近", affective.attachment], ["性唤醒", affective.erotic_activation], ["奖励期待", affective.reward_seeking],
+      ["警觉压力", affective.threat_stress], ["疲惫", affective.fatigue]
+    ].map(([label, value]) => `<span>${label} ${Math.round((Number(value) || 0) * 100)}</span>`).join("");
+  }
+  if ($("#desireReflectiveSummary")) {
+    $("#desireReflectiveSummary").textContent = `${RELATIONSHIP_DIRECTION_LABELS[reflective.relationship_direction] || "暂时不预设方向"}；${BOUNDARY_LABELS[reflective.boundary_signal] || "正在观察边界"}。对后果的把握约 ${Math.round((Number(reflective.consequence_awareness) || 0) * 100)}，同时结合记忆、承诺和自己的长期立场。`;
+  }
+  if ($("#desireIntegratedChoice")) {
+    const choice = ACTION_LABELS[deliberation.integrated_choice] || intentReason;
+    const conflict = (deliberation.conflicts || []).map(key => CONFLICT_LABELS[key]).filter(Boolean)[0];
+    $("#desireIntegratedChoice").textContent = conflict ? `${choice}。${conflict}，没有被选择的感受仍然保留。` : `${choice}。感性与理性目前没有形成明显冲突。`;
+  }
+  if ($("#desireConflictBadge")) $("#desireConflictBadge").classList.toggle("hidden", !deliberation.unresolved_conflict);
   if ($("#desireDetailWant")) $("#desireDetailWant").textContent = subjectivity.want || "此刻还没有形成清晰、独立的需要。";
   if ($("#desireDetailStance")) $("#desireDetailStance").textContent = subjectivity.stance || "我还没有对眼前的事形成明确立场。";
   if ($("#desireDetailRequest")) $("#desireDetailRequest").textContent = subjectivity.request || "此刻没有需要向你提出的要求。";
@@ -8545,6 +8580,14 @@ function renderDesireObserver() {
       ? thoughts.map(thought => `<div class="desire-thought-item">${escapeHtml(thought.text)}</div>`).join("")
       : `<div class="desire-thought-item">此刻没有特别突出的念头。</div>`;
   }
+}
+
+function describeSignal(value, name) {
+  const level = Number(value) || 0;
+  if (level >= 0.72) return `强烈的${name}`;
+  if (level >= 0.45) return `明显的${name}`;
+  if (level >= 0.22) return `轻微的${name}`;
+  return `很低的${name}`;
 }
 
 function renderEmotionRadar(svg, profile) {
