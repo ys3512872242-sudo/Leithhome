@@ -167,6 +167,9 @@
     event.value_consideration = cleanSubjectiveText(raw.value_consideration || raw.value, 140);
     event.anticipated_consequence = cleanSubjectiveText(raw.anticipated_consequence || raw.consequence, 160);
     event.commitment = cleanSubjectiveText(raw.commitment, 160);
+    // This field is the authoritative TTS channel, so it must be long enough to
+    // carry the complete spoken portion without falling back to visible prose.
+    event.spoken_text = cleanSubjectiveText(raw.spoken_text || raw.speech, 1200);
     event.action_feedback = ["welcomed", "mixed", "rejected", "unclear"].includes(raw.action_feedback || raw.feedback)
       ? (raw.action_feedback || raw.feedback) : "unclear";
     event.feedback_reason = cleanSubjectiveText(raw.feedback_reason || raw.feedback_why, 160);
@@ -200,6 +203,7 @@
       ,value_consideration: ""
       ,anticipated_consequence: ""
       ,commitment: ""
+      ,spoken_text: ""
       ,action_feedback: "unclear"
       ,feedback_reason: ""
     };

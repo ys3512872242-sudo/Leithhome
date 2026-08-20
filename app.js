@@ -2150,6 +2150,9 @@ async function autoRespondToNarration(threadId, bubble, row) {
     const visibleReply = parsedDesireReply?.hasEnvelope ? parsedDesireReply.visible : fullReply;
     bubble.innerHTML = renderBubbleContent(visibleReply);
     const assistantMsg = { role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() };
+    if (parsedDesireReply?.hasEnvelope && parsedDesireReply?.rawEvent) {
+      assistantMsg._speech = parsedDesireReply.rawEvent.spoken_text || "";
+    }
     freshMessages.push(assistantMsg);
     await saveThreadMessagesDurable(threadId, freshMessages);
     attachPinButtonToBubble(bubble, finalMsgId, false);
@@ -2816,6 +2819,92 @@ function initConfig() {
   loadActiveThreadIntoChat();
 }
 
+function initVoiceOutput() {
+  const voice = window.LeithVoice;
+  const autoToggle = $("#voiceAutoSpeakToggle");
+  if (!voice || !autoToggle) return;
+  const engineSelect = $("#voiceEngineSelect");
+  const systemVoiceSelect = $("#voiceSystemVoiceSelect");
+  const rateInput = $("#voiceRateInput");
+  const pitchInput = $("#voicePitchInput");
+  const endpointInput = $("#voiceEndpointInput");
+  const refAudioInput = $("#voiceRefAudioInput");
+  const promptTextInput = $("#voicePromptTextInput");
+  const status = $("#voiceStatusText");
+
+  function populateSystemVoices() {
+    const selected = voice.getSettings().systemVoiceURI;
+    systemVoiceSelect.replaceChildren();
+    const automatic = document.createElement("option");
+    automatic.value = "";
+    automatic.textContent = "自动选择中文声音";
+    systemVoiceSelect.appendChild(automatic);
+    voice.getSystemVoices().forEach(item => {
+      const option = document.createElement("option");
+      option.value = item.voiceURI;
+      option.textContent = `${item.name} · ${item.lang}${item.localService ? " · 本机" : ""}`;
+      systemVoiceSelect.appendChild(option);
+    });
+    systemVoiceSelect.value = [...systemVoiceSelect.options].some(item => item.value === selected) ? selected : "";
+  }
+
+  function updateVoiceSettingsUI(settings) {
+    autoToggle.checked = settings.autoSpeak;
+    engineSelect.value = settings.engine;
+    rateInput.value = settings.rate;
+    pitchInput.value = settings.pitch;
+    $("#voiceRateValue").textContent = Number(settings.rate).toFixed(2);
+    $("#voicePitchValue").textContent = Number(settings.pitch).toFixed(2);
+    endpointInput.value = settings.endpoint;
+    refAudioInput.value = settings.refAudioPath;
+    promptTextInput.value = settings.promptText;
+    $("#voiceSystemFields").classList.toggle("hidden", settings.engine !== "system");
+    $("#voiceGptSovitsFields").classList.toggle("hidden", settings.engine !== "gpt-sovits");
+    $("#voicePitchField").classList.toggle("hidden", settings.engine !== "system");
+    status.textContent = settings.autoSpeak
+      ? `自动朗读已开启 · ${settings.engine === "gpt-sovits" ? "GPT-SoVITS 本地声音" : "系统声音"}`
+      : "自动朗读关闭；仍可点每条 Leith 回复下方的声音按钮手动播放。";
+  }
+
+  function saveVoiceForm() {
+    const settings = voice.saveSettings({
+      autoSpeak:autoToggle.checked,
+      engine:engineSelect.value,
+      systemVoiceURI:systemVoiceSelect.value,
+      rate:Number(rateInput.value),
+      pitch:Number(pitchInput.value),
+      endpoint:endpointInput.value.trim() || voice.DEFAULTS.endpoint,
+      refAudioPath:refAudioInput.value.trim(),
+      promptText:promptTextInput.value.trim()
+    });
+    updateVoiceSettingsUI(settings);
+    return settings;
+  }
+
+  updateVoiceSettingsUI(voice.getSettings());
+  populateSystemVoices();
+  if (window.speechSynthesis?.addEventListener) window.speechSynthesis.addEventListener("voiceschanged", populateSystemVoices);
+  [autoToggle, engineSelect, systemVoiceSelect, rateInput, pitchInput].forEach(input => input.addEventListener("change", saveVoiceForm));
+  [endpointInput, refAudioInput, promptTextInput].forEach(input => input.addEventListener("blur", saveVoiceForm));
+  rateInput.addEventListener("input", () => { $("#voiceRateValue").textContent = Number(rateInput.value).toFixed(2); });
+  pitchInput.addEventListener("input", () => { $("#voicePitchValue").textContent = Number(pitchInput.value).toFixed(2); });
+  $("#voicePreviewBtn").addEventListener("click", async () => {
+    saveVoiceForm();
+    try { await voice.speak("嗯，听见了吗？以后我就用这个声音和你说话。", { messageId:"voice-preview" }); }
+    catch (error) { showToast(error.message || "试听失败"); }
+  });
+  $("#voiceStopBtn").addEventListener("click", () => voice.stop());
+  window.addEventListener("leith:voice-state", event => {
+    updateVoiceMessageButtons(event.detail);
+    if (event.detail?.state === "loading") status.textContent = "正在生成 Leith 的声音…";
+    else if (event.detail?.state === "playing") status.textContent = "Leith 正在说话…";
+    else if (event.detail?.state === "error") {
+      status.textContent = event.detail.error || "语音播放失败。";
+      showToast(status.textContent);
+    } else if (event.detail?.state === "idle") updateVoiceSettingsUI(voice.getSettings());
+  });
+}
+
 $("#tempInput").addEventListener("input", (e) => { $("#tempVal").innerText = e.target.value; });
 $("#modelSelect").addEventListener("change", () => {
   // 下拉框选了具体模型后，旧的手动输入值不再拥有“隐形覆盖权”。
@@ -3014,6 +3103,7 @@ function renderMessage(msg, opts = {}) {
   }
 
   if (msg.role === "assistant") {
+    actions.appendChild(createVoiceReplayButton(msg));
     const regenBtn = document.createElement("button");
     regenBtn.className = "msg-action-btn";
     regenBtn.title = "重新生成";
@@ -3049,6 +3139,48 @@ function renderMessage(msg, opts = {}) {
   box.appendChild(row);
   if (!opts.noScroll) box.scrollTop = box.scrollHeight;
   return bubble;
+}
+
+const VOICE_PLAY_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 9v6h4l5 4V5L9 9H5z"/><path d="M17 9a4 4 0 010 6M19.5 6.5a8 8 0 010 11"/></svg>`;
+const VOICE_STOP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>`;
+
+function createVoiceReplayButton(msg) {
+  const button = document.createElement("button");
+  button.className = "msg-action-btn";
+  button.dataset.voiceMessage = msg._id || "";
+  button.title = "播放 Leith 的声音";
+  button.innerHTML = VOICE_PLAY_SVG;
+  button.onclick = async event => {
+    event.stopPropagation();
+    if (!window.LeithVoice) return showToast("语音输出模块没有加载");
+    if (window.LeithVoice.isSpeaking(msg._id)) {
+      window.LeithVoice.stop();
+      return;
+    }
+    try { await window.LeithVoice.speakMessage(msg); }
+    catch (error) { showToast(error.message || "语音播放失败"); }
+  };
+  return button;
+}
+
+function attachVoiceButtonToRow(row, msg) {
+  if (!row || row.querySelector(`[data-voice-message="${msg._id}"]`)) return;
+  let actions = row.querySelector(".msg-actions");
+  if (!actions) {
+    actions = document.createElement("div");
+    actions.className = "msg-actions";
+    row.appendChild(actions);
+  }
+  actions.prepend(createVoiceReplayButton(msg));
+}
+
+function updateVoiceMessageButtons(detail) {
+  document.querySelectorAll("[data-voice-message]").forEach(button => {
+    const active = detail?.state && detail.state !== "idle" && button.dataset.voiceMessage === detail.messageId;
+    button.classList.toggle("voice-playing", Boolean(active));
+    button.title = active ? (detail.state === "loading" ? "正在生成声音" : "停止播放") : "播放 Leith 的声音";
+    button.innerHTML = active ? VOICE_STOP_SVG : VOICE_PLAY_SVG;
+  });
 }
 
 function applySelectableUI(row, msgId) {
@@ -3506,6 +3638,9 @@ async function regenerateFromMessage(userMsg) {
     const visibleReply = parsedDesireReply.hasEnvelope ? parsedDesireReply.visible : fullReply;
     bubble.innerHTML = renderBubbleContent(visibleReply);
     const assistantMsg = { role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() };
+    if (parsedDesireReply?.hasEnvelope && parsedDesireReply?.rawEvent) {
+      assistantMsg._speech = parsedDesireReply.rawEvent.spoken_text || "";
+    }
     stageAssistantReplyRecovery(threadId, assistantMsg);
     freshMessages.push(assistantMsg);
     await saveThreadMessagesDurable(threadId, freshMessages);
@@ -5818,6 +5953,9 @@ async function sendChat(overrideContent) {
     const visibleReply = parsedDesireReply.hasEnvelope ? parsedDesireReply.visible : fullReply;
     bubble.innerHTML = renderBubbleContent(visibleReply);
     const assistantMsg = { role: "assistant", content: visibleReply, _id: finalMsgId, _ts: Date.now() };
+    if (parsedDesireReply?.hasEnvelope && parsedDesireReply?.rawEvent) {
+      assistantMsg._speech = parsedDesireReply.rawEvent.spoken_text || "";
+    }
     freshMessages.push(assistantMsg);
     stageAssistantReplyRecovery(threadId, assistantMsg);
     let assistantSavedLocally = false;
@@ -5831,6 +5969,12 @@ async function sendChat(overrideContent) {
     }
     clearAssistantReplyRecovery(assistantMsg._id);
     attachPinButtonToBubble(bubble, finalMsgId, false);
+    attachVoiceButtonToRow(row, assistantMsg);
+    row.addEventListener("click", () => {
+      const wasTapped = row.classList.contains("tapped");
+      document.querySelectorAll(".msg-row.tapped").forEach(item => item.classList.remove("tapped"));
+      if (!wasTapped) row.classList.add("tapped");
+    });
     // 同步到云端短期记忆——长期记忆现在改由每天深夜的日记生成负责，
     // 这里不再按消息数机械压缩
     if (assistantSavedLocally) saveChatMessageToCloud(threadId, assistantMsg);
@@ -5842,6 +5986,7 @@ async function sendChat(overrideContent) {
     if (actions.length) handleAIActions(actions, { sourceMessageId: finalMsgId });
     currentController = null;
     restoreSendUI(sendBtn);
+    window.LeithVoice?.maybeAutoSpeak?.(assistantMsg).catch(error => showToast(error.message || "自动朗读失败"));
     queueInternalStateUpdate(() => window.LeithDesireRuntime?.completeTurn?.({
         sourceMessageId: userMsg._id,
         assistantMessageId: finalMsgId,
@@ -8877,6 +9022,7 @@ initAddClosetBtn();
 initShopFolds();
 initAddItemModal();
 initConfig();
+initVoiceOutput();
 initTheater();
 initMemoryApp();
 initDiaryBookControls();
