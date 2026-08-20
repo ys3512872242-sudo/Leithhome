@@ -20,3 +20,8 @@ The upstream Transformers model registry entry for Mistral3 is omitted from
 this Chinese text-to-speech-only build. Leithhome never loads that unrelated
 text-generation model, and its 32-character JavaScript class name is otherwise
 misidentified as a Mistral API key by repository secret scanning.
+
+The tokenizer loader falls back to the two standard tokenizer files when a
+browser blocks Hugging Face's preliminary Range metadata request. This avoids
+an iOS Safari-only undefined tokenizer configuration failure while still
+downloading and parsing the original model files from the upstream repository.

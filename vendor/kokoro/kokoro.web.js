@@ -11058,7 +11058,13 @@ async function get_tokenizer_files(modelId) {
 
 // src/tokenization_utils.js
 async function loadTokenizer(pretrained_model_name_or_path, options) {
-  const tokenizerFiles = await get_tokenizer_files(pretrained_model_name_or_path);
+  let tokenizerFiles = await get_tokenizer_files(pretrained_model_name_or_path);
+  // Safari can reject Hugging Face's preliminary Range request even though the
+  // two tokenizer files are directly downloadable. An empty registry result
+  // must not become an undefined tokenizerConfig crash.
+  if (tokenizerFiles.length === 0) {
+    tokenizerFiles = ["tokenizer.json", "tokenizer_config.json"];
+  }
   return await Promise.all(
     tokenizerFiles.map((file) => getModelJSON(pretrained_model_name_or_path, file, true, options))
   );

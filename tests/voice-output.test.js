@@ -13,6 +13,7 @@ const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const runtime = fs.readFileSync(path.join(root, "desire-runtime.js"), "utf8");
 const serviceWorker = fs.readFileSync(path.join(root, "sw.js"), "utf8");
+const kokoroVendorSource = fs.readFileSync(path.join(root, "vendor/kokoro/kokoro.web.js"), "utf8");
 
 test("语音输出会剥离隐藏事件、链接和动作标记", () => {
   const text = Voice.cleanSpokenText("**你好** [链接](https://example.com) <leith-event>{\"x\":1}</leith-event>");
@@ -87,6 +88,11 @@ test("Kokoro 工作者使用真实中文模型、完整声线张量和内存自�
   assert.match(workerSource, /parts\[partIndex\]\.weight\) \/ total/);
   assert.match(engineSource, /new root\.Worker/);
   assert.match(engineSource, /type: "module"/);
+});
+
+test("Safari 拦截模型文件预探测时仍直接加载标准 tokenizer 文件", () => {
+  assert.match(kokoroVendorSource, /if \(tokenizerFiles\.length === 0\)/);
+  assert.match(kokoroVendorSource, /tokenizerFiles = \["tokenizer\.json", "tokenizer_config\.json"\]/);
 });
 
 test("隐藏事件提供准确台词，动作与场景叙述不会被当成对白朗读", () => {
