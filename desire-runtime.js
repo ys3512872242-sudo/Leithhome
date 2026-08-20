@@ -181,7 +181,7 @@
     if (modules && !modules.emotionInfluence && !modules.desireAgency) {
       return { text: "", thoughts: [], charCount: 0, estimatedTokens: 0 };
     }
-    return Engine.buildStateCapsule(getSnapshot().state, currentTopic, 420, {
+    return Engine.buildStateCapsule(getSnapshot().state, currentTopic, 560, {
       includeAffect: modules ? modules.emotionInfluence : true,
       includeDesire: modules ? modules.desireAgency : true
     });

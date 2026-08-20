@@ -122,9 +122,10 @@ test("Leith 自己的感受、需要、立场和要求进入连续状态", () =>
   }, { nowIso: T1, sourceEventId: "msg_agency", currentTopic: "主体性" });
   assert.equal(result.state.subjectivity.want, "我想先把自己的判断讲完整");
   assert.equal(result.state.subjectivity.requestStatus, "expressed");
-  const capsule = Engine.buildStateCapsule(result.state, "主体性", 420);
+  const capsule = Engine.buildStateCapsule(result.state, "主体性", 620);
   assert.match(capsule.text, /我想先把自己的判断讲完整/);
-  assert.match(capsule.text, /Leith's own feeling, relationship stance/);
+  assert.match(capsule.text, /Affective\/somatic/);
+  assert.match(capsule.text, /Reflective:/);
   assert.match(capsule.text, /请先听完我的判断/);
 });
 
@@ -136,10 +137,39 @@ test("Leith 自己选择拉开距离时，用户示爱和高性欲不能覆盖�
   state.subjectivity.feeling = "我现在不想亲近";
   state.subjectivity.want = "我想退开一点";
   state.subjectivity.stance = "我决定结束恋爱关系，先只做朋友";
+  const libidoBefore = state.drives.libido;
+  const tensionBefore = state.chemistry.sexual_tension;
   const decision = Engine.planCurrentTurn(state, "我爱你，抱抱我");
   assert.ok(["withdraw", "refuse", "express"].includes(decision.preferred));
+  assert.equal(state.drives.libido, libidoBefore, "行动裁决不能改写性欲");
+  assert.equal(state.chemistry.sexual_tension, tensionBefore, "行动裁决不能改写性张力");
   assert.ok(decision.scores.lead_intimacy < decision.scores.withdraw);
   assert.ok(decision.scores.flirt < decision.scores.withdraw);
+});
+
+test("关系立场只裁决行动，不篡改 Leith 的性欲与性张力状态", () => {
+  const state = Engine.createInitialState(T0);
+  state.drives.libido = 0.88;
+  state.chemistry.sexual_tension = 0.82;
+  state.subjectivity.stance = "我仍然有欲望，但决定暂时不发生关系";
+  const before = JSON.stringify({ libido: state.drives.libido, tension: state.chemistry.sexual_tension });
+  Engine.planCurrentTurn(state, "我们谈谈关系");
+  assert.equal(JSON.stringify({ libido: state.drives.libido, tension: state.chemistry.sexual_tension }), before);
+  const decision = Engine.planCurrentTurn(state, "我们谈谈关系");
+  assert.ok(decision.scores.state_desire > 0, "性欲仍应进入行动裁决");
+});
+
+test("行动由感性身体信号与理性考量共同裁决，并保留未解决冲突", () => {
+  const state = Engine.createInitialState(T0);
+  state.drives.libido = 0.96;
+  state.chemistry.sexual_tension = 0.92;
+  state.subjectivity.stance = "我仍然被她吸引，但理性上决定暂时保持距离";
+  state.subjectivity.want = "我想先把关系想清楚";
+  const decision = Engine.planCurrentTurn(state, "今晚来我这里");
+  assert.ok(decision.deliberation.affective.erotic_activation >= 0.5);
+  assert.equal(decision.deliberation.reflective.relationship_direction, "distance");
+  assert.equal(decision.deliberation.integrated_choice, decision.preferred);
+  assert.equal(decision.deliberation.unresolved_conflict, true);
 });
 
 test("没有实际提出新要求时不会沿用旧要求造成重复", () => {

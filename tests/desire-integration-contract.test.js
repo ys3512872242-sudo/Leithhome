@@ -6,6 +6,7 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
 const runtime = fs.readFileSync(path.join(root, "desire-runtime.js"), "utf8");
+const engine = fs.readFileSync(path.join(root, "desire-engine.js"), "utf8");
 const memory = fs.readFileSync(path.join(root, "memory.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/202608040001_desire_state_v1.sql"), "utf8");
 const mcpMigration = fs.readFileSync(path.join(root, "supabase/migrations/202608070001_mcp_gateway_v1.sql"), "utf8");
@@ -68,6 +69,15 @@ test("模块开关控制真实提示词注入而非只隐藏界面", () => {
   assert.match(app, /modules\.healthContext/);
   assert.match(runtime, /modules\.emotionInfluence/);
   assert.match(runtime, /modules\.desireAgency/);
+});
+
+test("系统明确区分感性身体层、理性层和综合行为", () => {
+  assert.match(app, /affective\/somatic side contains emotion, attachment, desire, sexual tension/);
+  assert.match(app, /reflective side contains Leith's values, relationship understanding/);
+  assert.match(engine, /const affective =/);
+  assert.match(engine, /const reflective =/);
+  assert.match(engine, /integrated_choice/);
+  assert.match(engine, /Neither affective impulse nor reflective reason automatically rules/);
 });
 
 test("关系调谐独立于性欲状态，包含贴合情境的安抚策略", () => {
