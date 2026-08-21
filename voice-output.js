@@ -96,16 +96,9 @@
   function extractSpokenText(visibleReply) {
     const source = String(visibleReply || "");
     const quoted = [];
-    const patterns = [
-      /“([^”]{1,600})”/g,
-      /「([^」]{1,600})」/g,
-      /『([^』]{1,600})』/g,
-      /"([^"\n]{1,600})"/g
-    ];
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(source))) quoted.push(match[1]);
-    }
+    const dialoguePattern = /“([^”]{1,600})”/g;
+    let match;
+    while ((match = dialoguePattern.exec(source))) quoted.push(match[1]);
     // Old messages have no structured `_speech` field. Only explicitly quoted
     // dialogue is safe to read; actions and scene prose remain silent.
     return cleanSpokenText(quoted.join("。"));
@@ -156,10 +149,10 @@
   }
 
   async function speakMessage(message, options) {
-    const hasStructuredSpeech = Boolean(message && Object.prototype.hasOwnProperty.call(message, "_speech"));
-    const spoken = hasStructuredSpeech
-      ? cleanSpokenText(message._speech)
-      : extractSpokenText(message?.content || "");
+    // Visible Chinese double quotes are the hard playback boundary. `_speech`
+    // remains useful as a structured record, but can never authorize audio for
+    // text that is not visibly marked as Leith's spoken dialogue.
+    const spoken = extractSpokenText(message?.content || "");
     if (!spoken) return false;
     return speak(spoken, { ...options, messageId: message?._id || options?.messageId });
   }

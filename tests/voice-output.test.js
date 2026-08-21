@@ -20,10 +20,12 @@ test("语音输出会剥离隐藏事件、链接和动作标记", () => {
   assert.equal(text, "你好 链接");
   assert.equal(Voice.extractSpokenText("*从背后抱住她*“不和那个怪兽玩了。”"), "不和那个怪兽玩了。");
   assert.equal(Voice.extractSpokenText("（从背后抱住她）没有明确标出的台词"), "");
+  assert.equal(Voice.extractSpokenText("拟声词‘咚咚’。引用「别走」。英文\"hello\"。"), "");
 });
 
-test("结构化台词字段即使为空也不会退回朗读整段动作", async () => {
+test("语音只读中文双引号内文本，结构化字段不能越过可见边界", async () => {
   assert.equal(await Voice.speakMessage({ _id:"only-action", content:"（低头吻了吻她）", _speech:"" }), false);
+  assert.equal(await Voice.speakMessage({ _id:"hidden-only", content:"（低声笑了）", _speech:"这句不能被读出" }), false);
 });
 
 test("项目只实现 Leith 的 TTS 输出，不请求麦克风或语音识别", () => {
@@ -100,8 +102,10 @@ test("Safari 拦截模型文件预探测时仍直接加载标准 tokenizer 文�
 });
 
 test("隐藏事件提供准确台词，动作与场景叙述不会被当成对白朗读", () => {
-  assert.match(runtime, /"speech":"all and only the exact Chinese words Leith says aloud/);
-  assert.match(runtime, /speech is the authoritative voice-output channel/);
+  assert.match(runtime, /inside visible “\.\.\.” pairs/);
+  assert.match(runtime, /If the visible reply has no “\.\.\.” pair, use an empty string/);
+  assert.match(app, /Wrap every word Leith actually says aloud in Chinese double quotation marks/);
+  assert.match(app, /Use Chinese single quotation marks ‘\.\.\.’/);
   assert.match(app, /assistantMsg\._speech = parsedDesireReply\.rawEvent\.spoken_text \|\| ""/);
   assert.equal((app.match(/maybeAutoSpeak\?\.\(assistantMsg\)/g) || []).length, 3);
 });
