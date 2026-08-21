@@ -88,6 +88,10 @@ test("Kokoro 工作者使用真实中文模型、完整声线张量和内存自�
   assert.match(workerSource, /parts\[partIndex\]\.weight\) \/ total/);
   assert.match(engineSource, /new root\.Worker/);
   assert.match(engineSource, /type: "module"/);
+  assert.match(workerSource, /phase: "metadata"/);
+  assert.match(workerSource, /phase: "download"/);
+  assert.match(engineSource, /120000/);
+  assert.match(engineSource, /声音模型长时间没有收到下载进展/);
 });
 
 test("Safari 拦截模型文件预探测时仍直接加载标准 tokenizer 文件", () => {

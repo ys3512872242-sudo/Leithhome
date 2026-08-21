@@ -31,6 +31,7 @@
   let preparePromise = null;
   let prepareResolve = null;
   let prepareReject = null;
+  let prepareWatchdog = null;
   let audioContext = null;
   let gainNode = null;
   let audioPrimed = false;
@@ -44,6 +45,7 @@
     status: safeStorageGet(MODEL_CACHE_FLAG) === "1" ? "cached" : "idle",
     progress: 0,
     device: "",
+    phase: "",
     error: ""
   };
 
@@ -111,6 +113,7 @@
     worker.addEventListener("error", (event) => {
       const error = new Error(event.message || "Kokoro 声音模型启动失败。");
       workerReady = false;
+      clearPrepareWatchdog();
       updateState({ status: "error", error: error.message });
       failPrepare(error);
       failActive(error);
@@ -120,7 +123,25 @@
     return worker;
   }
 
+  function clearPrepareWatchdog() {
+    if (prepareWatchdog) root.clearTimeout(prepareWatchdog);
+    prepareWatchdog = null;
+  }
+
+  function armPrepareWatchdog() {
+    clearPrepareWatchdog();
+    prepareWatchdog = root.setTimeout(() => {
+      const error = new Error("声音模型长时间没有收到下载进展，请检查网络后点“重新下载”。");
+      workerReady = false;
+      try { worker?.terminate?.(); } catch (_) {}
+      worker = null;
+      updateState({ status: "error", phase: "", error: error.message });
+      failPrepare(error);
+    }, 120000);
+  }
+
   function failPrepare(error) {
+    clearPrepareWatchdog();
     if (prepareReject) prepareReject(error);
     preparePromise = null;
     prepareResolve = null;
@@ -128,6 +149,7 @@
   }
 
   function resolvePrepare() {
+    clearPrepareWatchdog();
     if (prepareResolve) prepareResolve(getState());
     preparePromise = null;
     prepareResolve = null;
@@ -147,13 +169,14 @@
   function prepare(options) {
     if (workerReady) return Promise.resolve(getState());
     if (preparePromise) return preparePromise;
-    updateState({ status: "loading", progress: 0, error: "" });
+    updateState({ status: "loading", progress: 0, phase: "starting", error: "" });
     preparePromise = new Promise((resolve, reject) => {
       prepareResolve = resolve;
       prepareReject = reject;
     });
     try {
       ensureWorker().postMessage({ type: "prepare", preferWebGPU: options?.preferWebGPU !== false });
+      armPrepareWatchdog();
       requestPersistentStorage();
     } catch (error) {
       updateState({ status: "error", error: error.message || "Kokoro 启动失败。" });
@@ -238,13 +261,14 @@
   function handleWorkerMessage(event) {
     const message = event.data || {};
     if (message.type === "progress") {
-      updateState({ status: "loading", progress: clamp(message.progress, 0, 100, 0), error: "" });
+      armPrepareWatchdog();
+      updateState({ status: "loading", progress: clamp(message.progress, 0, 100, 0), phase: message.phase || "starting", error: "" });
       return;
     }
     if (message.type === "ready") {
       workerReady = true;
       safeStorageSet(MODEL_CACHE_FLAG, "1");
-      updateState({ status: "ready", progress: 100, device: message.device || "", error: "" });
+      updateState({ status: "ready", progress: 100, phase: "ready", device: message.device || "", error: "" });
       resolvePrepare();
       return;
     }
@@ -262,6 +286,7 @@
       return;
     }
     if (message.type === "error") {
+      clearPrepareWatchdog();
       const error = new Error(message.error || "Kokoro 生成声音失败。");
       updateState({ status: workerReady ? "ready" : "error", error: error.message });
       if (!workerReady) failPrepare(error);

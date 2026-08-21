@@ -2868,8 +2868,20 @@ function renderKokoroModelState(state) {
     button.textContent = "已经加载";
     button.disabled = true;
   } else if (current.status === "loading") {
-    title.textContent = `正在准备声音模型 ${Math.round(Number(current.progress) || 0)}%`;
-    detail.textContent = "第一次下载会比较久，请暂时不要锁屏或切走。";
+    const phase = current.phase || "starting";
+    const phaseTitle = {
+      starting:"正在启动本地语音环境…",
+      metadata:"正在检查模型配置…",
+      download_start:"即将开始下载声音模型…",
+      fallback:"正在切换兼容模式…",
+      initialize:"模型已下载，正在初始化…"
+    }[phase];
+    title.textContent = phase === "download"
+      ? `正在下载声音模型 ${Math.round(Number(current.progress) || 0)}%`
+      : (phaseTitle || "正在准备声音模型…");
+    detail.textContent = phase === "download"
+      ? "下载期间请保持 Leithhome 在前台，不要锁屏。"
+      : "前置检查不计入下载百分比；通常很快就会进入正式下载。";
     button.textContent = "正在下载…";
     button.disabled = true;
   } else if (current.status === "cached") {

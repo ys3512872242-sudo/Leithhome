@@ -19,11 +19,25 @@ function post(type, detail = {}, transfer = []) {
 }
 
 function progressCallback(info) {
-  if (!info || info.status !== "progress") return;
+  if (!info) return;
   const file = String(info.file || "");
-  if (!file.endsWith(".onnx")) return;
+  const isModel = file.endsWith(".onnx");
   const progress = Number.isFinite(Number(info.progress)) ? Number(info.progress) : 0;
-  post("progress", { progress: Math.max(0, Math.min(100, progress)), file });
+  if (info.status === "progress" && isModel) {
+    post("progress", { phase: "download", progress: Math.max(0, Math.min(100, progress)), file });
+    return;
+  }
+  if (info.status === "done" && isModel) {
+    post("progress", { phase: "initialize", progress: 99, file });
+    return;
+  }
+  if (info.status === "initiate") {
+    post("progress", { phase: isModel ? "download_start" : "metadata", progress: 0, file });
+    return;
+  }
+  if (info.status === "done") {
+    post("progress", { phase: "metadata", progress: 0, file });
+  }
 }
 
 async function canUseWebGPU() {
@@ -43,7 +57,7 @@ async function createModel(preferWebGPU) {
       });
       return { instance, device: "WebGPU" };
     } catch (error) {
-      post("progress", { progress: 0, file: "正在切换兼容模式" });
+      post("progress", { phase: "fallback", progress: 0, file: "正在切换兼容模式" });
     }
   }
   const instance = await KokoroTTS.from_pretrained(MODEL_ID, {
